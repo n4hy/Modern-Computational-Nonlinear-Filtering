@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+# Modern-Computational-Nonlinear-Filtering
+This repository will contain my general work on high performance, widely application processing noisy nonlinear sensor signals, while propagating noisy influenced dynamical system.  It is a hybrid of several approaches and adapts the process used to the nonlinear stress on the system.
+=======
 # Modern Computational Nonlinear Filtering
 
 This repository implements high-performance, nonlinear filtering and smoothing algorithms in C++. It focuses on handling complex dynamical systems with noise using Extended Kalman Filters (EKF) and Unscented Kalman Filters (UKF), coupled with a robust Fixed-Lag Smoother architecture.
@@ -178,3 +182,4 @@ t=1.00 | 15.13 | 15.03 (0.49) | 15.02 (0.45)
 ...
 SUCCESS: Smoothing reduced error.
 ```
+>>>>>>> ekf-base
