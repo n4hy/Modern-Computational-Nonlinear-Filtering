@@ -28,14 +28,13 @@ void generate_data(DragBallModel& model, int steps,
     for (int k = 0; k < steps; ++k) {
         true_states.push_back(x);
 
-        // Generate measurement
+        // Generate measurement for CURRENT state x
         DragBallModel::Observation y = model.h(x, k * model.dt);
         y(0) += d_meas(gen);
         y(1) += d_meas(gen);
         measurements.push_back(y);
 
-        // Evolve state
-        // Add random wind gust to velocity?
+        // Evolve state to NEXT step
         DragBallModel::State u = DragBallModel::State::Zero(); // No control
         x = model.f(x, k * model.dt, u);
 
@@ -47,7 +46,7 @@ void generate_data(DragBallModel& model, int steps,
 
 int main() {
     // 1. Setup Model
-    DragBallModel model; // defaults: dt=0.1, drag=0.001
+    DragBallModel model; // defaults: dt=0.1
     int steps = 200;
     int lag = 10;
 
@@ -57,7 +56,9 @@ int main() {
     generate_data(model, steps, true_states, measurements);
 
     // 2. Setup Smoother
-    // Initial estimate
+    // Initial estimate at k=0 (Start)
+    // We use the first measurement or truth to initialize, then start the loop from k=1.
+
     DragBallModel::State x0 = true_states[0];
     // Add large uncertainty to initial guess
     x0(0) += 5.0; x0(1) -= 5.0; x0(2) += 2.0;
@@ -82,71 +83,58 @@ int main() {
 
     DragBallModel::State u_dummy = DragBallModel::State::Zero();
 
-    for (int k = 0; k < steps; ++k) {
+    // Start loop from k=1
+    // smoother initialized at k=0.
+    // In loop k=1:
+    //   step(t, measurements[1]) -> Predict 0->1, Update using meas 1.
+    //   Result is estimate for k=1.
+
+    for (int k = 1; k < steps; ++k) {
         double t = k * model.dt;
 
-        // Step
+        // Step (Predict k-1 -> k, Update k)
         smoother.step(t, measurements[k], u_dummy);
 
-        // Get Estimates
+        // Current Filtered State (k)
         DragBallModel::State x_filt = smoother.get_filtered_state();
-        DragBallModel::State x_smooth = smoother.get_smoothed_state(std::min(k, lag));
-        // Note: For quantitative comparison at time k-L, we should compare:
-        // x_smooth from lag L (which corresponds to time k-L) vs true_state[k-L].
-        // But for visualization, we can just dump what we have.
-        // Let's compute RMSE for the *current* time k (Filtered)
-        // and for the time k-lag (Smoothed).
-
         DragBallModel::State x_true = true_states[k];
 
+        // RMSE Filtered (k)
         double err_fx = x_filt(0) - x_true(0);
         double err_fy = x_filt(1) - x_true(1);
         rmse_filt_pos += err_fx*err_fx + err_fy*err_fy;
 
-        // Smoothed error: Look back L steps
+        // Smoothed State for (k - lag)
+        // If k >= lag, we have a "finalized" smoothed estimate for k-lag.
         if (k >= lag) {
-            DragBallModel::State x_s_lagged = smoother.get_smoothed_state(lag); // Estimate for k-lag
-            DragBallModel::State x_true_lagged = true_states[k - lag];
+            int k_delayed = k - lag;
+            DragBallModel::State x_s = smoother.get_smoothed_state(lag);
+            DragBallModel::State x_t_delayed = true_states[k_delayed];
 
-            double err_sx = x_s_lagged(0) - x_true_lagged(0);
-            double err_sy = x_s_lagged(1) - x_true_lagged(1);
+            double err_sx = x_s(0) - x_t_delayed(0);
+            double err_sy = x_s(1) - x_t_delayed(1);
             rmse_smooth_pos += err_sx*err_sx + err_sy*err_sy;
             count++;
 
-             // Log for csv (using the smoothed estimate for k-lag)
-             // To make lines align in CSV, let's just log "current filtered" and "smoothed at current time if available"?
-             // Actually, usually we plot the entire trajectory.
-             // At step k, we have a smoothed estimate for k-lag.
-        }
+            // Log Results for k-lag
+            DragBallModel::Observation m_delayed = measurements[k_delayed];
+            // Note: logging filtered value for k-delayed is tricky as we didn't cache it.
+            // We'll leave it 0 or change the CSV format.
+            // Let's log 'current filtered' for row k, and 'smoothed' for row k?
+            // If we log row 'k-lag', we align everything to k-lag.
 
-        // For CSV, let's log the *current* filtered and the *most refined* smoothed value for the current time?
-        // No, at time k, the best smoothed value for k is just x_filt (lag 0).
-        // The value for k will improve as we step forward.
-        // So a CSV generated on the fly is tricky for a smoother.
-        // We typically dump the final smoothed trajectory after the run.
-        // But since this is a "Fixed Lag" online algorithm, at step k we finalize the estimate for k-L.
-        // So let's log the value for k-L.
-
-        if (k >= lag) {
-             DragBallModel::State x_s = smoother.get_smoothed_state(lag);
-             DragBallModel::State x_t = true_states[k - lag];
-             DragBallModel::Observation m_t = measurements[k - lag];
-             // Filtered value for k-L was computed L steps ago. We don't have it easily here unless we cached it.
-             // But we can log the current filtered value x_filt (at k) and x_true (at k).
-             // And separate columns for "Finalized Smoothed at k-L".
-
-             out_file << (k-lag) << ","
-                      << x_t(0) << "," << x_t(1) << "," << x_t(2) << "," << x_t(3) << ","
-                      << m_t(0) << "," << m_t(1) << ","
-                      << "0,0,0,0," // We skip logging filtered for k-L here to save complexity
-                      << x_s(0) << "," << x_s(1) << "," << x_s(2) << "," << x_s(3) << "\n";
+            out_file << k_delayed << ","
+                     << x_t_delayed(0) << "," << x_t_delayed(1) << "," << x_t_delayed(2) << "," << x_t_delayed(3) << ","
+                     << m_delayed(0) << "," << m_delayed(1) << ","
+                     << "0,0,0,0," // Filtered for k-lag (missing)
+                     << x_s(0) << "," << x_s(1) << "," << x_s(2) << "," << x_s(3) << "\n";
         }
     }
 
     out_file.close();
 
-    rmse_filt_pos = std::sqrt(rmse_filt_pos / steps); // This is RMSE of filtered at all steps
-    rmse_smooth_pos = std::sqrt(rmse_smooth_pos / count); // This is RMSE of smoothed at lags
+    rmse_filt_pos = std::sqrt(rmse_filt_pos / (steps - 1));
+    rmse_smooth_pos = std::sqrt(rmse_smooth_pos / count);
 
     std::cout << "Filtered Position RMSE (Current): " << rmse_filt_pos << std::endl;
     std::cout << "Smoothed Position RMSE (Lagged):  " << rmse_smooth_pos << std::endl;
