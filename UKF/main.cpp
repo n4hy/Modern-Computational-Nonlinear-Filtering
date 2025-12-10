@@ -83,12 +83,15 @@ int main() {
 
     DragBallModel::State u_dummy = DragBallModel::State::Zero();
 
-    // Start loop from k=1
-    // smoother initialized at k=0.
-    // In loop k=1:
-    //   step(t, measurements[1]) -> Predict 0->1, Update using meas 1.
-    //   Result is estimate for k=1.
+    // History of filtered estimates for logging purposes
+    // We need to store up to 'steps' estimates because we look back 'lag' steps
+    std::vector<DragBallModel::State> filtered_history;
+    filtered_history.reserve(steps);
 
+    // Store initial estimate (k=0)
+    filtered_history.push_back(smoother.get_filtered_state());
+
+    // Start loop from k=1
     for (int k = 1; k < steps; ++k) {
         double t = k * model.dt;
 
@@ -97,6 +100,8 @@ int main() {
 
         // Current Filtered State (k)
         DragBallModel::State x_filt = smoother.get_filtered_state();
+        filtered_history.push_back(x_filt);
+
         DragBallModel::State x_true = true_states[k];
 
         // RMSE Filtered (k)
@@ -118,15 +123,14 @@ int main() {
 
             // Log Results for k-lag
             DragBallModel::Observation m_delayed = measurements[k_delayed];
-            // Note: logging filtered value for k-delayed is tricky as we didn't cache it.
-            // We'll leave it 0 or change the CSV format.
-            // Let's log 'current filtered' for row k, and 'smoothed' for row k?
-            // If we log row 'k-lag', we align everything to k-lag.
+
+            // Retrieve the stored filtered estimate for k-delayed
+            DragBallModel::State x_f_delayed = filtered_history[k_delayed];
 
             out_file << k_delayed << ","
                      << x_t_delayed(0) << "," << x_t_delayed(1) << "," << x_t_delayed(2) << "," << x_t_delayed(3) << ","
                      << m_delayed(0) << "," << m_delayed(1) << ","
-                     << "0,0,0,0," // Filtered for k-lag (missing)
+                     << x_f_delayed(0) << "," << x_f_delayed(1) << "," << x_f_delayed(2) << "," << x_f_delayed(3) << ","
                      << x_s(0) << "," << x_s(1) << "," << x_s(2) << "," << x_s(3) << "\n";
         }
     }
