@@ -101,21 +101,42 @@ sequenceDiagram
 *   **Eigen3** (Linear Algebra Library)
 *   **Python 3** with `matplotlib` and `pandas` (Optional, for graphical results)
 
-### Installing Eigen3
-If Eigen3 is not installed systematically, you can download it locally:
+### Installing Eigen3 (Complete Local Solution)
+
+This project relies on Eigen3. Ideally, it should be installed via your system package manager (e.g., `sudo apt-get install libeigen-dev` on Ubuntu). If you do not have root access or require a specific version, follow these steps to install it locally within the project structure.
+
+#### 1. Download and Extract
+Create a `third_party` directory and download Eigen 3.4.0:
 ```bash
-mkdir -p eigen_install
+mkdir -p third_party
 wget -qO eigen.tar.gz https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
-tar -xzf eigen.tar.gz -C eigen_install
-mv eigen_install/eigen-3.4.0 eigen_install/eigen3
+tar -xzf eigen.tar.gz -C third_party
+mv third_party/eigen-3.4.0 third_party/eigen3
+rm eigen.tar.gz
 ```
-*Note: You may need to update `CMakeLists.txt` or use `-D Eigen3_DIR=...` to point to your specific Eigen installation if it's not found automatically.*
+
+#### 2. Configure and Install Locally
+We will build and install Eigen into a local `eigen_install` directory. This generates the necessary CMake configuration files required by `find_package`.
+```bash
+cd third_party/eigen3
+mkdir build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=../../eigen_install ..
+make install
+cd ../../..
+```
+*After this step, the Eigen headers and cmake config files will be in `third_party/eigen_install`.*
 
 ### Building the Project
+
+When building the project, you must tell CMake where to find the local Eigen installation if it's not in a system path.
+
 ```bash
 cd EKF
 mkdir build && cd build
-cmake ..
+
+# Point Eigen3_DIR to the directory containing Eigen3Config.cmake
+cmake -D Eigen3_DIR=../../third_party/eigen_install/share/eigen3/cmake ..
+
 make
 ```
 
