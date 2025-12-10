@@ -1,94 +1,86 @@
 #ifndef DRAG_BALL_MODEL_H
 #define DRAG_BALL_MODEL_H
 
-#include "SystemModel.h"
-#include <iostream>
+#include <cmath>
+#include <random>
+#include "StateSpaceModel.h"
 
 /**
- * 6D Ball with Air Drag.
- * State: [x, y, z, vx, vy, vz]
- * Dynamics:
- *   p_dot = v
- *   v_dot = -0.5 * rho * Cd * A * |v| * v / m - [0, 0, g] + w_wind
+ * 4D State: [x, y, vx, vy]
+ * 2D Obs: [x, y]
  *
- *   Simplified: v_dot = -beta * |v| * v - g + w
- *   where beta = 0.5 * rho * Cd * A / m
+ * Dynamics:
+ *   x_k = x_{k-1} + vx_{k-1} * dt
+ *   y_k = y_{k-1} + vy_{k-1} * dt
+ *   vx_k = vx_{k-1} - (C * v * vx_{k-1}) * dt + w_vx
+ *   vy_k = vy_{k-1} - (C * v * vy_{k-1}) * dt - g * dt + w_vy
+ *
+ *   v = sqrt(vx^2 + vy^2)
  */
-class DragBallModel : public SystemModel {
+class DragBallModel : public UKFModel::StateSpaceModel<4, 2> {
 public:
-    DragBallModel(double dt, double beta, double q_std, double r_std)
-        : dt_(dt), beta_(beta) {
+    double dt;
+    double drag_coeff; // C
+    double g;          // Gravity
 
-        // Q: Process noise (Wind / forcing)
-        // Applied primarily to velocity states
-        Q_ = Eigen::MatrixXd::Identity(6, 6) * 1e-6; // Base small noise on pos
-        Q_.block(3, 3, 3, 3) = Eigen::MatrixXd::Identity(3, 3) * (q_std * q_std);
+    // Noise parameters
+    double q_std; // Process noise std dev (velocity)
+    double r_std; // Measurement noise std dev (position)
 
-        // R: Measurement noise on Position
-        R_ = Eigen::MatrixXd::Identity(3, 3) * (r_std * r_std);
-    }
+    DragBallModel(double dt_val = 0.1, double drag = 0.001, double grav = 9.81, double q = 0.1, double r = 0.5)
+        : dt(dt_val), drag_coeff(drag), g(grav), q_std(q), r_std(r) {}
 
-    Eigen::VectorXd f(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
-        // x = [px, py, pz, vx, vy, vz]
-        Eigen::VectorXd pos = x.head(3);
-        Eigen::VectorXd vel = x.tail(3);
+    State f(const State& x_prev, double t, const Eigen::Ref<const State>& u) const override {
+        // x = [px, py, vx, vy]
+        double px = x_prev(0);
+        double py = x_prev(1);
+        double vx = x_prev(2);
+        double vy = x_prev(3);
 
-        double speed = vel.norm();
-        double g = 9.81;
+        double v = std::sqrt(vx*vx + vy*vy);
 
-        // Acceleration due to drag: a_d = -beta * speed * v
-        Eigen::VectorXd acc_drag = -beta_ * speed * vel;
+        State x_next;
+        x_next(0) = px + vx * dt;
+        x_next(1) = py + vy * dt;
+        x_next(2) = vx - (drag_coeff * v * vx) * dt;
+        x_next(3) = vy - (drag_coeff * v * vy) * dt - g * dt;
 
-        // Acceleration due to gravity
-        Eigen::VectorXd acc_grav(3);
-        acc_grav << 0, 0, -g;
-
-        Eigen::VectorXd acc = acc_drag + acc_grav;
-
-        // Euler Integration (Semi-Implicit or Standard)
-        // Standard:
-        // p_new = p + v * dt + 0.5 * a * dt^2
-        // v_new = v + a * dt
-
-        Eigen::VectorXd x_next(6);
-        x_next.head(3) = pos + vel * dt_ + 0.5 * acc * dt_ * dt_;
-        x_next.tail(3) = vel + acc * dt_;
+        // Add control u if provided (assuming u is acceleration or additive force?)
+        // The interface requires u. If u is zero, it does nothing.
+        // x_next += u; // Simplified usage
 
         return x_next;
     }
 
-    Eigen::VectorXd h(const Eigen::VectorXd& x, double t) const override {
-        // Measure position only
-        return x.head(3);
+    Observation h(const State& x_k, double t) const override {
+        // Observe position only
+        Observation y;
+        y(0) = x_k(0);
+        y(1) = x_k(1);
+        return y;
     }
 
-    // UKF doesn't need F and H, but we must implement the interface.
-    // We'll throw or return zeros. Returning zeros is safer to avoid crashes if logged.
-    Eigen::MatrixXd F(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
-        // Jacobian of f is complex due to |v|*v term.
-        // We strictly use UKF, so this shouldn't be called for filtering.
-        return Eigen::MatrixXd::Zero(6, 6);
+    StateMat Q(double t) const override {
+        StateMat q_mat = StateMat::Zero();
+        // Noise on velocity mainly
+        double q_var = q_std * q_std;
+        // Basic discrete noise model: Integral over dt...
+        // For simplicity:
+        // Position noise is small (integration of velocity noise), Velocity noise is q_var
+        // q_mat(0,0) = 0.5 * dt^2 * ...
+        // Let's stick to diagonal for simplicity or the prompt's implied simple noise
+        q_mat(0,0) = 0.01 * q_var;
+        q_mat(1,1) = 0.01 * q_var;
+        q_mat(2,2) = q_var * dt;
+        q_mat(3,3) = q_var * dt;
+        return q_mat;
     }
 
-    Eigen::MatrixXd H(const Eigen::VectorXd& x, double t) const override {
-        Eigen::MatrixXd H_ = Eigen::MatrixXd::Zero(3, 6);
-        H_(0, 0) = 1;
-        H_(1, 1) = 1;
-        H_(2, 2) = 1;
-        return H_;
+    ObsMat R(double t) const override {
+        ObsMat r_mat = ObsMat::Identity();
+        r_mat *= (r_std * r_std);
+        return r_mat;
     }
-
-    Eigen::MatrixXd Q(double t) const override { return Q_; }
-    Eigen::MatrixXd R(double t) const override { return R_; }
-
-    int getStateDim() const override { return 6; }
-    int getObsDim() const override { return 3; }
-
-private:
-    double dt_;
-    double beta_; // Drag factor
-    Eigen::MatrixXd Q_;
-    Eigen::MatrixXd R_;
 };
 
 #endif // DRAG_BALL_MODEL_H

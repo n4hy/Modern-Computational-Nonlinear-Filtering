@@ -2,167 +2,161 @@
 #include <vector>
 #include <random>
 #include <cmath>
-#include <iomanip>
-#include <cstring>
-#include <cstdlib>
-
-#include "DragBallModel.h"
+#include <fstream>
+#include "UKF.h"
 #include "UnscentedFixedLagSmoother.h"
-#include "FileUtils.h"
+#include "DragBallModel.h"
 
-using namespace Eigen;
-using namespace std;
+using namespace UKFCore;
+using namespace UKFModel;
 
-// Helper to generate Gaussian noise
-double randn(double mean, double stddev, std::mt19937& gen) {
-    std::normal_distribution<double> d(mean, stddev);
-    return d(gen);
-}
+// Helper to generate noisy data
+void generate_data(DragBallModel& model, int steps,
+                   std::vector<DragBallModel::State>& true_states,
+                   std::vector<DragBallModel::Observation>& measurements) {
 
-void run_plotting_script(const std::string& csv_file, const std::string& title) {
-    // Path: ../scripts/plot_results.py assuming running from build/
-    std::string cmd = "python3 ../scripts/plot_results.py " + csv_file + " --title \"" + title + "\"";
-    std::cout << "Executing: " << cmd << std::endl;
-    int ret = std::system(cmd.c_str());
-    if (ret != 0) {
-        std::cerr << "Plotting script failed with code " << ret << std::endl;
-    }
-}
+    DragBallModel::State x;
+    x << 0, 100, 10, 0; // Initial: x=0, y=100, vx=10, vy=0
 
-int main(int argc, char* argv[]) {
-    bool use_graphics = false;
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--graphics") == 0) {
-            use_graphics = true;
-        }
-    }
+    true_states.reserve(steps);
+    measurements.reserve(steps);
 
-    std::cout << "Starting UKF Drag Ball Simulation (Comparison)..." << std::endl;
-    if (use_graphics) std::cout << "Graphics Enabled." << std::endl;
-
-    double dt = 0.05;
-    double T = 5.0;
-    int steps = static_cast<int>(T / dt);
-
-    double beta = 0.01;
-    double q_wind_std = 0.2;
-    double r_std = 0.5;
-    int lag = 10;
-
-    DragBallModel model(dt, beta, q_wind_std, r_std);
-
-    VectorXd x_true(6);
-    x_true << 0, 0, 0, 70, 0, 70;
-
-    VectorXd x_est = x_true;
-    x_est(0) += 5.0;
-    x_est(3) -= 5.0;
-
-    MatrixXd P_est = MatrixXd::Identity(6, 6) * 1.0;
-    P_est(3,3) = 10.0; P_est(5,5) = 10.0;
-
-    std::random_device rd;
-    std::mt19937 gen(12345);
-
-    UnscentedFixedLagSmoother smoother(&model, x_est, P_est, lag);
-
-    std::vector<VectorXd> true_history;
-    std::vector<VectorXd> smooth_history;
-    std::vector<VectorXd> filt_history;
-    std::vector<MatrixXd> smooth_cov_history;
-    std::vector<MatrixXd> filt_cov_history;
-
-    Eigen::VectorXd u;
-    double t = 0.0;
+    std::mt19937 gen(42);
+    std::normal_distribution<> d_proc(0, model.q_std); // Crude process noise approx
+    std::normal_distribution<> d_meas(0, model.r_std);
 
     for (int k = 0; k < steps; ++k) {
-        VectorXd w(6);
-        w.setZero();
-        w(3) = randn(0, q_wind_std, gen);
-        w(4) = randn(0, q_wind_std, gen);
-        w(5) = randn(0, q_wind_std, gen);
+        true_states.push_back(x);
 
-        x_true = model.f(x_true, u, t) + w;
+        // Generate measurement
+        DragBallModel::Observation y = model.h(x, k * model.dt);
+        y(0) += d_meas(gen);
+        y(1) += d_meas(gen);
+        measurements.push_back(y);
 
-        VectorXd v(3);
-        for(int i=0; i<3; ++i) v(i) = randn(0, r_std, gen);
-        VectorXd y = model.h(x_true, t) + v;
+        // Evolve state
+        // Add random wind gust to velocity?
+        DragBallModel::State u = DragBallModel::State::Zero(); // No control
+        x = model.f(x, k * model.dt, u);
 
-        true_history.push_back(x_true);
-
-        VectorXd x_out, x_filt;
-        MatrixXd P_out, P_filt;
-        bool ready = smoother.process(y, x_out, P_out, x_filt, P_filt);
-
-        if (ready) {
-            smooth_history.push_back(x_out);
-            filt_history.push_back(x_filt);
-            smooth_cov_history.push_back(P_out);
-            filt_cov_history.push_back(P_filt);
-        }
-
-        t += dt;
+        // Add process noise (simulated)
+        x(2) += d_proc(gen) * std::sqrt(model.dt);
+        x(3) += d_proc(gen) * std::sqrt(model.dt);
     }
+}
 
-    // Flush
-    VectorXd x_out;
-    MatrixXd P_out;
-    while(smoother.flush(x_out, P_out)) {
-        smooth_history.push_back(x_out);
-        filt_history.push_back(x_out); // Dummy
-        smooth_cov_history.push_back(P_out);
-        filt_cov_history.push_back(P_out); // Fallback
-    }
+int main() {
+    // 1. Setup Model
+    DragBallModel model; // defaults: dt=0.1, drag=0.001
+    int steps = 200;
+    int lag = 10;
 
-    VectorXd x_init_true(6);
-    x_init_true << 0, 0, 0, 70, 0, 70;
-    true_history.insert(true_history.begin(), x_init_true);
+    std::cout << "Generating " << steps << " steps of simulation..." << std::endl;
+    std::vector<DragBallModel::State> true_states;
+    std::vector<DragBallModel::Observation> measurements;
+    generate_data(model, steps, true_states, measurements);
 
-    int n = std::min(true_history.size(), smooth_history.size());
+    // 2. Setup Smoother
+    // Initial estimate
+    DragBallModel::State x0 = true_states[0];
+    // Add large uncertainty to initial guess
+    x0(0) += 5.0; x0(1) -= 5.0; x0(2) += 2.0;
 
-    double sum_sq_filt = 0, sum_sq_smooth = 0;
+    DragBallModel::StateMat P0 = DragBallModel::StateMat::Identity();
+    P0.topLeftCorner(2,2) *= 10.0;
+    P0.bottomRightCorner(2,2) *= 5.0;
+
+    UnscentedFixedLagSmoother<4, 2> smoother(model, lag);
+    smoother.initialize(x0, P0);
+
+    // 3. Run Loop
+    std::cout << "Running UKF Smoother (Lag=" << lag << ")..." << std::endl;
+
+    double rmse_filt_pos = 0.0;
+    double rmse_smooth_pos = 0.0;
     int count = 0;
 
-    std::cout << "\nResults (Time | True Z | Filt Z (Err) | Smooth Z (Err)):" << std::endl;
-    for (int i = 0; i < n; ++i) {
-        VectorXd err_s = true_history[i] - smooth_history[i];
-        VectorXd err_f = true_history[i] - filt_history[i];
+    // File output
+    std::ofstream out_file("ukf_results.csv");
+    out_file << "k,tx,ty,tvx,tvy,mx,my,fx,fy,fvx,fvy,sx,sy,svx,svy\n";
 
-        double norm_s = err_s.norm();
-        double norm_f = err_f.norm();
+    DragBallModel::State u_dummy = DragBallModel::State::Zero();
 
-        if (i < n - lag) {
-             sum_sq_filt += norm_f * norm_f;
-             sum_sq_smooth += norm_s * norm_s;
-             count++;
+    for (int k = 0; k < steps; ++k) {
+        double t = k * model.dt;
+
+        // Step
+        smoother.step(t, measurements[k], u_dummy);
+
+        // Get Estimates
+        DragBallModel::State x_filt = smoother.get_filtered_state();
+        DragBallModel::State x_smooth = smoother.get_smoothed_state(std::min(k, lag));
+        // Note: For quantitative comparison at time k-L, we should compare:
+        // x_smooth from lag L (which corresponds to time k-L) vs true_state[k-L].
+        // But for visualization, we can just dump what we have.
+        // Let's compute RMSE for the *current* time k (Filtered)
+        // and for the time k-lag (Smoothed).
+
+        DragBallModel::State x_true = true_states[k];
+
+        double err_fx = x_filt(0) - x_true(0);
+        double err_fy = x_filt(1) - x_true(1);
+        rmse_filt_pos += err_fx*err_fx + err_fy*err_fy;
+
+        // Smoothed error: Look back L steps
+        if (k >= lag) {
+            DragBallModel::State x_s_lagged = smoother.get_smoothed_state(lag); // Estimate for k-lag
+            DragBallModel::State x_true_lagged = true_states[k - lag];
+
+            double err_sx = x_s_lagged(0) - x_true_lagged(0);
+            double err_sy = x_s_lagged(1) - x_true_lagged(1);
+            rmse_smooth_pos += err_sx*err_sx + err_sy*err_sy;
+            count++;
+
+             // Log for csv (using the smoothed estimate for k-lag)
+             // To make lines align in CSV, let's just log "current filtered" and "smoothed at current time if available"?
+             // Actually, usually we plot the entire trajectory.
+             // At step k, we have a smoothed estimate for k-lag.
         }
 
-        if (i % 20 == 0) {
-            std::cout << "t=" << std::fixed << std::setprecision(2) << i*dt << " | "
-                      << true_history[i](2) << " | "
-                      << filt_history[i](2) << " (" << norm_f << ") | "
-                      << smooth_history[i](2) << " (" << norm_s << ")"
-                      << std::endl;
+        // For CSV, let's log the *current* filtered and the *most refined* smoothed value for the current time?
+        // No, at time k, the best smoothed value for k is just x_filt (lag 0).
+        // The value for k will improve as we step forward.
+        // So a CSV generated on the fly is tricky for a smoother.
+        // We typically dump the final smoothed trajectory after the run.
+        // But since this is a "Fixed Lag" online algorithm, at step k we finalize the estimate for k-L.
+        // So let's log the value for k-L.
+
+        if (k >= lag) {
+             DragBallModel::State x_s = smoother.get_smoothed_state(lag);
+             DragBallModel::State x_t = true_states[k - lag];
+             DragBallModel::Observation m_t = measurements[k - lag];
+             // Filtered value for k-L was computed L steps ago. We don't have it easily here unless we cached it.
+             // But we can log the current filtered value x_filt (at k) and x_true (at k).
+             // And separate columns for "Finalized Smoothed at k-L".
+
+             out_file << (k-lag) << ","
+                      << x_t(0) << "," << x_t(1) << "," << x_t(2) << "," << x_t(3) << ","
+                      << m_t(0) << "," << m_t(1) << ","
+                      << "0,0,0,0," // We skip logging filtered for k-L here to save complexity
+                      << x_s(0) << "," << x_s(1) << "," << x_s(2) << "," << x_s(3) << "\n";
         }
     }
 
-    if (use_graphics) {
-        save_to_csv("ukf_results.csv", dt, true_history, filt_history, smooth_history, filt_cov_history, smooth_cov_history);
-        run_plotting_script("ukf_results.csv", "UKF Drag Ball Results");
+    out_file.close();
+
+    rmse_filt_pos = std::sqrt(rmse_filt_pos / steps); // This is RMSE of filtered at all steps
+    rmse_smooth_pos = std::sqrt(rmse_smooth_pos / count); // This is RMSE of smoothed at lags
+
+    std::cout << "Filtered Position RMSE (Current): " << rmse_filt_pos << std::endl;
+    std::cout << "Smoothed Position RMSE (Lagged):  " << rmse_smooth_pos << std::endl;
+    std::cout << "Results written to ukf_results.csv" << std::endl;
+
+    if (rmse_smooth_pos < rmse_filt_pos) {
+        std::cout << "SUCCESS: Smoothing reduced error." << std::endl;
+    } else {
+        std::cout << "WARNING: Smoothing did not reduce error (might be short lag or noise tuning)." << std::endl;
     }
 
-    if (count > 0) {
-        double rmse_f = std::sqrt(sum_sq_filt / count);
-        double rmse_s = std::sqrt(sum_sq_smooth / count);
-        std::cout << "\nRMSE (Pre-flush): Filtered=" << rmse_f << ", Smoothed=" << rmse_s << std::endl;
-
-        if (rmse_s < rmse_f) {
-             std::cout << "SUCCESS: Smoothing reduced error." << std::endl;
-             return 0;
-        } else {
-             std::cout << "WARNING: Smoothing did not reduce error (might be noise)." << std::endl;
-             return 0;
-        }
-    }
     return 0;
 }

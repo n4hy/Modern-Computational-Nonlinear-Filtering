@@ -1,7 +1,7 @@
 # UKF/CMakeLists.txt
 
 # Find Eigen3
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 3.4 REQUIRED)
 
 # Include Directories
 include_directories(${Eigen3_INCLUDE_DIRS})
@@ -9,9 +9,9 @@ include_directories(include)
 include_directories(${CMAKE_SOURCE_DIR}/Common/include)
 
 # Source Files
+# UKF and Smoother are now header-only templated classes.
+# We only compile main.cpp
 set(SOURCES
-    src/UKF.cpp
-    src/UnscentedFixedLagSmoother.cpp
     main.cpp
 )
 
