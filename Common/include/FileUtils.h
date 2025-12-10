@@ -5,6 +5,7 @@
 #include <vector>
 #include <fstream>
 #include <string>
+#include <algorithm> // Added for std::min
 #include <Eigen/Dense>
 
 using namespace Eigen;

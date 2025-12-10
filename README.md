@@ -11,8 +11,13 @@ The project provides a flexible framework for state estimation:
 
 ## Contents
 
-*   **EKF**: Implementation of the Extended Kalman Filter.
-*   **UKF**: Implementation of the Unscented Kalman Filter (Merwe Scaled Sigma Points).
+*   **EKF**: Extended Kalman Filter implementation and specific tests.
+*   **UKF**: Unscented Kalman Filter implementation and specific tests.
+*   **Common**: Shared headers and utilities.
+*   **scripts**: Analysis and visualization scripts.
+*   **Filters**:
+    *   `EKF`: Standard Jacobian-based Kalman Filter.
+    *   `UKF`: Merwe Scaled Sigma Point Unscented Kalman Filter.
 *   **Smoothers**:
     *   `FixedLagSmoother`: RTS smoothing logic adapted for EKF.
     *   `UnscentedFixedLagSmoother`: Unscented RTS smoothing logic for UKF.
@@ -128,14 +133,16 @@ cd ../../..
 
 ### Building the Project
 
-When building the project, you must tell CMake where to find the local Eigen installation if it's not in a system path.
+We use a standard out-of-source CMake build from the **root directory**.
 
 ```bash
-cd EKF
 mkdir build && cd build
 
-# Point Eigen3_DIR to the directory containing Eigen3Config.cmake
-cmake -D Eigen3_DIR=../../third_party/eigen_install/share/eigen3/cmake ..
+# If Eigen is installed system-wide:
+cmake ..
+
+# OR, if you used the local installation method above, point Eigen3_DIR to the directory containing Eigen3Config.cmake:
+cmake -D Eigen3_DIR=../third_party/eigen_install/share/eigen3/cmake ..
 
 make
 ```
@@ -144,28 +151,28 @@ make
 
 ### Running Tests
 
-The project includes two main test executables:
+The build will generate two test executables within the `build` directory structure:
 
-1.  **`ekf_test`**:
+1.  **`EKF/ekf_test`**:
     *   Simulates a simple Ball Toss scenario.
     *   Compares EKF Forward Filtering vs Fixed-Lag Smoothing.
     ```bash
-    ./ekf_test
+    ./EKF/ekf_test
     ```
 
-2.  **`ukf_test`**:
+2.  **`UKF/ukf_test`**:
     *   Simulates a **High-Speed Drag Ball** with random wind forces.
     *   Uses UKF and Unscented Smoothing.
     ```bash
-    ./ukf_test
+    ./UKF/ukf_test
     ```
 
 ### Graphical Output
 Both tests support a `--graphics` flag to generate and display plots of the trajectory, error, and $3\sigma$ bounds.
 
 ```bash
-./ekf_test --graphics
-./ukf_test --graphics
+./EKF/ekf_test --graphics
+./UKF/ukf_test --graphics
 ```
 *Requires Python 3 with `matplotlib` and `pandas`.*
 This will save plots to `ekf_results.png` / `ukf_results.png` and attempt to open a window if a display is available.

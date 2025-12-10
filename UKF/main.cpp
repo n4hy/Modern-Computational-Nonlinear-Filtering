@@ -20,7 +20,8 @@ double randn(double mean, double stddev, std::mt19937& gen) {
 }
 
 void run_plotting_script(const std::string& csv_file, const std::string& title) {
-    std::string cmd = "python3 ../../scripts/plot_results.py " + csv_file + " --title \"" + title + "\"";
+    // Path: ../scripts/plot_results.py assuming running from build/
+    std::string cmd = "python3 ../scripts/plot_results.py " + csv_file + " --title \"" + title + "\"";
     std::cout << "Executing: " << cmd << std::endl;
     int ret = std::system(cmd.c_str());
     if (ret != 0) {
