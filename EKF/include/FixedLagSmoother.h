@@ -21,7 +21,7 @@ struct FilterState {
 
 /**
  * Fixed Lag Smoother with Feedback.
- *
+ * 
  * Logic:
  * 1. Forward Filter advances to time T.
  * 2. If buffer size >= lag:
@@ -39,7 +39,7 @@ public:
      * Process a new measurement y at the next time step.
      * Returns true if a smoothed estimate is available (buffer full or shrinking),
      * false if accumulating buffer.
-     *
+     * 
      * If returns true, x_out and P_out contain the smoothed estimate at output_time_step.
      */
     bool process(const Eigen::VectorXd& y, Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out);
@@ -54,7 +54,7 @@ private:
     SystemModel* model_;
     EKF ekf_;
     int lag_;
-
+    
     // Buffer for RTS smoothing
     // Index 0 is oldest (T-lag), Index N is current (T)
     std::deque<FilterState> buffer_;

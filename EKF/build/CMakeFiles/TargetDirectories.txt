@@ -1,3 +1,0 @@
-/app/EKF/build/CMakeFiles/ekf_test.dir
-/app/EKF/build/CMakeFiles/edit_cache.dir
-/app/EKF/build/CMakeFiles/rebuild_cache.dir

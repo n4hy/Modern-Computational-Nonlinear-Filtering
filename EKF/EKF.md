@@ -59,7 +59,7 @@ FixedLagSmoother smoother(&model, x0, P0, lag);
 for (each measurement y) {
     Eigen::VectorXd x_out;
     Eigen::MatrixXd P_out;
-
+    
     if (smoother.process(y, x_out, P_out)) {
         // x_out is the smoothed state at time (current_time - lag)
         std::cout << "Smoothed State: " << x_out.transpose() << std::endl;
