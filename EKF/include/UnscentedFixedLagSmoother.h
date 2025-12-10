@@ -26,7 +26,10 @@ class UnscentedFixedLagSmoother {
 public:
     UnscentedFixedLagSmoother(SystemModel* model, const Eigen::VectorXd& x0, const Eigen::MatrixXd& P0, int lag);
 
-    bool process(const Eigen::VectorXd& y, Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out);
+    bool process(const Eigen::VectorXd& y,
+                 Eigen::VectorXd& x_smooth_out, Eigen::MatrixXd& P_smooth_out,
+                 Eigen::VectorXd& x_filt_out, Eigen::MatrixXd& P_filt_out);
+
     bool flush(Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out);
 
 private:
@@ -35,8 +38,6 @@ private:
     int lag_;
 
     std::deque<UKFFilterState> buffer_;
-
-    void smooth_step(std::vector<Eigen::VectorXd>& x_smooth, std::vector<Eigen::MatrixXd>& P_smooth, int i);
 };
 
 #endif // UNSCENTED_FIXED_LAG_SMOOTHER_H
