@@ -99,6 +99,7 @@ sequenceDiagram
 *   **C++ Compiler** (C++14 or later)
 *   **CMake** (3.10+)
 *   **Eigen3** (Linear Algebra Library)
+*   **Python 3** with `matplotlib` and `pandas` (Optional, for graphical results)
 
 ### Installing Eigen3
 If Eigen3 is not installed systematically, you can download it locally:
@@ -108,7 +109,7 @@ wget -qO eigen.tar.gz https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.
 tar -xzf eigen.tar.gz -C eigen_install
 mv eigen_install/eigen-3.4.0 eigen_install/eigen3
 ```
-*Note: You may need to update `CMakeLists.txt` to point to your specific Eigen installation if it's not found automatically.*
+*Note: You may need to update `CMakeLists.txt` or use `-D Eigen3_DIR=...` to point to your specific Eigen installation if it's not found automatically.*
 
 ### Building the Project
 ```bash
@@ -127,22 +128,29 @@ The project includes two main test executables:
 1.  **`ekf_test`**:
     *   Simulates a simple Ball Toss scenario.
     *   Compares EKF Forward Filtering vs Fixed-Lag Smoothing.
-    *   **Goal**: Verify basic correctness and error reduction.
     ```bash
     ./ekf_test
     ```
 
 2.  **`ukf_test`**:
     *   Simulates a **High-Speed Drag Ball** with random wind forces.
-    *   **Drag Model**: $F_d \propto -v|v|$.
-    *   **Wind**: Random process noise affecting velocity.
-    *   **Goal**: Demonstrate tracking capability in a highly nonlinear environment.
+    *   Uses UKF and Unscented Smoothing.
     ```bash
     ./ukf_test
     ```
 
+### Graphical Output
+Both tests support a `--graphics` flag to generate and display plots of the trajectory, error, and $3\sigma$ bounds.
+
+```bash
+./ekf_test --graphics
+./ukf_test --graphics
+```
+*Requires Python 3 with `matplotlib` and `pandas`.*
+This will save plots to `ekf_results.png` / `ukf_results.png` and attempt to open a window if a display is available.
+
 ### Output Interpretation
-The tests output the position/velocity at each step and compare the **Filtered Error** (Standard Filter) against the **Smoothed Error** (Feedback Smoother).
+The text output shows the position/velocity at each step and compares the **Filtered Error** (Standard Filter) against the **Smoothed Error** (Feedback Smoother).
 ```
 Results (Time | True Z | Filt Z (Err) | Smooth Z (Err)):
 t=1.00 | 15.13 | 15.03 (0.49) | 15.02 (0.45)

@@ -3,6 +3,9 @@
 #include <random>
 #include <cmath>
 #include <iomanip>
+#include <cstring>
+#include <fstream>
+#include <cstdlib>
 
 #include "BallTossModel.h"
 #include "FixedLagSmoother.h"
@@ -10,14 +13,94 @@
 using namespace Eigen;
 using namespace std;
 
-// Helper to generate Gaussian noise
+// --- Helper Functions Inlined ---
+void save_to_csv(const std::string& filename,
+                 double dt,
+                 const std::vector<VectorXd>& true_hist,
+                 const std::vector<VectorXd>& filt_hist,
+                 const std::vector<VectorXd>& smooth_hist,
+                 const std::vector<MatrixXd>& filt_cov_hist,
+                 const std::vector<MatrixXd>& smooth_cov_hist) {
+
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open " << filename << " for writing." << std::endl;
+        return;
+    }
+
+    int n = true_hist[0].size();
+
+    file << "t";
+    for(int i=0; i<n; ++i) file << ",x_true_" << i;
+    for(int i=0; i<n; ++i) file << ",x_filt_" << i;
+    for(int i=0; i<n; ++i) file << ",P_filt_" << i;
+    for(int i=0; i<n; ++i) file << ",x_smooth_" << i;
+    for(int i=0; i<n; ++i) file << ",P_smooth_" << i;
+    file << "\n";
+
+    size_t rows = std::min(true_hist.size(), smooth_hist.size());
+
+    for (size_t i = 0; i < rows; ++i) {
+        double t = i * dt;
+        file << t;
+
+        for(int j=0; j<n; ++j) file << "," << true_hist[i](j);
+
+        if (i < filt_hist.size()) {
+            for(int j=0; j<n; ++j) file << "," << filt_hist[i](j);
+            if (i < filt_cov_hist.size()) {
+                for(int j=0; j<n; ++j) file << "," << filt_cov_hist[i](j, j);
+            } else {
+                for(int j=0; j<n; ++j) file << ",0";
+            }
+        } else {
+            for(int j=0; j<n; ++j) file << ",0";
+            for(int j=0; j<n; ++j) file << ",0";
+        }
+
+        if (i < smooth_hist.size()) {
+            for(int j=0; j<n; ++j) file << "," << smooth_hist[i](j);
+            if (i < smooth_cov_hist.size()) {
+                for(int j=0; j<n; ++j) file << "," << smooth_cov_hist[i](j, j);
+            } else {
+                for(int j=0; j<n; ++j) file << ",0";
+            }
+        } else {
+            for(int j=0; j<n; ++j) file << ",0";
+            for(int j=0; j<n; ++j) file << ",0";
+        }
+
+        file << "\n";
+    }
+    file.close();
+    std::cout << "Data exported to " << filename << std::endl;
+}
+
+void run_plotting_script(const std::string& csv_file, const std::string& title) {
+    std::string cmd = "python3 ../scripts/plot_results.py " + csv_file + " --title \"" + title + "\"";
+    std::cout << "Executing: " << cmd << std::endl;
+    int ret = std::system(cmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Plotting script failed with code " << ret << std::endl;
+    }
+}
+
 double randn(double mean, double stddev, std::mt19937& gen) {
     std::normal_distribution<double> d(mean, stddev);
     return d(gen);
 }
+// --------------------------------
 
-int main() {
+int main(int argc, char* argv[]) {
+    bool use_graphics = false;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--graphics") == 0) {
+            use_graphics = true;
+        }
+    }
+
     std::cout << "Starting EKF Ball Toss Simulation (Comparison)..." << std::endl;
+    if (use_graphics) std::cout << "Graphics Enabled." << std::endl;
 
     double dt = 0.1;
     double T = 5.0;
@@ -46,6 +129,8 @@ int main() {
     std::vector<VectorXd> true_history;
     std::vector<VectorXd> smooth_history;
     std::vector<VectorXd> filt_history;
+    std::vector<MatrixXd> smooth_cov_history;
+    std::vector<MatrixXd> filt_cov_history;
 
     // Simulate Loop
     for (int k = 0; k < steps; ++k) {
@@ -66,6 +151,8 @@ int main() {
         if (ready) {
             smooth_history.push_back(x_out);
             filt_history.push_back(x_filt);
+            smooth_cov_history.push_back(P_out);
+            filt_cov_history.push_back(P_filt);
         }
     }
 
@@ -75,6 +162,8 @@ int main() {
     while(smoother.flush(x_out, P_out)) {
         smooth_history.push_back(x_out);
         filt_history.push_back(x_out);
+        smooth_cov_history.push_back(P_out);
+        filt_cov_history.push_back(P_out); // Fallback
     }
 
     // Alignment
@@ -108,6 +197,11 @@ int main() {
                       << smooth_history[i](2) << " (" << norm_s << ")"
                       << std::endl;
         }
+    }
+
+    if (use_graphics) {
+        save_to_csv("ekf_results.csv", dt, true_history, filt_history, smooth_history, filt_cov_history, smooth_cov_history);
+        run_plotting_script("ekf_results.csv", "EKF Ball Toss Results");
     }
 
     if (count > 0) {
