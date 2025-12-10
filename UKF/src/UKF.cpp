@@ -70,13 +70,17 @@ void UKF::generateSigmaPoints(const Eigen::VectorXd& x, const Eigen::MatrixXd& P
 }
 
 Eigen::MatrixXd UKF::predict() {
+    // Dummy values for u and t
+    Eigen::VectorXd u;
+    double t = 0.0;
+
     // 1. Generate Sigma Points X_k-1|k-1
     generateSigmaPoints(x_, P_, sigma_points_);
 
     // 2. Propagate Sigma Points through Process Model: X_k|k-1 = f(X_k-1|k-1)
     std::vector<VectorXd> pred_sigmas(2 * n_ + 1);
     for (size_t i = 0; i < sigma_points_.size(); ++i) {
-        pred_sigmas[i] = model_->f(sigma_points_[i]);
+        pred_sigmas[i] = model_->f(sigma_points_[i], u, t);
     }
 
     // 3. Compute Predicted Mean x_k|k-1
@@ -91,7 +95,7 @@ Eigen::MatrixXd UKF::predict() {
         VectorXd diff = pred_sigmas[i] - x_pred;
         P_pred += weights_c_(i) * diff * diff.transpose();
     }
-    P_pred += model_->Q();
+    P_pred += model_->Q(t);
 
     // 5. Compute Cross Covariance P_{x_k-1, x_k} (needed for smoothing)
     // P_{x, z} logic but here z is x_k (next state).
@@ -117,6 +121,7 @@ Eigen::MatrixXd UKF::predict() {
 
 void UKF::update(const Eigen::VectorXd& y) {
     int m = model_->getObsDim();
+    double t = 0.0;
 
     // 1. Generate Sigma Points for predicted state x_k|k-1
     // (Augmentation with measurement noise not strictly needed for additive noise)
@@ -125,7 +130,7 @@ void UKF::update(const Eigen::VectorXd& y) {
     // 2. Propagate through Measurement Model: Y = h(X)
     std::vector<VectorXd> meas_sigmas(2 * n_ + 1);
     for (size_t i = 0; i < sigma_points_.size(); ++i) {
-        meas_sigmas[i] = model_->h(sigma_points_[i]);
+        meas_sigmas[i] = model_->h(sigma_points_[i], t);
     }
 
     // 3. Predicted Measurement Mean
@@ -140,7 +145,7 @@ void UKF::update(const Eigen::VectorXd& y) {
         VectorXd diff = meas_sigmas[i] - y_pred;
         S += weights_c_(i) * diff * diff.transpose();
     }
-    S += model_->R();
+    S += model_->R(t);
 
     // 5. Cross Covariance P_xy
     MatrixXd P_xy = MatrixXd::Zero(n_, m);

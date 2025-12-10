@@ -72,6 +72,9 @@ int main(int argc, char* argv[]) {
     std::vector<MatrixXd> smooth_cov_history;
     std::vector<MatrixXd> filt_cov_history;
 
+    Eigen::VectorXd u;
+    double t = 0.0;
+
     for (int k = 0; k < steps; ++k) {
         VectorXd w(6);
         w.setZero();
@@ -79,11 +82,11 @@ int main(int argc, char* argv[]) {
         w(4) = randn(0, q_wind_std, gen);
         w(5) = randn(0, q_wind_std, gen);
 
-        x_true = model.f(x_true) + w;
+        x_true = model.f(x_true, u, t) + w;
 
         VectorXd v(3);
         for(int i=0; i<3; ++i) v(i) = randn(0, r_std, gen);
-        VectorXd y = model.h(x_true) + v;
+        VectorXd y = model.h(x_true, t) + v;
 
         true_history.push_back(x_true);
 
@@ -97,6 +100,8 @@ int main(int argc, char* argv[]) {
             smooth_cov_history.push_back(P_out);
             filt_cov_history.push_back(P_filt);
         }
+
+        t += dt;
     }
 
     // Flush

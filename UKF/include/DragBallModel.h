@@ -28,7 +28,7 @@ public:
         R_ = Eigen::MatrixXd::Identity(3, 3) * (r_std * r_std);
     }
 
-    Eigen::VectorXd f(const Eigen::VectorXd& x) const override {
+    Eigen::VectorXd f(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
         // x = [px, py, pz, vx, vy, vz]
         Eigen::VectorXd pos = x.head(3);
         Eigen::VectorXd vel = x.tail(3);
@@ -57,20 +57,20 @@ public:
         return x_next;
     }
 
-    Eigen::VectorXd h(const Eigen::VectorXd& x) const override {
+    Eigen::VectorXd h(const Eigen::VectorXd& x, double t) const override {
         // Measure position only
         return x.head(3);
     }
 
     // UKF doesn't need F and H, but we must implement the interface.
     // We'll throw or return zeros. Returning zeros is safer to avoid crashes if logged.
-    Eigen::MatrixXd F(const Eigen::VectorXd& x) const override {
+    Eigen::MatrixXd F(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
         // Jacobian of f is complex due to |v|*v term.
         // We strictly use UKF, so this shouldn't be called for filtering.
         return Eigen::MatrixXd::Zero(6, 6);
     }
 
-    Eigen::MatrixXd H(const Eigen::VectorXd& x) const override {
+    Eigen::MatrixXd H(const Eigen::VectorXd& x, double t) const override {
         Eigen::MatrixXd H_ = Eigen::MatrixXd::Zero(3, 6);
         H_(0, 0) = 1;
         H_(1, 1) = 1;
@@ -78,8 +78,8 @@ public:
         return H_;
     }
 
-    Eigen::MatrixXd Q() const override { return Q_; }
-    Eigen::MatrixXd R() const override { return R_; }
+    Eigen::MatrixXd Q(double t) const override { return Q_; }
+    Eigen::MatrixXd R(double t) const override { return R_; }
 
     int getStateDim() const override { return 6; }
     int getObsDim() const override { return 3; }

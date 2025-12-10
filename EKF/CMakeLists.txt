@@ -1,7 +1,7 @@
 # EKF/CMakeLists.txt
 
 # Find Eigen3
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 3.4 REQUIRED)
 
 # Include Directories
 include_directories(${Eigen3_INCLUDE_DIRS})
@@ -11,7 +11,7 @@ include_directories(${CMAKE_SOURCE_DIR}/Common/include)
 # Source Files
 set(SOURCES
     src/EKF.cpp
-    src/FixedLagSmoother.cpp
+    src/EKFFixedLag.cpp
     main.cpp
 )
 

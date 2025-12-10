@@ -4,92 +4,55 @@
 #include "SystemModel.h"
 
 /**
- * 3D Ball Toss System.
- * State: [x, y, z, vx, vy, vz]
- * Dynamics: Constant velocity (x,y), Constant acceleration (z)
- * Observations: [x, y, z]
+ * Ball Toss Model (Example).
+ * Included for backward compatibility, updated to new interface.
  */
 class BallTossModel : public SystemModel {
 public:
-    BallTossModel(double dt, double q_std, double r_std)
-        : dt_(dt) {
-
-        // Initialize matrices
-        // F is constant for this linear-ish system (linear dynamics actually)
-        // x_k+1 = x_k + v_k*dt + 0.5*a*dt^2 (for z)
-        // v_k+1 = v_k + a*dt (for z)
-
-        // F:
-        // 1 0 0 dt 0  0
-        // 0 1 0 0  dt 0
-        // 0 0 1 0  0  dt
-        // 0 0 0 1  0  0
-        // 0 0 0 0  1  0
-        // 0 0 0 0  0  1
-
-        F_ = Eigen::MatrixXd::Identity(6, 6);
-        F_(0, 3) = dt;
-        F_(1, 4) = dt;
-        F_(2, 5) = dt;
-
-        // H: Observe positions
-        // 1 0 0 0 0 0
-        // 0 1 0 0 0 0
-        // 0 0 1 0 0 0
-        H_ = Eigen::MatrixXd::Zero(3, 6);
-        H_(0, 0) = 1;
-        H_(1, 1) = 1;
-        H_(2, 2) = 1;
-
-        // Q: Discrete process noise
-        // Assume noise enters via acceleration
-        // G = [0.5dt^2; dt] for each dim
-        // Simplified: Diagonal Q
-        Q_ = Eigen::MatrixXd::Identity(6, 6) * (q_std * q_std);
-
-        // R: Measurement noise
-        R_ = Eigen::MatrixXd::Identity(3, 3) * (r_std * r_std);
+    BallTossModel(double dt = 0.1) : dt_(dt) {
+        Q_ = Eigen::MatrixXd::Identity(4, 4) * 0.01;
+        R_ = Eigen::MatrixXd::Identity(2, 2) * 0.1;
     }
 
-    Eigen::VectorXd f(const Eigen::VectorXd& x) const override {
-        // Linear dynamics + Gravity
-        // x_next = F*x + control(gravity)
-        Eigen::VectorXd x_next = F_ * x;
-
-        // Add gravity to z position and z velocity
-        // z_pos += -0.5 * g * dt^2
-        // z_vel += -g * dt
-        double g = 9.81;
-        x_next(2) -= 0.5 * g * dt_ * dt_;
-        x_next(5) -= g * dt_;
-
+    Eigen::VectorXd f(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
+        // Simple Physics: x = [px, py, vx, vy]
+        Eigen::VectorXd x_next = x;
+        x_next(0) += x(2) * dt_;
+        x_next(1) += x(3) * dt_;
+        x_next(3) -= 9.81 * dt_; // Gravity
         return x_next;
     }
 
-    Eigen::VectorXd h(const Eigen::VectorXd& x) const override {
-        return H_ * x;
+    Eigen::VectorXd h(const Eigen::VectorXd& x, double t) const override {
+        // Measure position
+        Eigen::VectorXd y(2);
+        y << x(0), x(1);
+        return y;
     }
 
-    Eigen::MatrixXd F(const Eigen::VectorXd& x) const override {
-        return F_;
+    Eigen::MatrixXd F(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(4, 4);
+        F(0, 2) = dt_;
+        F(1, 3) = dt_;
+        return F;
     }
 
-    Eigen::MatrixXd H(const Eigen::VectorXd& x) const override {
-        return H_;
+    Eigen::MatrixXd H(const Eigen::VectorXd& x, double t) const override {
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(2, 4);
+        H(0, 0) = 1.0;
+        H(1, 1) = 1.0;
+        return H;
     }
 
-    Eigen::MatrixXd Q() const override { return Q_; }
-    Eigen::MatrixXd R() const override { return R_; }
+    Eigen::MatrixXd Q(double t) const override { return Q_; }
+    Eigen::MatrixXd R(double t) const override { return R_; }
 
-    int getStateDim() const override { return 6; }
-    int getObsDim() const override { return 3; }
+    int getStateDim() const override { return 4; }
+    int getObsDim() const override { return 2; }
 
 private:
     double dt_;
-    Eigen::MatrixXd F_;
-    Eigen::MatrixXd H_;
-    Eigen::MatrixXd Q_;
-    Eigen::MatrixXd R_;
+    Eigen::MatrixXd Q_, R_;
 };
 
-#endif // BALL_TOSS_MODEL_H
+#endif

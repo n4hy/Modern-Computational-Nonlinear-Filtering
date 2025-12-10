@@ -1,161 +1,184 @@
 #include <iostream>
 #include <vector>
+#include <fstream>
 #include <random>
 #include <cmath>
-#include <iomanip>
-#include <cstring>
-#include <fstream>
-#include <cstdlib>
+#include "EKF.h"
+#include "EKFFixedLag.h"
+#include "NonlinearOscillator.h"
 
-#include "BallTossModel.h"
-#include "FixedLagSmoother.h"
-#include "FileUtils.h"
-
-using namespace Eigen;
-using namespace std;
-
-void run_plotting_script(const std::string& csv_file, const std::string& title) {
-    // Path: ../scripts/plot_results.py assuming running from build/
-    std::string cmd = "python3 ../scripts/plot_results.py " + csv_file + " --title \"" + title + "\"";
-    std::cout << "Executing: " << cmd << std::endl;
-    int ret = std::system(cmd.c_str());
-    if (ret != 0) {
-        std::cerr << "Plotting script failed with code " << ret << std::endl;
-    }
-}
-
-double randn(double mean, double stddev, std::mt19937& gen) {
-    std::normal_distribution<double> d(mean, stddev);
+// Helper to generate noise
+double randn(double mean, double stddev) {
+    static std::mt19937 gen(42);
+    std::normal_distribution<> d(mean, stddev);
     return d(gen);
 }
-// --------------------------------
 
-int main(int argc, char* argv[]) {
-    bool use_graphics = false;
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--graphics") == 0) {
-            use_graphics = true;
-        }
-    }
+int main() {
+    // 1. Setup Simulation
+    double dt = 0.05;
+    int steps = 200;
+    NonlinearOscillator model(dt);
 
-    std::cout << "Starting EKF Ball Toss Simulation (Comparison)..." << std::endl;
-    if (use_graphics) std::cout << "Graphics Enabled." << std::endl;
+    Eigen::VectorXd x_true(2);
+    x_true << 1.0, 0.0; // Initial state: pos=1, vel=0
 
-    double dt = 0.1;
-    double T = 5.0;
-    int steps = static_cast<int>(T / dt);
-    double q_std = 0.01;
-    double r_std = 0.5;
-    int lag = 5;
+    // Arrays to store history
+    std::vector<double> time_hist;
+    std::vector<Eigen::VectorXd> x_true_hist;
+    std::vector<Eigen::VectorXd> y_meas_hist;
 
-    BallTossModel model(dt, q_std, r_std);
-
-    VectorXd x_true(6);
-    x_true << 0, 0, 0, 10, 5, 20;
-
-    VectorXd x_est = x_true;
-    x_est(0) += 2.0;
-    x_est(3) -= 1.0;
-
-    MatrixXd P_est = MatrixXd::Identity(6, 6) * 1.0;
-    P_est(3,3) = 5.0; P_est(4,4) = 5.0; P_est(5,5) = 5.0;
-
-    std::random_device rd;
-    std::mt19937 gen(42);
-
-    FixedLagSmoother smoother(&model, x_est, P_est, lag);
-
-    std::vector<VectorXd> true_history;
-    std::vector<VectorXd> smooth_history;
-    std::vector<VectorXd> filt_history;
-    std::vector<MatrixXd> smooth_cov_history;
-    std::vector<MatrixXd> filt_cov_history;
-
-    // Simulate Loop
+    std::cout << "Generating Data..." << std::endl;
     for (int k = 0; k < steps; ++k) {
-        VectorXd w(6);
-        for(int i=0; i<6; ++i) w(i) = randn(0, q_std, gen);
-        x_true = model.f(x_true) + w;
+        double t = k * dt;
 
-        VectorXd v(3);
-        for(int i=0; i<3; ++i) v(i) = randn(0, r_std, gen);
-        VectorXd y = model.h(x_true) + v;
+        // Propagate truth (no process noise in truth generation for smoother curve, or add it?)
+        // Let's add process noise to make it interesting for the filter
+        Eigen::VectorXd u(0); // No control
+        Eigen::VectorXd w(2);
+        w << randn(0, 0.01), randn(0, 0.01);
 
-        true_history.push_back(x_true);
+        x_true = model.f(x_true, u, t) + w;
 
-        VectorXd x_out, x_filt;
-        MatrixXd P_out, P_filt;
-        bool ready = smoother.process(y, x_out, P_out, x_filt, P_filt);
+        // Generate measurement
+        Eigen::VectorXd v(1);
+        v << randn(0, 0.1);
+        Eigen::VectorXd y = model.h(x_true, t) + v;
 
-        if (ready) {
-            smooth_history.push_back(x_out);
-            filt_history.push_back(x_filt);
-            smooth_cov_history.push_back(P_out);
-            filt_cov_history.push_back(P_filt);
-        }
+        time_hist.push_back(t);
+        x_true_hist.push_back(x_true);
+        y_meas_hist.push_back(y);
     }
 
-    // Flush
-    VectorXd x_out, x_filt;
-    MatrixXd P_out, P_filt;
-    while(smoother.flush(x_out, P_out)) {
-        smooth_history.push_back(x_out);
-        filt_history.push_back(x_out);
-        smooth_cov_history.push_back(P_out);
-        filt_cov_history.push_back(P_out); // Fallback
-    }
+    // 2. Setup Filter and Smoother
+    int lag = 10;
+    Eigen::VectorXd x0 = Eigen::VectorXd::Zero(2); // Imperfect initialization
+    Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(2, 2) * 1.0;
 
-    // Alignment
-    VectorXd x_init_true(6);
-    x_init_true << 0, 0, 0, 10, 5, 20;
-    true_history.insert(true_history.begin(), x_init_true);
+    EKFFixedLag smoother(&model, x0, P0, lag);
 
-    int n = std::min(true_history.size(), smooth_history.size());
+    // Store results
+    std::vector<Eigen::VectorXd> x_filt_hist;
+    std::vector<Eigen::VectorXd> x_smooth_hist;
 
-    double sum_sq_filt = 0, sum_sq_smooth = 0;
-    int count = 0;
+    std::cout << "Running EKF + Smoother..." << std::endl;
+    for (int k = 0; k < steps; ++k) {
+        Eigen::VectorXd u(0);
+        smoother.step(y_meas_hist[k], u, time_hist[k]);
 
-    std::cout << "\nResults (Time | True Z | Filt Z (Err) | Smooth Z (Err)):" << std::endl;
-    for (int i = 0; i < n; ++i) {
-        VectorXd err_s = true_history[i] - smooth_history[i];
-        VectorXd err_f = true_history[i] - filt_history[i];
+        auto [x_filt, P_filt] = smoother.getFilteredState();
+        // Get smoothed state at lag L (returns x_{k-L|k})
+        // For plotting, we want to align time.
+        // x_smooth_hist will store the *final* smoothed estimate for each time step.
+        // But the smoother only gives us the estimate at k-L fully smoothed.
+        // Actually, we can retrieve smoothed estimate for *current* time k (which is same as filtered)
+        // or any time in window.
+        // To build a "Best Estimate" trajectory, we usually wait until we have the full lag.
+        // So at step k, we get the smoothed estimate for k-lag.
 
-        double norm_s = err_s.norm();
-        double norm_f = err_f.norm();
+        x_filt_hist.push_back(x_filt);
 
-        if (i < n - lag) {
-             sum_sq_filt += norm_f * norm_f;
-             sum_sq_smooth += norm_s * norm_s;
-             count++;
-        }
+        // We will store the smoothed estimate for time k-lag
+        // If k < lag, we don't have a fully smoothed estimate for k-lag yet (it's negative time).
+        // Let's just store what we have.
+        // A common way to plot is to plot x_{t|T} (fixed interval) or x_{t|t+L} (fixed lag).
+        // Here we build the x_{t|t+L} trajectory.
 
-        if (i % 10 == 0) {
-            std::cout << "t=" << std::fixed << std::setprecision(2) << i*dt << " | "
-                      << true_history[i](2) << " | "
-                      << filt_history[i](2) << " (" << norm_f << ") | "
-                      << smooth_history[i](2) << " (" << norm_s << ")"
-                      << std::endl;
-        }
-    }
-
-    if (use_graphics) {
-        save_to_csv("ekf_results.csv", dt, true_history, filt_history, smooth_history, filt_cov_history, smooth_cov_history);
-        run_plotting_script("ekf_results.csv", "EKF Ball Toss Results");
-    }
-
-    if (count > 0) {
-        double rmse_f = std::sqrt(sum_sq_filt / count);
-        double rmse_s = std::sqrt(sum_sq_smooth / count);
-        std::cout << "\nRMSE (Pre-flush): Filtered=" << rmse_f << ", Smoothed=" << rmse_s << std::endl;
-
-        if (rmse_s < rmse_f) {
-             std::cout << "SUCCESS: Smoothing reduced error." << std::endl;
-             return 0;
+        if (k >= lag) {
+            auto [x_s, P_s] = smoother.getSmoothedState(lag);
+            x_smooth_hist.push_back(x_s);
         } else {
-             std::cout << "WARNING: Smoothing did not reduce error (might be noise)." << std::endl;
-             return 0;
+            // Placeholder or wait?
+            // Let's push back zero or handled later
+            // We will just offset the plot logic.
         }
     }
+
+    // 3. Compute RMSE
+    // Compare x_true[k] with x_filt[k]
+    // Compare x_true[k-lag] with x_smooth[k-lag|k] (which is what we stored)
+
+    double mse_filt = 0.0;
+    double mse_smooth = 0.0;
+    int smooth_count = 0;
+
+    std::ofstream file("ekf_results.csv");
+    file << "t,true_pos,true_vel,meas,filt_pos,filt_vel,smooth_pos,smooth_vel\n";
+
+    for (int k = 0; k < steps; ++k) {
+        // Filter Error
+        Eigen::VectorXd err_f = x_true_hist[k] - x_filt_hist[k];
+        mse_filt += err_f.squaredNorm();
+
+        double smooth_pos = 0.0; // NaN placeholder in CSV usually better, using 0 for now
+        double smooth_vel = 0.0;
+
+        if (k >= lag) {
+            int time_idx = k - lag;
+            // The x_smooth_hist was pushed when k >= lag.
+            // The first entry in x_smooth_hist corresponds to k=lag, time_idx=0.
+            int hist_idx = k - lag;
+
+            Eigen::VectorXd x_s = x_smooth_hist[hist_idx];
+            Eigen::VectorXd err_s = x_true_hist[time_idx] - x_s;
+            mse_smooth += err_s.squaredNorm();
+            smooth_count++;
+
+            smooth_pos = x_s(0);
+            smooth_vel = x_s(1);
+
+            // For CSV, we want to align rows by time t.
+            // But we are iterating k (current time).
+            // Let's write the CSV based on time index 't' where we have data.
+        }
+    }
+
+    double rmse_filt = std::sqrt(mse_filt / steps);
+    double rmse_smooth = (smooth_count > 0) ? std::sqrt(mse_smooth / smooth_count) : 0.0;
+
+    std::cout << "Filter RMSE:   " << rmse_filt << std::endl;
+    std::cout << "Smoother RMSE: " << rmse_smooth << " (Lag " << lag << ")" << std::endl;
+
+    // Rewrite CSV properly aligned by time index 'i'
+    // We have:
+    // x_true_hist[i] for i = 0..steps-1
+    // x_filt_hist[i] for i = 0..steps-1 (Estimate of x_i given y_0..y_i)
+    // x_smooth_hist has entry for i = 0..(steps-1-lag).
+    //   x_smooth_hist[0] is estimate of x_0 given y_0..y_L
+
+    // We can only plot smoothed data up to steps-1-lag.
+
+    for (int i = 0; i < steps; ++i) {
+        double t = time_hist[i];
+        double tp = x_true_hist[i](0);
+        double tv = x_true_hist[i](1);
+        double m = y_meas_hist[i](0);
+
+        double fp = x_filt_hist[i](0);
+        double fv = x_filt_hist[i](1);
+
+        double sp = 0.0;
+        double sv = 0.0;
+
+        // Do we have a smoothed estimate for time i?
+        // We get smoothed estimate for time i when simulation reaches i + lag.
+        // So we need k = i + lag < steps.
+        if (i + lag < steps) {
+            // The value was stored in x_smooth_hist[k - lag] = x_smooth_hist[i]
+            sp = x_smooth_hist[i](0);
+            sv = x_smooth_hist[i](1);
+        } else {
+            // Use filtered as fallback or mark empty?
+            // Let's use filtered for the "tail" where lag window isn't full yet?
+            // Or just leave 0. Let's leave 0 to see the lag effect.
+        }
+
+        file << t << "," << tp << "," << tv << "," << m << ","
+             << fp << "," << fv << "," << sp << "," << sv << "\n";
+    }
+
+    file.close();
+    std::cout << "Results saved to ekf_results.csv" << std::endl;
 
     return 0;
 }

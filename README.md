@@ -1,187 +1,77 @@
-# Modern Computational Nonlinear Filtering
+# Extended Kalman Filter (EKF) and Unscented Kalman Filter (UKF) with Fixed-Lag Smoothing
 
-This repository implements high-performance, nonlinear filtering and smoothing algorithms in C++. It focuses on handling complex dynamical systems with noise using Extended Kalman Filters (EKF) and Unscented Kalman Filters (UKF), coupled with a robust Fixed-Lag Smoother architecture.
+This repository provides robust C++ implementations of the Extended Kalman Filter (EKF) and Unscented Kalman Filter (UKF), featuring Fixed-Lag Smoothing (Windowed RTS Smoother). It handles nonlinear state-space models with time-varying dynamics and control inputs.
 
-## Overview
+## Prerequisites
 
-The project provides a flexible framework for state estimation:
-*   **System Models**: Abstract base classes for defining nonlinear dynamics ($f$) and observations ($h$).
-*   **Filters**: Standard EKF (Jacobian-based) and UKF (Sigma-Point based).
-*   **Smoothers**: Fixed-Lag Smoothing with Feedback. This advanced architecture uses the smoothed estimate at the tail of the lag window to reset the forward filter, allowing for iterative refinement of the trajectory and better handling of linearization errors.
+*   **C++ Compiler**: C++17 compliant compiler (e.g., GCC 7+, Clang 5+).
+*   **CMake**: Version 3.10 or higher.
+*   **Eigen3**: Linear algebra library (version 3.4.0 recommended).
+*   **Python 3**: For visualization scripts (requires `pandas`, `matplotlib`).
 
-## Contents
+## Building the Project
 
-*   **EKF**: Extended Kalman Filter implementation and specific tests.
-*   **UKF**: Unscented Kalman Filter implementation and specific tests.
-*   **Common**: Shared headers and utilities.
-*   **scripts**: Analysis and visualization scripts.
-*   **Filters**:
-    *   `EKF`: Standard Jacobian-based Kalman Filter.
-    *   `UKF`: Merwe Scaled Sigma Point Unscented Kalman Filter.
-*   **Smoothers**:
-    *   `FixedLagSmoother`: RTS smoothing logic adapted for EKF.
-    *   `UnscentedFixedLagSmoother`: Unscented RTS smoothing logic for UKF.
-*   **Models**:
-    *   `BallTossModel`: Simple projectile motion (linear-ish).
-    *   `DragBallModel`: High-speed projectile with quadratic air drag and wind turbulence (highly nonlinear).
-
-## Architecture & Diagrams
-
-### Class Structure
-
-```mermaid
-classDiagram
-    class SystemModel {
-        +f(x) VectorXd
-        +h(x) VectorXd
-        +F(x) MatrixXd
-        +H(x) MatrixXd
-        +Q() MatrixXd
-        +R() MatrixXd
-    }
-
-    class DragBallModel {
-        +f(x)
-        +h(x)
-    }
-
-    class UKF {
-        +predict() MatrixXd
-        +update(y)
-        +getState()
-        -generateSigmaPoints()
-    }
-
-    class UnscentedFixedLagSmoother {
-        +process(y)
-        +flush()
-        -smooth_step()
-    }
-
-    SystemModel <|-- DragBallModel
-    UKF --> SystemModel : Uses
-    UnscentedFixedLagSmoother --> UKF : Wraps & Resets
-    UnscentedFixedLagSmoother --> SystemModel : Uses
-```
-
-### Smoothing Feedback Loop
-
-The core innovation is the feedback loop where the smoothed "past" corrects the "present" filter trajectory.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Smoother
-    participant Filter (EKF/UKF)
-    participant Buffer
-
-    User->>Smoother: process(y_k)
-    Smoother->>Filter: predict() & update(y_k)
-    Filter-->>Smoother: x_k|k, P_k|k
-    Smoother->>Buffer: Push(x_k, P_k, y_k)
-
-    alt Buffer Size > Lag
-        Smoother->>Buffer: Get Window [T-Lag ... T]
-        Smoother->>Smoother: Run RTS Backward (T -> T-Lag)
-        Smoother->>Buffer: Update Head (T-Lag) with Smoothed State
-
-        Note over Smoother, Filter: FEEDBACK STEP
-        Smoother->>Filter: Reset State to Smoothed(T-Lag)
-
-        loop Re-propagate T-Lag to T
-            Smoother->>Filter: predict() & update(y_i)
-            Filter-->>Smoother: Updated Estimate
-            Smoother->>Buffer: Update stored estimates
-        end
-    end
-
-    Smoother-->>User: Return Smoothed(T-Lag)
-```
-
-## Installation & Build
-
-### Prerequisites
-*   **C++ Compiler** (C++14 or later)
-*   **CMake** (3.10+)
-*   **Eigen3** (Linear Algebra Library)
-*   **Python 3** with `matplotlib` and `pandas` (Optional, for graphical results)
-
-### Installing Eigen3 (Complete Local Solution)
-
-This project relies on Eigen3. Ideally, it should be installed via your system package manager (e.g., `sudo apt-get install libeigen-dev` on Ubuntu). If you do not have root access or require a specific version, follow these steps to install it locally within the project structure.
-
-#### 1. Download and Extract
-Create a `third_party` directory and download Eigen 3.4.0:
-```bash
-mkdir -p third_party
-wget -qO eigen.tar.gz https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
-tar -xzf eigen.tar.gz -C third_party
-mv third_party/eigen-3.4.0 third_party/eigen3
-rm eigen.tar.gz
-```
-
-#### 2. Configure and Install Locally
-We will build and install Eigen into a local `eigen_install` directory. This generates the necessary CMake configuration files required by `find_package`.
-```bash
-cd third_party/eigen3
-mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=../../eigen_install ..
-make install
-cd ../../..
-```
-*After this step, the Eigen headers and cmake config files will be in `third_party/eigen_install`.*
-
-### Building the Project
-
-We use a standard out-of-source CMake build from the **root directory**.
-
-```bash
-mkdir build && cd build
-
-# If Eigen is installed system-wide:
-cmake ..
-
-# OR, if you used the local installation method above, point Eigen3_DIR to the directory containing Eigen3Config.cmake:
-cmake -D Eigen3_DIR=../third_party/eigen_install/share/eigen3/cmake ..
-
-make
-```
-
-## Usage
-
-### Running Tests
-
-The build will generate two test executables within the `build` directory structure:
-
-1.  **`EKF/ekf_test`**:
-    *   Simulates a simple Ball Toss scenario.
-    *   Compares EKF Forward Filtering vs Fixed-Lag Smoothing.
+1.  **Install Eigen3** (if not already installed):
+    You can install it via your package manager or build from source.
     ```bash
-    ./EKF/ekf_test
+    # Ubuntu/Debian
+    sudo apt-get install libeigen3-dev
+
+    # Or local install (useful for environments without root access):
+    mkdir -p eigen_install
+    wget -qO eigen.tar.gz https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
+    tar -xzf eigen.tar.gz -C eigen_install
+    mv eigen_install/eigen-3.4.0 eigen_install/eigen3
+    # When running cmake, use: -DEIGEN3_INCLUDE_DIR=/path/to/eigen_install/eigen3
     ```
 
-2.  **`UKF/ukf_test`**:
-    *   Simulates a **High-Speed Drag Ball** with random wind forces.
-    *   Uses UKF and Unscented Smoothing.
+2.  **Build**:
     ```bash
-    ./UKF/ukf_test
+    mkdir build
+    cd build
+    cmake ..  # Add -DEIGEN3_INCLUDE_DIR=... if needed
+    make
     ```
 
-### Graphical Output
-Both tests support a `--graphics` flag to generate and display plots of the trajectory, error, and $3\sigma$ bounds.
+## Running the Examples
+
+### EKF with Fixed-Lag Smoothing (Nonlinear Oscillator)
+This example simulates a damped nonlinear pendulum and compares the Filtered estimate vs. the Smoothed estimate.
 
 ```bash
-./EKF/ekf_test --graphics
-./UKF/ukf_test --graphics
+cd build
+./EKF/ekf_test
 ```
-*Requires Python 3 with `matplotlib` and `pandas`.*
-This will save plots to `ekf_results.png` / `ukf_results.png` and attempt to open a window if a display is available.
+This will generate `ekf_results.csv`.
 
-### Output Interpretation
-The text output shows the position/velocity at each step and compares the **Filtered Error** (Standard Filter) against the **Smoothed Error** (Feedback Smoother).
+To plot the results:
+```bash
+python3 ../scripts/plot_results.py
 ```
-Results (Time | True Z | Filt Z (Err) | Smooth Z (Err)):
-t=1.00 | 15.13 | 15.03 (0.49) | 15.02 (0.45)
-...
-SUCCESS: Smoothing reduced error.
+This produces `ekf_results.png`.
+
+### UKF with Fixed-Lag Smoothing (Drag Ball)
+This example simulates a ball falling with air drag and wind gusts.
+
+```bash
+cd build
+./UKF/ukf_test
 ```
+
+## Code Structure
+
+*   `Common/`: Shared headers, including the abstract `SystemModel` class.
+*   `EKF/`: EKF implementation.
+    *   `EKF.h/cpp`: Core EKF algorithm (Joseph form update, robust numerics).
+    *   `EKFFixedLag.h/cpp`: Windowed RTS Smoother.
+    *   `NonlinearOscillator.h`: Example model.
+*   `UKF/`: UKF implementation.
+    *   `UKF.h/cpp`: Core UKF algorithm.
+    *   `UnscentedFixedLagSmoother.h/cpp`: Smoother implementation.
+*   `scripts/`: Python visualization tools.
+
+## Key Features
+
+*   **Robust Numerics**: Uses Joseph form for covariance updates to maintain positive definiteness. Uses robust linear solvers (Cholesky/QR) instead of explicit inverses where possible.
+*   **Modular Design**: Models are defined separately from the filter logic via the `SystemModel` interface.
+*   **Time-Varying & Control**: Fully supports `f(x, u, t)` and `h(x, t)` dynamics.
