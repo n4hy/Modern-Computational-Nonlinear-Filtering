@@ -8,3 +8,4 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Add subdirectories
 add_subdirectory(EKF)
 add_subdirectory(UKF)
+add_subdirectory(PKF)
