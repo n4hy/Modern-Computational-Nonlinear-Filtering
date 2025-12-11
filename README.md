@@ -1,10 +1,11 @@
-# Extended Kalman Filter (EKF) and Unscented Kalman Filter (UKF) with Fixed-Lag Smoothing
+# Extended Kalman Filter (EKF), Unscented Kalman Filter (UKF), and Particle Filter (PKF) with Fixed-Lag Smoothing
 
-This repository provides robust C++ implementations of the Extended Kalman Filter (EKF) and Unscented Kalman Filter (UKF), featuring Fixed-Lag Smoothing (Windowed RTS Smoother). It handles nonlinear state-space models with time-varying dynamics and control inputs.
+This repository provides robust C++ implementations of the Extended Kalman Filter (EKF), Unscented Kalman Filter (UKF), and Particle Filter (PKF). All implementations feature Fixed-Lag Smoothing capabilities. It handles nonlinear state-space models with time-varying dynamics, control inputs, and non-Gaussian noise (PKF).
 
-The project demonstrates two different C++ design patterns:
+The project demonstrates three different C++ design patterns:
 1.  **EKF**: Uses **dynamic sizing** (runtime dimensions) suitable for flexible applications.
 2.  **UKF**: Uses **static templating** (compile-time dimensions) using C++20, optimizing for performance and type safety.
+3.  **PKF**: Uses **static templating** with a generalized interface for **non-Gaussian** processes.
 
 ## Prerequisites
 
@@ -90,14 +91,35 @@ python3 ../scripts/ukf_plot_results.py ukf_results.csv
 ```
 This produces `ukf_results.png`.
 
+### PKF with Fixed-Lag Smoothing
+Simulates a **Lorenz-63** (Chaotic System).
+*   **State**: [x, y, z]
+*   **Observation**: [x, y, z] with **Student-t** noise.
+*   **Features**: Bootstrap Particle Filter with Systematic/Stratified Resampling and Ancestry Tracking Smoother.
+
+```bash
+cd build
+./PKF/pkf_example
+```
+Produces `pkf_results.csv`.
+
+To plot the PKF results:
+```bash
+python3 ../scripts/pkf_plot_results.py pkf_results.csv
+```
+This produces `pkf_results.png`.
+
 ## Algorithm Details
 
-### Fixed-Lag Smoother
+### Fixed-Lag Smoother (EKF & UKF)
 Both implementations use a **Windowed Rauch-Tung-Striebel (RTS)** smoother.
 1.  **Forward Pass**: Standard Kalman Filter (EKF/UKF) runs online. A buffer stores the last $L$ estimates and predictions.
 2.  **Backward Pass**: At each step, the smoother recurses backward from the current time $k$ to $k-L$ using the stored correlations (Cross-covariance $P_{x_k, x_{k+1}}$).
 
-This provides a refined estimate of the state at time $k-L$ (and intermediate steps) using all data up to time $k$.
+### Fixed-Lag Smoother (PKF)
+Uses an **Ancestry Tracking** approach.
+1.  **Forward Pass**: Standard Bootstrap Particle Filter with resampling. Stores particle history and parent indices for the last $L$ steps.
+2.  **Smoothing**: Reconstructs trajectories by backtracking parent indices from $k$ to $k-L$ to approximate $p(x_{k-L} | y_{1:k})$.
 
 ### Design & Architecture
 
@@ -113,6 +135,13 @@ This provides a refined estimate of the state at time $k-L$ (and intermediate st
 *   **Matrices**: `Eigen::Matrix<double, NX, NY>` (Fixed size).
 *   **Performance**: No heap allocation for matrices during steps.
 *   **Requirements**: C++20 Concepts (implicit), Templated Interfaces.
+
+#### PKF (Non-Gaussian/Static)
+*   **Directory**: `PKF/`
+*   **Base Class**: `PKF/include/state_space_model.hpp`
+*   **Matrices**: `Eigen::Matrix<double, NX, NY>` (Fixed size).
+*   **Features**: Supports custom likelihoods (e.g., Student-t) and particle-based representation.
+*   **Requirements**: C++20.
 
 ## Project Structure
 
@@ -135,7 +164,19 @@ This provides a refined estimate of the state at time $k-L$ (and intermediate st
 │   │   ├── SigmaPoints.h           # Sigma Point Generation
 │   │   └── DragBallModel.h         # Example Model
 │   └── main.cpp            # Test Harness
+├── PKF/                    # Particle Filter
+│   ├── include/
+│   │   ├── particle_filter.hpp
+│   │   ├── particle_fixed_lag.hpp
+│   │   ├── state_space_model.hpp
+│   │   ├── noise_models.hpp
+│   │   └── resampling.hpp
+│   ├── src/
+│   │   └── example_main.cpp    # Lorenz-63 Example
+│   └── tests/
+│       └── test_particle.cpp
 └── scripts/                # Visualization
     ├── plot_results.py     # EKF Plotter
-    └── ukf_plot_results.py # UKF Plotter
+    ├── ukf_plot_results.py # UKF Plotter
+    └── pkf_plot_results.py # PKF Plotter
 ```
