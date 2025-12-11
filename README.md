@@ -218,3 +218,7 @@ Combines Ancestry Tracking (for nonlinear part) with Rauch-Tung-Striebel-like lo
     ├── ukf_plot_results.py # UKF Plotter
     └── pkf_plot_results.py # PKF Plotter
 ```
+
+## Related Repositories
+
+*   **[OptimizedKernelsForRaspberryPi5](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5)**: Optimized mathematics kernels library using NEON, Vulkan, etc., intended for Raspberry Pi 5.
