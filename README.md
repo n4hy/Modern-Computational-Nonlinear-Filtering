@@ -6,6 +6,7 @@ The project demonstrates three different C++ design patterns:
 1.  **EKF**: Uses **dynamic sizing** (runtime dimensions) suitable for flexible applications.
 2.  **UKF**: Uses **static templating** (compile-time dimensions) using C++20, optimizing for performance and type safety.
 3.  **PKF**: Uses **static templating** with a generalized interface for **non-Gaussian** processes.
+*   **RBPKF**: Uses **Rao-Blackwellization** to separate the state into a nonlinear part (Particle Filter) and a conditionally linear part (Kalman Filter), offering a balance between performance and flexibility for mixed systems.
 
 ## Prerequisites
 
@@ -109,6 +110,18 @@ python3 ../scripts/pkf_plot_results.py pkf_results.csv
 ```
 This produces `pkf_results.png`.
 
+### RBPF with Fixed-Lag Smoothing
+Simulates a **CTRV** (Coordinated Turn Rate Velocity) model.
+*   **Nonlinear State**: Turn Rate (omega)
+*   **Linear State**: [x, y, vx, vy]
+*   **Observation**: [x, y] Position measurement.
+*   **Features**: Rao-Blackwellized PF (PF for omega, KF for kinematic state).
+
+```bash
+cd build
+./RBPKF/example_rbpf_ctrv
+```
+
 ## Algorithm Details
 
 ### Fixed-Lag Smoother (EKF & UKF)
@@ -120,6 +133,11 @@ Both implementations use a **Windowed Rauch-Tung-Striebel (RTS)** smoother.
 Uses an **Ancestry Tracking** approach.
 1.  **Forward Pass**: Standard Bootstrap Particle Filter with resampling. Stores particle history and parent indices for the last $L$ steps.
 2.  **Smoothing**: Reconstructs trajectories by backtracking parent indices from $k$ to $k-L$ to approximate $p(x_{k-L} | y_{1:k})$.
+
+### Fixed-Lag Smoother (RBPKF)
+Combines Ancestry Tracking (for nonlinear part) with Rauch-Tung-Striebel-like logic (for linear part).
+1.  **Forward Pass**: RBPF maintains particles and per-particle Kalman Filters. Stores ancestry (parents) and filter history.
+2.  **Smoothing**: Backtracks particle ancestry for the nonlinear state. For the linear state, computes the weighted average of the stored Kalman Filter estimates corresponding to the ancestral path.
 
 ### Design & Architecture
 
@@ -142,6 +160,12 @@ Uses an **Ancestry Tracking** approach.
 *   **Matrices**: `Eigen::Matrix<double, NX, NY>` (Fixed size).
 *   **Features**: Supports custom likelihoods (e.g., Student-t) and particle-based representation.
 *   **Requirements**: C++20.
+
+#### RBPKF (Mixed/Static)
+*   **Directory**: `RBPKF/`
+*   **Structure**: Clean library structure (`include/rbpf/`, `src/`).
+*   **Features**: Rao-Blackwellization (PF + KF).
+*   **Requirements**: C++20, Eigen 3.4+.
 
 ## Project Structure
 
@@ -175,6 +199,20 @@ Uses an **Ancestry Tracking** approach.
 │   │   └── example_main.cpp    # Lorenz-63 Example
 │   └── tests/
 │       └── test_particle.cpp
+├── RBPKF/                  # Rao-Blackwellized Particle Filter
+│   ├── include/rbpf/
+│   │   ├── rbpf_core.hpp
+│   │   ├── kalman_filter.hpp
+│   │   ├── resampling.hpp
+│   │   ├── state_space_models.hpp
+│   │   ├── types.hpp
+│   │   └── rbpf_config.hpp
+│   ├── src/
+│   │   └── resampling.cpp
+│   ├── examples/
+│   │   └── example_rbpf_ctrv.cpp
+│   └── tests/
+│       └── test_rbpf_basic.cpp
 └── scripts/                # Visualization
     ├── plot_results.py     # EKF Plotter
     ├── ukf_plot_results.py # UKF Plotter
