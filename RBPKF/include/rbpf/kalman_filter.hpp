@@ -7,8 +7,6 @@
 
 namespace rbpf {
 
-using namespace optmath::neon;
-
 /**
  * @brief Generic reusable Kalman Filter class.
  *

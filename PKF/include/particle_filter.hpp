@@ -44,10 +44,6 @@ public:
         // Seed RNG
         std::random_device rd;
         rng_.seed(rd());
-
-        // Initialize Vulkan Context (singleton)
-        // If it fails, we fall back to CPU silently or log?
-        // VulkanContext::get().init(); // usage not fully detailed in header, assuming safe to call
     }
 
     // Allow setting fixed seed
@@ -76,13 +72,6 @@ public:
         // 1. Propagation
         // We compute deterministic part and noise separately to allow potential batching
 
-        // Buffers for batching
-        // Flattened size: N * NX
-        // Only use batching if N is large enough and Vulkan is available
-        // bool use_vulkan = (N_ >= 1000) && optmath::vulkan::is_available();
-        // For now, let's stick to CPU for the propagation logic as moving 'model->propagate' to GPU is hard.
-        // But we can batch the addition: particles = prop + noise.
-
         // Temporary vectors
         std::vector<State> props(N_);
         std::vector<State> noises(N_);
@@ -92,25 +81,13 @@ public:
             noises[i] = model_->sample_process_noise(t_k, rng_);
         }
 
-        // Add noise
-        // If NX is small (e.g. 3), and N is 2000, we have 6000 floats.
-        // CPU add is extremely fast. Vulkan latency might kill it.
-        // But user asked to use it.
-
-        /*
-           Vulkan Integration Attempt:
-           Flatten props and noises into VectorXf.
-           Call vulkan_vec_add.
-           Unflatten.
-        */
+        // Vulkan Acceleration for Noise Addition
         if (N_ > 100 && optmath::vulkan::is_available()) {
              // Create large vectors
-             // Note: Copying overhead!
              Eigen::VectorXf flat_props(N_ * NX);
              Eigen::VectorXf flat_noises(N_ * NX);
 
              for (size_t i = 0; i < N_; ++i) {
-                 // Map segments
                  flat_props.segment<NX>(i * NX) = props[i];
                  flat_noises.segment<NX>(i * NX) = noises[i];
              }
