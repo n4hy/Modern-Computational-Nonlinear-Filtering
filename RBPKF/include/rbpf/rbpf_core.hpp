@@ -12,6 +12,7 @@
 #include <numeric>
 #include <algorithm>
 #include <iostream>
+#include <numbers>
 
 namespace rbpf {
 
@@ -23,7 +24,7 @@ struct RbpfParticle {
 
     NonlinearState    x_nl;
     LinearKalmanFilter<Types> kf;
-    double            log_weight;
+    float             log_weight;
 };
 
 template<typename Types,
@@ -59,7 +60,7 @@ public:
     void initialize(const NonlinearState& x_nl0,
                     const LinearState&    x_lin0,
                     const LinearCov&      P_lin0) {
-        double init_log_weight = -std::log(static_cast<double>(config_.num_particles));
+        float init_log_weight = -std::log(static_cast<float>(config_.num_particles));
 
         for (auto& p : particles_) {
             p.x_nl = x_nl0;
@@ -72,16 +73,16 @@ public:
         }
     }
 
-    void step(double t_k,
+    void step(float t_k,
               const Observation& y_k,
               const NonlinearState& u_k) {
 
-        Eigen::MatrixXd A(Types::Nlin, Types::Nlin);
-        Eigen::MatrixXd B(Types::Nlin, Types::Nlin);
+        Eigen::MatrixXf A(Types::Nlin, Types::Nlin);
+        Eigen::MatrixXf B(Types::Nlin, Types::Nlin);
         LinearState bias;
         LinearCov Q;
 
-        Eigen::MatrixXd H(Types::Ny, Types::Nlin);
+        Eigen::MatrixXf H(Types::Ny, Types::Nlin);
         Observation offset;
         ObsCov R;
 
@@ -103,13 +104,18 @@ public:
 
             conditional_model_.get_observation(p.x_nl, t_k, offset, H, R);
 
-            Observation y_pred = H * p.kf.x + offset;
+            // Likelihood calculation
+            // y_pred = H * x + offset
+            Eigen::MatrixXf Hx = H * p.kf.x;
+            Observation y_pred = Hx + offset;
             Observation innovation = y_k - y_pred;
+
+            // S = H * P * H^T + R
             ObsCov S = H * p.kf.P * H.transpose() + R;
 
-            double log_det = std::log(S.determinant());
-            double mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
-            double log_lik = -0.5 * (mahalanobis + log_det + Types::Ny * std::log(2 * M_PI));
+            float log_det = std::log(S.determinant());
+            float mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
+            float log_lik = -0.5f * (mahalanobis + log_det + static_cast<float>(Types::Ny) * std::log(2.0f * std::numbers::pi_v<float>));
 
             p.log_weight += log_lik;
 
@@ -118,13 +124,13 @@ public:
 
         normalize_weights();
 
-        double n_eff = get_effective_sample_size();
+        float n_eff = get_effective_sample_size();
         std::vector<int> parents(config_.num_particles);
         std::iota(parents.begin(), parents.end(), 0);
 
-        if (n_eff < config_.resampling_threshold * config_.num_particles) {
-            std::vector<double> weights(config_.num_particles);
-            for(size_t i=0; i<config_.num_particles; ++i) weights[i] = std::exp(particles_[i].log_weight);
+        if (n_eff < config_.resampling_threshold * static_cast<float>(config_.num_particles)) {
+            std::vector<float> weights(config_.num_particles);
+            for(size_t i=0; i<static_cast<size_t>(config_.num_particles); ++i) weights[i] = std::exp(particles_[i].log_weight);
 
             if (config_.use_systematic_resampling) {
                 parents = systematic_resampling(weights, rng_);
@@ -133,9 +139,9 @@ public:
             }
 
             std::vector<RbpfParticle<Types>> new_particles(config_.num_particles);
-            for(size_t i=0; i<config_.num_particles; ++i) {
+            for(size_t i=0; i<static_cast<size_t>(config_.num_particles); ++i) {
                 new_particles[i] = particles_[parents[i]];
-                new_particles[i].log_weight = -std::log(static_cast<double>(config_.num_particles));
+                new_particles[i].log_weight = -std::log(static_cast<float>(config_.num_particles));
             }
             particles_ = std::move(new_particles);
         }
@@ -152,7 +158,7 @@ public:
         x_lin_mean.setZero();
 
         for (const auto& p : particles_) {
-            double w = std::exp(p.log_weight);
+            float w = std::exp(p.log_weight);
             x_nl_mean += w * p.x_nl;
             x_lin_mean += w * p.kf.x;
         }
@@ -175,7 +181,7 @@ public:
         x_lin_mean.setZero();
 
         for (int i = 0; i < config_.num_particles; ++i) {
-            double w = std::exp(particles_[i].log_weight);
+            float w = std::exp(particles_[i].log_weight);
             int ancestor_idx = i;
 
             for (int step = 0; step < lag; ++step) {
@@ -211,26 +217,26 @@ private:
     long long parent_indices_cnt_ = 0;
 
     void normalize_weights() {
-        double max_log_w = -std::numeric_limits<double>::infinity();
+        float max_log_w = -std::numeric_limits<float>::infinity();
         for (const auto& p : particles_) {
             if (p.log_weight > max_log_w) max_log_w = p.log_weight;
         }
-        double sum_exp = 0.0;
+        float sum_exp = 0.0f;
         for (const auto& p : particles_) {
             sum_exp += std::exp(p.log_weight - max_log_w);
         }
-        double log_sum = max_log_w + std::log(sum_exp);
+        float log_sum = max_log_w + std::log(sum_exp);
         for (auto& p : particles_) {
             p.log_weight -= log_sum;
         }
     }
 
-    double get_effective_sample_size() const {
-        double sum_sq = 0.0;
+    float get_effective_sample_size() const {
+        float sum_sq = 0.0f;
         for (const auto& p : particles_) {
-            sum_sq += std::exp(2.0 * p.log_weight);
+            sum_sq += std::exp(2.0f * p.log_weight);
         }
-        return 1.0 / sum_sq;
+        return 1.0f / sum_sq;
     }
 
     void store_history(long long step_idx, const std::vector<int>& parents = {}) {

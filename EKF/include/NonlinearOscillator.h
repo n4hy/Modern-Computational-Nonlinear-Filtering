@@ -19,16 +19,16 @@
  */
 class NonlinearOscillator : public SystemModel {
 public:
-    NonlinearOscillator(double dt = 0.01)
-        : dt_(dt), omega_sq_(2.0), damping_(0.5),
-          Q_(Eigen::MatrixXd::Identity(2, 2) * 0.001),
-          R_(Eigen::MatrixXd::Identity(1, 1) * 0.1) {}
+    NonlinearOscillator(float dt = 0.01f)
+        : dt_(dt), omega_sq_(2.0f), damping_(0.5f),
+          Q_(Eigen::MatrixXf::Identity(2, 2) * 0.001f),
+          R_(Eigen::MatrixXf::Identity(1, 1) * 0.1f) {}
 
     // State: [pos, vel]
-    Eigen::VectorXd f(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
-        Eigen::VectorXd x_next(2);
-        double pos = x(0);
-        double vel = x(1);
+    Eigen::VectorXf f(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
+        Eigen::VectorXf x_next(2);
+        float pos = x(0);
+        float vel = x(1);
 
         // Euler integration
         // pos_k+1 = pos_k + vel_k * dt
@@ -45,39 +45,39 @@ public:
         return x_next;
     }
 
-    Eigen::VectorXd h(const Eigen::VectorXd& x, double t) const override {
-        Eigen::VectorXd y(1);
+    Eigen::VectorXf h(const Eigen::VectorXf& x, float t) const override {
+        Eigen::VectorXf y(1);
         y(0) = x(0); // Measure position
         return y;
     }
 
-    Eigen::MatrixXd F(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double t) const override {
-        Eigen::MatrixXd F(2, 2);
-        double pos = x(0);
+    Eigen::MatrixXf F(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
+        Eigen::MatrixXf F(2, 2);
+        float pos = x(0);
 
         // df_0/dpos = 1, df_0/dvel = dt
-        F(0, 0) = 1.0;
+        F(0, 0) = 1.0f;
         F(0, 1) = dt_;
 
         // df_1/dpos = -omega^2 * cos(pos) * dt
         // df_1/dvel = 1 - damping * dt
         F(1, 0) = -omega_sq_ * std::cos(pos) * dt_;
-        F(1, 1) = 1.0 - damping_ * dt_;
+        F(1, 1) = 1.0f - damping_ * dt_;
 
         return F;
     }
 
-    Eigen::MatrixXd H(const Eigen::VectorXd& x, double t) const override {
-        Eigen::MatrixXd H(1, 2);
-        H << 1.0, 0.0;
+    Eigen::MatrixXf H(const Eigen::VectorXf& x, float t) const override {
+        Eigen::MatrixXf H(1, 2);
+        H << 1.0f, 0.0f;
         return H;
     }
 
-    Eigen::MatrixXd Q(double t) const override {
+    Eigen::MatrixXf Q(float t) const override {
         return Q_;
     }
 
-    Eigen::MatrixXd R(double t) const override {
+    Eigen::MatrixXf R(float t) const override {
         return R_;
     }
 
@@ -85,11 +85,11 @@ public:
     int getObsDim() const override { return 1; }
 
 private:
-    double dt_;
-    double omega_sq_;
-    double damping_;
-    Eigen::MatrixXd Q_;
-    Eigen::MatrixXd R_;
+    float dt_;
+    float omega_sq_;
+    float damping_;
+    Eigen::MatrixXf Q_;
+    Eigen::MatrixXf R_;
 };
 
 #endif // NONLINEAR_OSCILLATOR_H

@@ -21,16 +21,16 @@ public:
      * @brief Propagate the nonlinear state.
      */
     virtual NonlinearState propagate(const NonlinearState& x_nl_prev,
-                                     double t_k,
+                                     float t_k,
                                      const NonlinearState& u_k,
                                      std::mt19937_64& rng) const = 0;
 
     /**
      * @brief Log proposal density.
      */
-    virtual double log_proposal_density(const NonlinearState& x_nl_curr,
+    virtual float log_proposal_density(const NonlinearState& x_nl_curr,
                                         const NonlinearState& x_nl_prev,
-                                        double t_k,
+                                        float t_k,
                                         const NonlinearState& u_k) const = 0;
 };
 
@@ -53,19 +53,19 @@ public:
      * @brief Get linear dynamics matrices: x_lin_k = A * x_lin_{k-1} + B * u_k + w_lin
      */
     virtual void get_dynamics(const NonlinearState& x_nl_prev,
-                              double t_k,
+                              float t_k,
                               Eigen::Ref<LinearState> bias,
-                              Eigen::Ref<Eigen::MatrixXd> A,
-                              Eigen::Ref<Eigen::MatrixXd> B,
+                              Eigen::Ref<Eigen::MatrixXf> A,
+                              Eigen::Ref<Eigen::MatrixXf> B,
                               Eigen::Ref<LinearCov> Q) const = 0;
 
     /**
      * @brief Get linear observation matrices: y_k = H * x_lin_k + offset + v
      */
     virtual void get_observation(const NonlinearState& x_nl_curr,
-                                 double t_k,
+                                 float t_k,
                                  Eigen::Ref<Observation> offset,
-                                 Eigen::Ref<Eigen::MatrixXd> H,
+                                 Eigen::Ref<Eigen::MatrixXf> H,
                                  Eigen::Ref<ObsCov> R) const = 0;
 };
 

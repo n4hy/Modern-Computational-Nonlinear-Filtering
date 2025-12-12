@@ -11,7 +11,7 @@ namespace PKF {
 namespace Noise {
 
     // Helper for Log Gamma function if std::lgamma is not enough or for clarity
-    inline double log_gamma(double x) {
+    inline float log_gamma(float x) {
         return std::lgamma(x);
     }
 
@@ -25,43 +25,43 @@ namespace Noise {
      * @param mu Mean vector
      * @param cov Scale matrix (Sigma)
      * @param nu Degrees of freedom
-     * @return double Log probability density
+     * @return float Log probability density
      */
     template<int Dim>
-    double student_t_logpdf(const Eigen::Matrix<double, Dim, 1>& x,
-                            const Eigen::Matrix<double, Dim, 1>& mu,
-                            const Eigen::Matrix<double, Dim, Dim>& cov,
-                            double nu) {
+    float student_t_logpdf(const Eigen::Matrix<float, Dim, 1>& x,
+                            const Eigen::Matrix<float, Dim, 1>& mu,
+                            const Eigen::Matrix<float, Dim, Dim>& cov,
+                            float nu) {
 
-        using Vector = Eigen::Matrix<double, Dim, 1>;
+        using Vector = Eigen::Matrix<float, Dim, 1>;
 
-        double p = static_cast<double>(Dim);
+        float p = static_cast<float>(Dim);
         Vector diff = x - mu;
 
         // Use LLT to compute inverse and determinant
         // If cov is diagonal, we could optimize, but this is general.
-        Eigen::LLT<Eigen::Matrix<double, Dim, Dim>> llt(cov);
+        Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
 
         // Mahalanobis distance squared: (x-mu)^T * Sigma^{-1} * (x-mu)
         // We solve Sigma * y = diff, so y = Sigma^{-1} * diff.
         // Then diff.dot(y)
         Vector y = llt.solve(diff);
-        double mahalanobis_sq = diff.dot(y);
+        float mahalanobis_sq = diff.dot(y);
 
         // Log determinant of Sigma
         // LLT L matrix determinant is product of diagonal elements.
         // det(Sigma) = det(L) * det(L^T) = det(L)^2
-        double log_det_cov = 0.0;
-        Eigen::Matrix<double, Dim, Dim> L = llt.matrixL();
+        float log_det_cov = 0.0f;
+        Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
         for (int i = 0; i < Dim; ++i) {
             log_det_cov += std::log(L(i, i));
         }
-        log_det_cov *= 2.0;
+        log_det_cov *= 2.0f;
 
-        double log_numerator = std::lgamma((nu + p) / 2.0);
-        double log_denominator = std::lgamma(nu / 2.0) + (p / 2.0) * std::log(nu * std::numbers::pi) + 0.5 * log_det_cov;
+        float log_numerator = std::lgamma((nu + p) / 2.0f);
+        float log_denominator = std::lgamma(nu / 2.0f) + (p / 2.0f) * std::log(nu * std::numbers::pi_v<float>) + 0.5f * log_det_cov;
 
-        double log_term = -((nu + p) / 2.0) * std::log(1.0 + mahalanobis_sq / nu);
+        float log_term = -((nu + p) / 2.0f) * std::log(1.0f + mahalanobis_sq / nu);
 
         return log_numerator - log_denominator + log_term;
     }
@@ -77,31 +77,31 @@ namespace Noise {
      * @param cov Scale matrix (Sigma)
      * @param nu Degrees of freedom
      * @param rng Random number generator
-     * @return Eigen::Matrix<double, Dim, 1> Sample
+     * @return Eigen::Matrix<float, Dim, 1> Sample
      */
     template<int Dim>
-    Eigen::Matrix<double, Dim, 1> student_t_sample(const Eigen::Matrix<double, Dim, 1>& mu,
-                                                   const Eigen::Matrix<double, Dim, Dim>& cov,
-                                                   double nu,
+    Eigen::Matrix<float, Dim, 1> student_t_sample(const Eigen::Matrix<float, Dim, 1>& mu,
+                                                   const Eigen::Matrix<float, Dim, Dim>& cov,
+                                                   float nu,
                                                    std::mt19937_64& rng) {
 
         // Sample u ~ ChiSquared(nu)
         // ChiSquared(nu) is Gamma(nu/2, 2)
-        std::chi_squared_distribution<double> chi_dist(nu);
-        double u = chi_dist(rng);
+        std::chi_squared_distribution<float> chi_dist(nu);
+        float u = chi_dist(rng);
 
         // Sample z ~ N(0, Sigma)
         // z = L * standard_normal
-        Eigen::LLT<Eigen::Matrix<double, Dim, Dim>> llt(cov);
-        Eigen::Matrix<double, Dim, Dim> L = llt.matrixL();
+        Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
 
-        std::normal_distribution<double> norm_dist(0.0, 1.0);
-        Eigen::Matrix<double, Dim, 1> standard_normal_vec;
+        std::normal_distribution<float> norm_dist(0.0f, 1.0f);
+        Eigen::Matrix<float, Dim, 1> standard_normal_vec;
         for (int i = 0; i < Dim; ++i) {
             standard_normal_vec(i) = norm_dist(rng);
         }
 
-        Eigen::Matrix<double, Dim, 1> z = L * standard_normal_vec;
+        Eigen::Matrix<float, Dim, 1> z = L * standard_normal_vec;
 
         // Combine
         // x = mu + z * sqrt(nu / u)
@@ -112,38 +112,38 @@ namespace Noise {
      * @brief Multivariate Gaussian Log-PDF (for completeness/reference)
      */
     template<int Dim>
-    double gaussian_logpdf(const Eigen::Matrix<double, Dim, 1>& x,
-                           const Eigen::Matrix<double, Dim, 1>& mu,
-                           const Eigen::Matrix<double, Dim, Dim>& cov) {
-        double p = static_cast<double>(Dim);
-        Eigen::Matrix<double, Dim, 1> diff = x - mu;
+    float gaussian_logpdf(const Eigen::Matrix<float, Dim, 1>& x,
+                           const Eigen::Matrix<float, Dim, 1>& mu,
+                           const Eigen::Matrix<float, Dim, Dim>& cov) {
+        float p = static_cast<float>(Dim);
+        Eigen::Matrix<float, Dim, 1> diff = x - mu;
 
-        Eigen::LLT<Eigen::Matrix<double, Dim, Dim>> llt(cov);
-        Eigen::Matrix<double, Dim, 1> y = llt.solve(diff);
-        double mahalanobis_sq = diff.dot(y);
+        Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        Eigen::Matrix<float, Dim, 1> y = llt.solve(diff);
+        float mahalanobis_sq = diff.dot(y);
 
-        double log_det_cov = 0.0;
-        Eigen::Matrix<double, Dim, Dim> L = llt.matrixL();
+        float log_det_cov = 0.0f;
+        Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
         for (int i = 0; i < Dim; ++i) {
             log_det_cov += std::log(L(i, i));
         }
-        log_det_cov *= 2.0;
+        log_det_cov *= 2.0f;
 
-        return -0.5 * (p * std::log(2 * std::numbers::pi) + log_det_cov + mahalanobis_sq);
+        return -0.5f * (p * std::log(2.0f * std::numbers::pi_v<float>) + log_det_cov + mahalanobis_sq);
     }
 
     /**
      * @brief Sample from Multivariate Gaussian
      */
     template<int Dim>
-    Eigen::Matrix<double, Dim, 1> gaussian_sample(const Eigen::Matrix<double, Dim, 1>& mu,
-                                                  const Eigen::Matrix<double, Dim, Dim>& cov,
+    Eigen::Matrix<float, Dim, 1> gaussian_sample(const Eigen::Matrix<float, Dim, 1>& mu,
+                                                  const Eigen::Matrix<float, Dim, Dim>& cov,
                                                   std::mt19937_64& rng) {
-        Eigen::LLT<Eigen::Matrix<double, Dim, Dim>> llt(cov);
-        Eigen::Matrix<double, Dim, Dim> L = llt.matrixL();
+        Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
 
-        std::normal_distribution<double> norm_dist(0.0, 1.0);
-        Eigen::Matrix<double, Dim, 1> standard_normal_vec;
+        std::normal_distribution<float> norm_dist(0.0f, 1.0f);
+        Eigen::Matrix<float, Dim, 1> standard_normal_vec;
         for (int i = 0; i < Dim; ++i) {
             standard_normal_vec(i) = norm_dist(rng);
         }

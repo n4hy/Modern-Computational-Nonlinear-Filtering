@@ -30,7 +30,7 @@ public:
      * @param num_particles Number of particles
      * @param lag Fixed lag L
      */
-    ParticleFilterFixedLag(const typename PF::Model* model, size_t num_particles, size_t lag, double resampling_threshold = 0.5)
+    ParticleFilterFixedLag(const typename PF::Model* model, size_t num_particles, size_t lag, float resampling_threshold = 0.5f)
         : filter_(model, num_particles, resampling_threshold), lag_(lag), N_(num_particles) {
     }
 
@@ -60,7 +60,7 @@ public:
     /**
      * @brief Perform one step of filtering and update smoother history
      */
-    void step(const Observation& y_k, double t_k, const Eigen::Ref<const State>& u_k) {
+    void step(const Observation& y_k, float t_k, const Eigen::Ref<const State>& u_k) {
         // Run Filter Step
         filter_.step(y_k, t_k, u_k);
 

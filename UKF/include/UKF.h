@@ -5,8 +5,11 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
+#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
+
+using namespace optmath::neon;
 
 template<int NX, int NY>
 class UKF {
@@ -16,13 +19,13 @@ public:
     using Observation = typename Model::Observation;
     using StateMat = typename Model::StateMat;
     using ObsMat = typename Model::ObsMat;
-    using CrossMat = Eigen::Matrix<double, NX, NY>;
+    using CrossMat = Eigen::Matrix<float, NX, NY>;
     using SigmaPts = SigmaPoints<NX>;
 
     // Parameters
-    double alpha = 1e-3;
-    double beta = 2.0;
-    double kappa = 0.0;
+    float alpha = 1e-3f;
+    float beta = 2.0f;
+    float kappa = 0.0f;
 
     UKF(Model& model) : model_(model) {
         x_.setZero();
@@ -37,24 +40,13 @@ public:
     /**
      * Prediction Step (Time Update)
      * Returns cross-covariance P_{x_k, x_{k+1}} needed for smoothing.
-     * In standard UKF prediction, we normally compute P_{k+1|k}.
-     * To get P_{x_k, x_{k+1}}, we need to correlate the *sigma points of k* with the *sigma points of k+1*.
-     * Actually, strictly speaking, P_{x_k, x_{k+1}} = E[(x_k - x_k)(x_{k+1} - x_{k+1})^T].
-     * In the UKF prediction step:
-     *   X_{k|k} are generated from x_{k|k}, P_{k|k}.
-     *   X_{k+1|k} = f(X_{k|k}).
-     *   x_{k+1|k} = sum Wm * X_{k+1|k}
-     *   P_{x_k, x_{k+1}} \approx sum Wc * (X_{k|k} - x_{k|k}) * (X_{k+1|k} - x_{k+1|k})^T
      */
-    StateMat predict(double t_k, const Eigen::Ref<const State>& u_k) {
+    StateMat predict(float t_k, const Eigen::Ref<const State>& u_k) {
         // 1. Generate Sigma Points from current estimate
         SigmaPts sigmas;
         generate_sigma_points<NX>(x_, P_, alpha, beta, kappa, sigmas);
 
         // 2. Propagate Sigma Points
-        // We need a place to store propagated sigma points.
-        // Let's reuse a SigmaMat structure, but it's not strictly "SigmaPoints" in terms of weights generation,
-        // just a container for the points.
         typename SigmaPts::SigmaMat X_pred;
 
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
@@ -77,14 +69,18 @@ public:
             State diff_x = sigmas.X.col(i) - x_;
             State diff_x_pred = X_pred.col(i) - x_pred_mean;
 
-            P_pred  += sigmas.Wc(i) * diff_x_pred * diff_x_pred.transpose();
-            P_cross += sigmas.Wc(i) * diff_x * diff_x_pred.transpose();
+            // Use NEON for outer products
+            Eigen::MatrixXf outer_pred = neon_gemm(diff_x_pred, diff_x_pred.transpose());
+            P_pred += sigmas.Wc(i) * outer_pred;
+
+            Eigen::MatrixXf outer_cross = neon_gemm(diff_x, diff_x_pred.transpose());
+            P_cross += sigmas.Wc(i) * outer_cross;
         }
 
         P_pred += Q;
 
         // Symmetrize
-        P_pred = 0.5 * (P_pred + P_pred.transpose());
+        P_pred = 0.5f * (P_pred + P_pred.transpose());
 
         // Update state
         x_ = x_pred_mean;
@@ -96,14 +92,13 @@ public:
     /**
      * Update Step (Measurement Update)
      */
-    void update(double t_k, const Observation& y_k) {
+    void update(float t_k, const Observation& y_k) {
         // 1. Generate Sigma Points from predicted state
         SigmaPts sigmas;
         generate_sigma_points<NX>(x_, P_, alpha, beta, kappa, sigmas);
 
         // 2. Propagate through h
-        // Create matrix for Y_pred (NY x NSIG)
-        Eigen::Matrix<double, NY, SigmaPts::NSIG> Y_pred;
+        Eigen::Matrix<float, NY, SigmaPts::NSIG> Y_pred;
 
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
             Y_pred.col(i) = model_.h(sigmas.X.col(i), t_k);
@@ -124,47 +119,34 @@ public:
              State diff_x = sigmas.X.col(i) - x_;
              Observation diff_y = Y_pred.col(i) - y_hat;
 
-             S += sigmas.Wc(i) * diff_y * diff_y.transpose();
-             Pxy += sigmas.Wc(i) * diff_x * diff_y.transpose();
+             Eigen::MatrixXf outer_y = neon_gemm(diff_y, diff_y.transpose());
+             S += sigmas.Wc(i) * outer_y;
+
+             Eigen::MatrixXf outer_xy = neon_gemm(diff_x, diff_y.transpose());
+             Pxy += sigmas.Wc(i) * outer_xy;
         }
         S += R;
 
         // 5. Kalman Gain and Update
         // K = Pxy * S^{-1}
-        // Use LDLT for stability
         Eigen::LDLT<ObsMat> ldlt(S);
-        // Check robustness?
-        if (ldlt.info() != Eigen::Success) {
-            // Log warning?
-            // std::cerr << "LDLT decomposition failed in UKF update!" << std::endl;
-            // Can add jitter if needed, but for now just proceed
-        }
 
-        Eigen::Matrix<double, NX, NY> K = Pxy * ldlt.solve(ObsMat::Identity());
+        Eigen::Matrix<float, NX, NY> K = Pxy * ldlt.solve(ObsMat::Identity());
 
         Observation y_diff = y_k - y_hat;
 
         // State update
-        x_ = x_ + K * y_diff;
+        Eigen::MatrixXf corr = neon_gemm(K, y_diff);
+        x_ = x_ + corr;
 
-        // Covariance update (Joseph form)
-        // P = (I - KH) P (I - KH)^T + KRK^T
-        // But we don't have explicit H.
-        // Standard UKF update: P = P - K S K^T
-        // Joseph form without H?
-        // Some UKF formulations use K = Pxy * S^-1 => P = P - K S K^T.
-        // To be numerically robust, we stick to P - K S K^T and ensure symmetry.
-        // Or we can try to "infer" H? No, that defeats the point.
-        // The prompt says: "Use Joseph-form ... H_eff is the effective linearized measurement mapping... or note that we can skip explicit H and use P = P - K S K^T".
-        // I'll use the simpler form P = P - K S K^T as deriving H_eff is complex without gradients.
+        // Covariance update
+        Eigen::MatrixXf KS = neon_gemm(K, S);
+        Eigen::MatrixXf KSKt = neon_gemm(KS, K.transpose());
 
-        P_ = P_ - K * S * K.transpose();
+        P_ = P_ - KSKt;
 
         // Symmetrize and ensure PD
-        P_ = 0.5 * (P_ + P_.transpose());
-
-        // Jitter?
-        // P_ += 1e-9 * StateMat::Identity();
+        P_ = 0.5f * (P_ + P_.transpose());
     }
 
     // Getters

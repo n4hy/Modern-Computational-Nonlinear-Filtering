@@ -13,7 +13,7 @@ namespace rbpf {
  * @param rng Random number generator
  * @return std::vector<int> Indices of selected particles (parents)
  */
-std::vector<int> systematic_resampling(const std::vector<double>& weights, std::mt19937_64& rng);
+std::vector<int> systematic_resampling(const std::vector<float>& weights, std::mt19937_64& rng);
 
 /**
  * @brief Stratified Resampling
@@ -22,7 +22,7 @@ std::vector<int> systematic_resampling(const std::vector<double>& weights, std::
  * @param rng Random number generator
  * @return std::vector<int> Indices of selected particles (parents)
  */
-std::vector<int> stratified_resampling(const std::vector<double>& weights, std::mt19937_64& rng);
+std::vector<int> stratified_resampling(const std::vector<float>& weights, std::mt19937_64& rng);
 
 } // namespace rbpf
 

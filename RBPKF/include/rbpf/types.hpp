@@ -19,20 +19,20 @@ struct RbpfTypes {
     static constexpr int Ny = N_Y;
 
     // Vector types
-    using NonlinearState    = Eigen::Matrix<double, Nnl, 1>;
-    using LinearState       = Eigen::Matrix<double, Nlin, 1>;
-    using Observation       = Eigen::Matrix<double, Ny, 1>;
+    using NonlinearState    = Eigen::Matrix<float, Nnl, 1>;
+    using LinearState       = Eigen::Matrix<float, Nlin, 1>;
+    using Observation       = Eigen::Matrix<float, Ny, 1>;
 
     // Matrix types
-    using LinearCov         = Eigen::Matrix<double, Nlin, Nlin>;
-    using ObsCov            = Eigen::Matrix<double, Ny, Ny>;
-    using CrossCov          = Eigen::Matrix<double, Nlin, Ny>;
-    using NonlinearCov      = Eigen::Matrix<double, Nnl, Nnl>;
+    using LinearCov         = Eigen::Matrix<float, Nlin, Nlin>;
+    using ObsCov            = Eigen::Matrix<float, Ny, Ny>;
+    using CrossCov          = Eigen::Matrix<float, Nlin, Ny>;
+    using NonlinearCov      = Eigen::Matrix<float, Nnl, Nnl>;
 
     // System matrices types (for linear part)
-    using Matrix_A          = Eigen::Matrix<double, Nlin, Nlin>;
-    using Matrix_B          = Eigen::Matrix<double, Nlin, Eigen::Dynamic>;
-    using Matrix_H          = Eigen::Matrix<double, Ny, Nlin>;
+    using Matrix_A          = Eigen::Matrix<float, Nlin, Nlin>;
+    using Matrix_B          = Eigen::Matrix<float, Nlin, Eigen::Dynamic>;
+    using Matrix_H          = Eigen::Matrix<float, Ny, Nlin>;
 };
 
 } // namespace rbpf

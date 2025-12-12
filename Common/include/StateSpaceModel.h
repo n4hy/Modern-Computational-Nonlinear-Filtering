@@ -17,10 +17,10 @@ public:
     static constexpr int StateDim = NX;
     static constexpr int ObsDim = NY;
 
-    using State       = Eigen::Matrix<double, NX, 1>;
-    using Observation = Eigen::Matrix<double, NY, 1>;
-    using StateMat    = Eigen::Matrix<double, NX, NX>;
-    using ObsMat      = Eigen::Matrix<double, NY, NY>;
+    using State       = Eigen::Matrix<float, NX, 1>;
+    using Observation = Eigen::Matrix<float, NY, 1>;
+    using StateMat    = Eigen::Matrix<float, NX, NX>;
+    using ObsMat      = Eigen::Matrix<float, NY, NY>;
 
     virtual ~StateSpaceModel() = default;
 
@@ -29,7 +29,7 @@ public:
      * Note: Process noise w_k is handled via Q().
      */
     virtual State f(const State& x_prev,
-                    double t_k,
+                    float t_k,
                     const Eigen::Ref<const State>& u_k) const = 0;
 
     /**
@@ -37,17 +37,17 @@ public:
      * Note: Measurement noise v_k is handled via R().
      */
     virtual Observation h(const State& x_k,
-                          double t_k) const = 0;
+                          float t_k) const = 0;
 
     /**
      * Process Noise Covariance Matrix Q_k
      */
-    virtual StateMat Q(double t_k) const = 0;
+    virtual StateMat Q(float t_k) const = 0;
 
     /**
      * Measurement Noise Covariance Matrix R_k
      */
-    virtual ObsMat R(double t_k) const = 0;
+    virtual ObsMat R(float t_k) const = 0;
 };
 
 } // namespace UKFModel

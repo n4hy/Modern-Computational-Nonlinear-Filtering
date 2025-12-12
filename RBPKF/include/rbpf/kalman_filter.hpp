@@ -3,8 +3,11 @@
 
 #include <Eigen/Dense>
 #include <iostream>
+#include <optmath/neon_kernels.hpp>
 
 namespace rbpf {
+
+using namespace optmath::neon;
 
 /**
  * @brief Generic reusable Kalman Filter class.
@@ -37,17 +40,25 @@ public:
      * @param bias Deterministic input/bias term (B*u + etc).
      * @param Q Process noise covariance.
      */
-    void predict(const Eigen::Ref<const Eigen::MatrixXd>& A,
+    void predict(const Eigen::Ref<const Eigen::MatrixXf>& A,
                  const Eigen::Ref<const LinearState>& bias,
                  const LinearCov& Q) {
         // x_k|k-1 = A * x_{k-1|k-1} + bias
-        x = A * x + bias;
+        // Use NEON GEMM for A*x (Matrix * Vector)
+        // A is Nlin x Nlin, x is Nlin x 1.
+        Eigen::MatrixXf Ax = neon_gemm(A, x);
+        x = Ax + bias;
 
         // P_k|k-1 = A * P_{k-1|k-1} * A^T + Q
-        P = A * P * A.transpose() + Q;
+        // AP = A * P
+        Eigen::MatrixXf AP = neon_gemm(A, P);
+        // APAt = AP * A^T
+        Eigen::MatrixXf APAt = neon_gemm(AP, A.transpose());
+
+        P = APAt + Q;
 
         // Ensure symmetry
-        P = 0.5 * (P + P.transpose());
+        P = 0.5f * (P + P.transpose());
     }
 
     /**
@@ -59,31 +70,45 @@ public:
      * @param R Measurement noise covariance.
      */
     void update(const Eigen::Ref<const Observation>& y,
-                const Eigen::Ref<const Eigen::MatrixXd>& H,
+                const Eigen::Ref<const Eigen::MatrixXf>& H,
                 const Eigen::Ref<const Observation>& offset,
                 const ObsCov& R) {
         // Innovation: z = y - (H*x + offset)
-        Observation z = y - (H * x + offset);
+        Eigen::MatrixXf Hx = neon_gemm(H, x);
+        Observation z = y - (Hx + offset);
 
         // Innovation covariance: S = H*P*H^T + R
-        ObsCov S = H * P * H.transpose() + R;
+        Eigen::MatrixXf HP = neon_gemm(H, P);
+        Eigen::MatrixXf HPHt = neon_gemm(HP, H.transpose());
+        ObsCov S = HPHt + R;
 
         // Kalman gain: K = P * H^T * S^{-1}
         // Using LDLT for inverse
-        Eigen::Matrix<double, Types::Nlin, Types::Ny> K;
-        K = P * H.transpose() * S.ldlt().solve(Eigen::Matrix<double, Types::Ny, Types::Ny>::Identity());
+        Eigen::Matrix<float, Types::Nlin, Types::Ny> K;
+        K = P * H.transpose() * S.ldlt().solve(Eigen::Matrix<float, Types::Ny, Types::Ny>::Identity());
 
         // Update state: x = x + K*z
-        x = x + K * z;
+        Eigen::MatrixXf Kz = neon_gemm(K, z);
+        x = x + Kz;
 
         // Update covariance (Joseph form): P = (I - KH)P(I - KH)^T + KRK^T
-        Eigen::Matrix<double, Types::Nlin, Types::Nlin> I = Eigen::Matrix<double, Types::Nlin, Types::Nlin>::Identity();
-        Eigen::Matrix<double, Types::Nlin, Types::Nlin> I_KH = I - K * H;
+        Eigen::Matrix<float, Types::Nlin, Types::Nlin> I = Eigen::Matrix<float, Types::Nlin, Types::Nlin>::Identity();
 
-        P = I_KH * P * I_KH.transpose() + K * R * K.transpose();
+        Eigen::MatrixXf KH = neon_gemm(K, H);
+        Eigen::Matrix<float, Types::Nlin, Types::Nlin> I_KH = I - KH;
+
+        // Term 1: (I-KH) * P * (I-KH)^T
+        Eigen::MatrixXf P_I_KH_T = neon_gemm(P, I_KH.transpose());
+        Eigen::MatrixXf Term1 = neon_gemm(I_KH, P_I_KH_T);
+
+        // Term 2: K * R * K^T
+        Eigen::MatrixXf RKt = neon_gemm(R, K.transpose());
+        Eigen::MatrixXf Term2 = neon_gemm(K, RKt);
+
+        P = Term1 + Term2;
 
         // Ensure symmetry
-        P = 0.5 * (P + P.transpose());
+        P = 0.5f * (P + P.transpose());
     }
 };
 

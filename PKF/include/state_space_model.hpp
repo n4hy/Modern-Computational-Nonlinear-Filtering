@@ -19,10 +19,10 @@ public:
     static_assert(NX <= 20, "State dimension NX must be <= 20");
     static_assert(NY <= 20, "Observation dimension NY must be <= 20");
 
-    using State       = Eigen::Matrix<double, NX, 1>;
-    using Observation = Eigen::Matrix<double, NY, 1>;
-    using StateMat    = Eigen::Matrix<double, NX, NX>;
-    using ObsMat      = Eigen::Matrix<double, NY, NY>;
+    using State       = Eigen::Matrix<float, NX, 1>;
+    using Observation = Eigen::Matrix<float, NY, 1>;
+    using StateMat    = Eigen::Matrix<float, NX, NX>;
+    using ObsMat      = Eigen::Matrix<float, NY, NY>;
 
     virtual ~StateSpaceModel() = default;
 
@@ -35,7 +35,7 @@ public:
      * @return State Propagated state (deterministic part)
      */
     virtual State propagate(const State& x_prev,
-                            double t_k,
+                            float t_k,
                             const Eigen::Ref<const State>& u_k) const = 0;
 
     /**
@@ -46,7 +46,7 @@ public:
      * @return Observation Expected observation (deterministic part)
      */
     virtual Observation observe(const State& x_k,
-                                double t_k) const = 0;
+                                float t_k) const = 0;
 
     /**
      * @brief Sample process noise w_k
@@ -55,7 +55,7 @@ public:
      * @param rng Random number generator
      * @return State Process noise sample
      */
-    virtual State sample_process_noise(double t_k, std::mt19937_64& rng) const = 0;
+    virtual State sample_process_noise(float t_k, std::mt19937_64& rng) const = 0;
 
     /**
      * @brief Sample observation noise v_k
@@ -64,7 +64,7 @@ public:
      * @param rng Random number generator
      * @return Observation Observation noise sample
      */
-    virtual Observation sample_observation_noise(double t_k, std::mt19937_64& rng) const = 0;
+    virtual Observation sample_observation_noise(float t_k, std::mt19937_64& rng) const = 0;
 
     /**
      * @brief Compute log-likelihood of observation p(y_k | x_k)
@@ -72,11 +72,11 @@ public:
      * @param y_k Actual observation
      * @param x_k Particle state
      * @param t_k Current time
-     * @return double Log-likelihood
+     * @return float Log-likelihood
      */
-    virtual double observation_loglik(const Observation& y_k,
+    virtual float observation_loglik(const Observation& y_k,
                                        const State& x_k,
-                                       double t_k) const = 0;
+                                       float t_k) const = 0;
 };
 
 } // namespace PKF

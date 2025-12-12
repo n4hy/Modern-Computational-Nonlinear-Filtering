@@ -16,14 +16,14 @@ void generate_data(DragBallModel& model, int steps,
                    std::vector<DragBallModel::Observation>& measurements) {
 
     DragBallModel::State x;
-    x << 0, 100, 10, 0; // Initial: x=0, y=100, vx=10, vy=0
+    x << 0.0f, 100.0f, 10.0f, 0.0f; // Initial: x=0, y=100, vx=10, vy=0
 
     true_states.reserve(steps);
     measurements.reserve(steps);
 
     std::mt19937 gen(42);
-    std::normal_distribution<> d_proc(0, model.q_std); // Crude process noise approx
-    std::normal_distribution<> d_meas(0, model.r_std);
+    std::normal_distribution<float> d_proc(0.0f, model.q_std); // Crude process noise approx
+    std::normal_distribution<float> d_meas(0.0f, model.r_std);
 
     for (int k = 0; k < steps; ++k) {
         true_states.push_back(x);
@@ -61,11 +61,11 @@ int main() {
 
     DragBallModel::State x0 = true_states[0];
     // Add large uncertainty to initial guess
-    x0(0) += 5.0; x0(1) -= 5.0; x0(2) += 2.0;
+    x0(0) += 5.0f; x0(1) -= 5.0f; x0(2) += 2.0f;
 
     DragBallModel::StateMat P0 = DragBallModel::StateMat::Identity();
-    P0.topLeftCorner(2,2) *= 10.0;
-    P0.bottomRightCorner(2,2) *= 5.0;
+    P0.topLeftCorner(2,2) *= 10.0f;
+    P0.bottomRightCorner(2,2) *= 5.0f;
 
     UnscentedFixedLagSmoother<4, 2> smoother(model, lag);
     smoother.initialize(x0, P0);
@@ -93,7 +93,7 @@ int main() {
 
     // Start loop from k=1
     for (int k = 1; k < steps; ++k) {
-        double t = k * model.dt;
+        float t = k * model.dt;
 
         // Step (Predict k-1 -> k, Update k)
         smoother.step(t, measurements[k], u_dummy);
@@ -105,8 +105,8 @@ int main() {
         DragBallModel::State x_true = true_states[k];
 
         // RMSE Filtered (k)
-        double err_fx = x_filt(0) - x_true(0);
-        double err_fy = x_filt(1) - x_true(1);
+        float err_fx = x_filt(0) - x_true(0);
+        float err_fy = x_filt(1) - x_true(1);
         rmse_filt_pos += err_fx*err_fx + err_fy*err_fy;
 
         // Smoothed State for (k - lag)
@@ -116,8 +116,8 @@ int main() {
             DragBallModel::State x_s = smoother.get_smoothed_state(lag);
             DragBallModel::State x_t_delayed = true_states[k_delayed];
 
-            double err_sx = x_s(0) - x_t_delayed(0);
-            double err_sy = x_s(1) - x_t_delayed(1);
+            float err_sx = x_s(0) - x_t_delayed(0);
+            float err_sy = x_s(1) - x_t_delayed(1);
             rmse_smooth_pos += err_sx*err_sx + err_sy*err_sy;
             count++;
 

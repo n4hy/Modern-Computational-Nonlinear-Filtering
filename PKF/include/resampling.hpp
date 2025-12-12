@@ -44,6 +44,30 @@ namespace Resampling {
         return parents;
     }
 
+    // Overload for float weights
+    inline std::vector<size_t> systematic(const std::vector<float>& weights, std::mt19937_64& rng) {
+        size_t N = weights.size();
+        std::vector<size_t> parents(N);
+
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
+        float u0 = dist(rng);
+
+        float csum = weights[0];
+        size_t k = 0;
+
+        for (size_t i = 0; i < N; ++i) {
+            float u = u0 + static_cast<float>(i) / static_cast<float>(N);
+
+            while (u > csum && k < N - 1) {
+                k++;
+                csum += weights[k];
+            }
+            parents[i] = k;
+        }
+
+        return parents;
+    }
+
     /**
      * @brief Stratified Resampling
      *
@@ -65,6 +89,28 @@ namespace Resampling {
         for (size_t i = 0; i < N; ++i) {
             std::uniform_real_distribution<double> dist(0.0, 1.0);
             double u = (static_cast<double>(i) + dist(rng)) / static_cast<double>(N);
+
+            while (u > csum && k < N - 1) {
+                k++;
+                csum += weights[k];
+            }
+            parents[i] = k;
+        }
+
+        return parents;
+    }
+
+    // Overload for float weights
+    inline std::vector<size_t> stratified(const std::vector<float>& weights, std::mt19937_64& rng) {
+        size_t N = weights.size();
+        std::vector<size_t> parents(N);
+
+        float csum = weights[0];
+        size_t k = 0;
+
+        for (size_t i = 0; i < N; ++i) {
+            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+            float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
 
             while (u > csum && k < N - 1) {
                 k++;
