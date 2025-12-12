@@ -25,20 +25,11 @@ Eigen::MatrixXf EKF::predict(const Eigen::VectorXf& u, float t) {
 
     // Use NEON GEMM: FP = F * P
     Eigen::MatrixXf FP = optmath::neon::neon_gemm(F, P_);
+
     // P_temp = FP * F^T
-    // Note: F.transpose() creates a temporary or expression. neon_gemm takes const Ref or Matrix.
-    // Eigen expressions cast to MatrixXf usually eval.
     Eigen::MatrixXf Ft = F.transpose();
     Eigen::MatrixXf P_temp = optmath::neon::neon_gemm(FP, Ft);
 
-    // P_pred_ = P_temp + Q
-    // We can use neon_add if we want, or just Eigen add.
-    // neon_add returns VectorXf in the header I saw?
-    // Header: Eigen::VectorXf neon_add(const Eigen::VectorXf& a, const Eigen::VectorXf& b);
-    // It seems neon_add is for Vectors. For Matrices, Eigen default is likely fine or we can cast/map.
-    // Let's stick to Eigen + for simplicity unless strictly required to use kernels for EVERYTHING.
-    // The user said "optimize every component".
-    // I'll stick to GEMM for the heavy lifting.
     P_pred_ = P_temp + Q;
 
     // Symmetrize
@@ -69,26 +60,10 @@ void EKF::update(const Eigen::VectorXf& y, float t) {
 
     // 4. Kalman Gain: K = P * H^T * S^-1
     // Use robust decomposition. S inversion is not optimized by our kernels yet.
-    Eigen::MatrixXf Ht_P = P_ * H.transpose(); // Or neon_gemm(P_, Ht)
-    // K = Ht_P * S^-1
-    // Eigen's solve: S * K^T = H * P
-    // K = (S^-1 * H * P)^T ? No.
-    // K = P H^T S^-1
-    // Let's rely on Eigen for the solve.
     Eigen::MatrixXf K = P_ * H.transpose() * S.completeOrthogonalDecomposition().pseudoInverse();
 
     // 5. Update State
     // x_ = x_ + K * innov
-    // K * innov is Matrix * Vector -> Vector. neon_gemm handles Matrix * Matrix.
-    // Does neon_gemm handle Matrix * Vector?
-    // Header says: Eigen::MatrixXf neon_gemm(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B);
-    // If we pass vector as Nx1 matrix, it works.
-    // Eigen::VectorXf is a Matrix<float, Dynamic, 1>.
-    // But neon_gemm returns MatrixXf. We might need to assign to VectorXf.
-    // Let's try:
-    // Eigen::MatrixXf correction_mat = neon_gemm(K, innov); // implicitly treated as matrix?
-    // x_ = x_ + correction_mat;
-    // Actually, simple vector operations are fast enough, but consistency...
     x_ = x_ + K * innov;
 
     // 6. Update Covariance (Joseph form)
