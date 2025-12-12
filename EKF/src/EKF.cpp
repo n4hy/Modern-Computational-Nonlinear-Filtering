@@ -64,7 +64,9 @@ void EKF::update(const Eigen::VectorXf& y, float t) {
 
     // 5. Update State
     // x_ = x_ + K * innov
-    x_ = x_ + K * innov;
+    // x_ = x_ + K * innov;
+    Eigen::VectorXf correction = optmath::neon::neon_mat_vec_mul(K, innov);
+    x_ = optmath::neon::neon_add(x_, correction);
 
     // 6. Update Covariance (Joseph form)
     // P_{k|k} = (I - K*H) * P_{k|k-1} * (I - K*H)^T + K * R * K^T
