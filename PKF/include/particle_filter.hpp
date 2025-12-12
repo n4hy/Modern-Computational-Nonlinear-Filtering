@@ -120,11 +120,11 @@ public:
      * @brief Calculate Effective Sample Size (ESS)
      */
     float get_effective_sample_size() const {
-        double sum_sq = 0.0;
-        for (double lw : log_weights_) {
-            sum_sq += std::exp(2.0 * lw);
+        float sum_sq = 0.0f;
+        for (float lw : log_weights_) {
+            sum_sq += std::exp(2.0f * lw);
         }
-        return 1.0f / static_cast<float>(sum_sq);
+        return 1.0f / sum_sq;
     }
 
     /**
@@ -137,7 +137,7 @@ public:
 
         if (ess < resampling_threshold_) {
             // Convert log weights to linear weights for resampling
-            std::vector<double> weights(N_);
+            std::vector<float> weights(N_);
             for (size_t i = 0; i < N_; ++i) {
                 weights[i] = std::exp(log_weights_[i]);
             }
@@ -168,6 +168,18 @@ public:
      * @brief Get filtered mean estimate
      */
     State get_mean() const {
+        if (N_ > 100 && optmath::vulkan::is_available()) {
+             // Construct X matrix (NX rows, N cols)
+             Eigen::MatrixXf X(NX, N_);
+             Eigen::VectorXf w(N_);
+             for(size_t i=0; i<N_; ++i) {
+                 X.col(i) = particles_[i];
+                 w(i) = std::exp(log_weights_[i]);
+             }
+             // Mean = X * w
+             return optmath::vulkan::vulkan_mat_vec_mul(X, w);
+        }
+
         State mean = State::Zero();
         for (size_t i = 0; i < N_; ++i) {
             mean += std::exp(log_weights_[i]) * particles_[i];
@@ -190,33 +202,33 @@ public:
 
     // Accessors
     const std::vector<State>& get_particles() const { return particles_; }
-    const std::vector<double>& get_log_weights() const { return log_weights_; }
+    const std::vector<float>& get_log_weights() const { return log_weights_; }
 
 private:
     const Model* model_;
     size_t N_;
     float resampling_threshold_;
     std::vector<State> particles_;
-    std::vector<double> log_weights_;
+    std::vector<float> log_weights_;
     std::mt19937_64 rng_;
 
     /**
      * @brief Normalize log-weights using log-sum-exp trick
      */
     void normalize_weights() {
-        double max_log_w = -std::numeric_limits<double>::infinity();
-        for (double w : log_weights_) {
+        float max_log_w = -std::numeric_limits<float>::infinity();
+        for (float w : log_weights_) {
             if (w > max_log_w) max_log_w = w;
         }
 
-        double sum_exp = 0.0;
-        for (double w : log_weights_) {
+        float sum_exp = 0.0f;
+        for (float w : log_weights_) {
             sum_exp += std::exp(w - max_log_w);
         }
 
-        double log_sum = max_log_w + std::log(sum_exp);
+        float log_sum = max_log_w + std::log(sum_exp);
 
-        for (double& w : log_weights_) {
+        for (float& w : log_weights_) {
             w -= log_sum;
         }
     }

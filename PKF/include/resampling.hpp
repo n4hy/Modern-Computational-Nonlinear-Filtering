@@ -6,10 +6,35 @@
 #include <numeric>
 #include <algorithm>
 #include <cmath>
+#include <optmath/vulkan_backend.hpp>
 
 namespace PKF {
 
 namespace Resampling {
+
+    // Helper to compute inclusive CDF on GPU if available
+    inline std::vector<float> compute_cdf_vulkan(const std::vector<float>& weights) {
+        if (!optmath::vulkan::is_available()) return {};
+
+        size_t N = weights.size();
+        // Map to Eigen
+        Eigen::Map<const Eigen::VectorXf> w_map(weights.data(), N);
+
+        // 1. Exclusive Scan
+        Eigen::VectorXf exclusive = optmath::vulkan::vulkan_scan_prefix_sum(w_map);
+
+        // 2. Inclusive Scan = Exclusive + Weights
+        Eigen::VectorXf inclusive = optmath::vulkan::vulkan_vec_add(exclusive, w_map);
+
+        // Copy back
+        std::vector<float> cdf(N);
+        Eigen::Map<Eigen::VectorXf>(cdf.data(), N) = inclusive;
+
+        // Ensure last element is 1.0 (or sum) to avoid precision issues
+        // (But we shouldn't modify unless we know it's normalized.
+        //  The algorithm usually handles u > 1.0 logic by clamping or just loop ending.)
+        return cdf;
+    }
 
     /**
      * @brief Systematic Resampling
@@ -52,17 +77,38 @@ namespace Resampling {
         std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
         float u0 = dist(rng);
 
-        float csum = weights[0];
-        size_t k = 0;
+        if (N > 1000 && optmath::vulkan::is_available()) {
+            // Use GPU for CDF
+            std::vector<float> cdf = compute_cdf_vulkan(weights);
 
-        for (size_t i = 0; i < N; ++i) {
-            float u = u0 + static_cast<float>(i) / static_cast<float>(N);
+            // Search using CDF
+            // u starts at u0.
+            // We can use std::upper_bound or manual march. Manual march is O(N) which is fine.
 
-            while (u > csum && k < N - 1) {
-                k++;
-                csum += weights[k];
+            size_t k = 0;
+            for (size_t i = 0; i < N; ++i) {
+                float u = u0 + static_cast<float>(i) / static_cast<float>(N);
+
+                // March
+                while (k < N - 1 && u > cdf[k]) {
+                    k++;
+                }
+                parents[i] = k;
             }
-            parents[i] = k;
+        } else {
+            // CPU fallback
+            float csum = weights[0];
+            size_t k = 0;
+
+            for (size_t i = 0; i < N; ++i) {
+                float u = u0 + static_cast<float>(i) / static_cast<float>(N);
+
+                while (u > csum && k < N - 1) {
+                    k++;
+                    csum += weights[k];
+                }
+                parents[i] = k;
+            }
         }
 
         return parents;
@@ -105,18 +151,33 @@ namespace Resampling {
         size_t N = weights.size();
         std::vector<size_t> parents(N);
 
-        float csum = weights[0];
-        size_t k = 0;
+        if (N > 1000 && optmath::vulkan::is_available()) {
+             std::vector<float> cdf = compute_cdf_vulkan(weights);
+             size_t k = 0;
 
-        for (size_t i = 0; i < N; ++i) {
-            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-            float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
+             for (size_t i = 0; i < N; ++i) {
+                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+                float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
 
-            while (u > csum && k < N - 1) {
-                k++;
-                csum += weights[k];
+                while (k < N - 1 && u > cdf[k]) {
+                    k++;
+                }
+                parents[i] = k;
+             }
+        } else {
+            float csum = weights[0];
+            size_t k = 0;
+
+            for (size_t i = 0; i < N; ++i) {
+                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+                float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
+
+                while (u > csum && k < N - 1) {
+                    k++;
+                    csum += weights[k];
+                }
+                parents[i] = k;
             }
-            parents[i] = k;
         }
 
         return parents;
