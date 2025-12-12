@@ -1,5 +1,15 @@
 build/
+build_baseline/
+build_opt/
+build_opt_final/
+build_ekf/
+build_ukf/
+build_pkf/
+build_rbpkf/
+baseline_data/
+optimized_data/
 eigen_install/
 *.csv
 *.png
 .DS_Store
+_deps/
