@@ -46,14 +46,14 @@ public:
         // x_k|k-1 = A * x_{k-1|k-1} + bias
         // Use NEON GEMM for A*x (Matrix * Vector)
         // A is Nlin x Nlin, x is Nlin x 1.
-        Eigen::MatrixXf Ax = neon_gemm(A, x);
+        Eigen::MatrixXf Ax = optmath::neon::neon_gemm(A, x);
         x = Ax + bias;
 
         // P_k|k-1 = A * P_{k-1|k-1} * A^T + Q
         // AP = A * P
-        Eigen::MatrixXf AP = neon_gemm(A, P);
+        Eigen::MatrixXf AP = optmath::neon::neon_gemm(A, P);
         // APAt = AP * A^T
-        Eigen::MatrixXf APAt = neon_gemm(AP, A.transpose());
+        Eigen::MatrixXf APAt = optmath::neon::neon_gemm(AP, A.transpose());
 
         P = APAt + Q;
 
@@ -74,12 +74,12 @@ public:
                 const Eigen::Ref<const Observation>& offset,
                 const ObsCov& R) {
         // Innovation: z = y - (H*x + offset)
-        Eigen::MatrixXf Hx = neon_gemm(H, x);
+        Eigen::MatrixXf Hx = optmath::neon::neon_gemm(H, x);
         Observation z = y - (Hx + offset);
 
         // Innovation covariance: S = H*P*H^T + R
-        Eigen::MatrixXf HP = neon_gemm(H, P);
-        Eigen::MatrixXf HPHt = neon_gemm(HP, H.transpose());
+        Eigen::MatrixXf HP = optmath::neon::neon_gemm(H, P);
+        Eigen::MatrixXf HPHt = optmath::neon::neon_gemm(HP, H.transpose());
         ObsCov S = HPHt + R;
 
         // Kalman gain: K = P * H^T * S^{-1}
@@ -88,22 +88,22 @@ public:
         K = P * H.transpose() * S.ldlt().solve(Eigen::Matrix<float, Types::Ny, Types::Ny>::Identity());
 
         // Update state: x = x + K*z
-        Eigen::MatrixXf Kz = neon_gemm(K, z);
+        Eigen::MatrixXf Kz = optmath::neon::neon_gemm(K, z);
         x = x + Kz;
 
         // Update covariance (Joseph form): P = (I - KH)P(I - KH)^T + KRK^T
         Eigen::Matrix<float, Types::Nlin, Types::Nlin> I = Eigen::Matrix<float, Types::Nlin, Types::Nlin>::Identity();
 
-        Eigen::MatrixXf KH = neon_gemm(K, H);
+        Eigen::MatrixXf KH = optmath::neon::neon_gemm(K, H);
         Eigen::Matrix<float, Types::Nlin, Types::Nlin> I_KH = I - KH;
 
         // Term 1: (I-KH) * P * (I-KH)^T
-        Eigen::MatrixXf P_I_KH_T = neon_gemm(P, I_KH.transpose());
-        Eigen::MatrixXf Term1 = neon_gemm(I_KH, P_I_KH_T);
+        Eigen::MatrixXf P_I_KH_T = optmath::neon::neon_gemm(P, I_KH.transpose());
+        Eigen::MatrixXf Term1 = optmath::neon::neon_gemm(I_KH, P_I_KH_T);
 
         // Term 2: K * R * K^T
-        Eigen::MatrixXf RKt = neon_gemm(R, K.transpose());
-        Eigen::MatrixXf Term2 = neon_gemm(K, RKt);
+        Eigen::MatrixXf RKt = optmath::neon::neon_gemm(R, K.transpose());
+        Eigen::MatrixXf Term2 = optmath::neon::neon_gemm(K, RKt);
 
         P = Term1 + Term2;
 

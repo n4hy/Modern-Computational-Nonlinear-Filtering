@@ -13,8 +13,6 @@
 
 namespace PKF {
 
-using namespace optmath::vulkan;
-
 /**
  * @class ParticleFilter
  * @brief Bootstrap Particle Filter implementation.
@@ -118,7 +116,7 @@ public:
              }
 
              // Run on GPU
-             Eigen::VectorXf flat_result = vulkan_vec_add(flat_props, flat_noises);
+             Eigen::VectorXf flat_result = optmath::vulkan::vulkan_vec_add(flat_props, flat_noises);
 
              // Copy back
              for (size_t i = 0; i < N_; ++i) {

@@ -9,8 +9,6 @@
 
 namespace UKFCore {
 
-using namespace optmath::neon;
-
 template<int NX, int NY>
 class UKF {
 public:
@@ -70,10 +68,10 @@ public:
             State diff_x_pred = X_pred.col(i) - x_pred_mean;
 
             // Use NEON for outer products
-            Eigen::MatrixXf outer_pred = neon_gemm(diff_x_pred, diff_x_pred.transpose());
+            Eigen::MatrixXf outer_pred = optmath::neon::neon_gemm(diff_x_pred, diff_x_pred.transpose());
             P_pred += sigmas.Wc(i) * outer_pred;
 
-            Eigen::MatrixXf outer_cross = neon_gemm(diff_x, diff_x_pred.transpose());
+            Eigen::MatrixXf outer_cross = optmath::neon::neon_gemm(diff_x, diff_x_pred.transpose());
             P_cross += sigmas.Wc(i) * outer_cross;
         }
 
@@ -119,10 +117,10 @@ public:
              State diff_x = sigmas.X.col(i) - x_;
              Observation diff_y = Y_pred.col(i) - y_hat;
 
-             Eigen::MatrixXf outer_y = neon_gemm(diff_y, diff_y.transpose());
+             Eigen::MatrixXf outer_y = optmath::neon::neon_gemm(diff_y, diff_y.transpose());
              S += sigmas.Wc(i) * outer_y;
 
-             Eigen::MatrixXf outer_xy = neon_gemm(diff_x, diff_y.transpose());
+             Eigen::MatrixXf outer_xy = optmath::neon::neon_gemm(diff_x, diff_y.transpose());
              Pxy += sigmas.Wc(i) * outer_xy;
         }
         S += R;
@@ -136,12 +134,12 @@ public:
         Observation y_diff = y_k - y_hat;
 
         // State update
-        Eigen::MatrixXf corr = neon_gemm(K, y_diff);
+        Eigen::MatrixXf corr = optmath::neon::neon_gemm(K, y_diff);
         x_ = x_ + corr;
 
         // Covariance update
-        Eigen::MatrixXf KS = neon_gemm(K, S);
-        Eigen::MatrixXf KSKt = neon_gemm(KS, K.transpose());
+        Eigen::MatrixXf KS = optmath::neon::neon_gemm(K, S);
+        Eigen::MatrixXf KSKt = optmath::neon::neon_gemm(KS, K.transpose());
 
         P_ = P_ - KSKt;
 
