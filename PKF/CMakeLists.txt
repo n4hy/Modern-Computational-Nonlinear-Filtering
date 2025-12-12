@@ -31,19 +31,25 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # --- Vulkan Shader Deployment ---
-# Locate shader source or binary in the fetched dependency
-find_file(VEC_ADD_SHADER_SRC "vec_add.comp"
-    PATHS ${optimizedkernels_SOURCE_DIR} ${OptimizedKernels_SOURCE_DIR}
-    PATH_SUFFIXES shaders src/shaders .
+
+# 1. Try to find pre-compiled SPV in the dependency build directory
+# The dependency puts them in ${BINARY_DIR}/src
+find_file(VEC_ADD_SHADER_SPV "vec_add.comp.spv"
+    PATHS
+        ${optimizedkernels_BINARY_DIR}/src
+        ${OptimizedKernels_BINARY_DIR}/src
     NO_DEFAULT_PATH
-    DOC "Path to vec_add.comp source"
+    DOC "Path to compiled vec_add.comp.spv"
 )
 
-find_file(VEC_ADD_SHADER_SPV "vec_add.comp.spv"
-    PATHS ${optimizedkernels_SOURCE_DIR} ${OptimizedKernels_SOURCE_DIR}
-    PATH_SUFFIXES shaders src/shaders .
+# 2. Try to find source in the dependency source directory
+# The dependency source is in src/vulkan/shaders/vec_add.comp.glsl
+find_file(VEC_ADD_SHADER_SRC "vec_add.comp.glsl"
+    PATHS
+        ${optimizedkernels_SOURCE_DIR}/src/vulkan/shaders
+        ${OptimizedKernels_SOURCE_DIR}/src/vulkan/shaders
     NO_DEFAULT_PATH
-    DOC "Path to vec_add.comp.spv binary"
+    DOC "Path to vec_add.comp.glsl source"
 )
 
 if(VEC_ADD_SHADER_SPV)
@@ -57,15 +63,17 @@ elseif(VEC_ADD_SHADER_SRC)
             OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
             COMMAND ${GLSLC_EXECUTABLE} ${VEC_ADD_SHADER_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
             DEPENDS ${VEC_ADD_SHADER_SRC}
-            COMMENT "Compiling Vulkan shader vec_add.comp"
+            COMMENT "Compiling Vulkan shader vec_add.comp.glsl"
         )
         # Ensure example depends on this
         add_custom_target(CompilePKFShaders ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv)
         add_dependencies(pkf_example CompilePKFShaders)
         add_dependencies(pkf_test CompilePKFShaders)
     else()
-        message(WARNING "glslc not found and no .spv provided. PKF Vulkan acceleration will fail at runtime.")
+        message(WARNING "glslc not found. PKF Vulkan acceleration will fail at runtime (missing vec_add.comp.spv).")
     endif()
 else()
-    message(WARNING "Could not find vec_add.comp or vec_add.comp.spv in OptimizedKernels dependency.")
+    message(WARNING "Could not find vec_add.comp.spv or vec_add.comp.glsl in OptimizedKernels dependency.")
+    message(STATUS "Search paths tried (Binary): ${optimizedkernels_BINARY_DIR}/src")
+    message(STATUS "Search paths tried (Source): ${optimizedkernels_SOURCE_DIR}/src/vulkan/shaders")
 endif()
