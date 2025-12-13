@@ -51,7 +51,7 @@ int main() {
     std::cout << "Particles: " << NUM_PARTICLES << ", Lag: " << LAG << std::endl;
 
     for (int k = 1; k <= STEPS; ++k) {
-        float t = k * Lorenz63Model::DT;
+        float t = (float)k * Lorenz63Model::DT;
 
         // 1. Simulate Truth
         x_true = model.propagate(x_true, t, u) + model.sample_process_noise(t, rng);
