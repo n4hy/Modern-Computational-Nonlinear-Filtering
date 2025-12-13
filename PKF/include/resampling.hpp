@@ -17,6 +17,9 @@ namespace Resampling {
         if (!optmath::vulkan::is_available()) return {};
 
         size_t N = weights.size();
+        // Current implementation of scan_prefix_sum in OptimizedKernels is limited to 256 elements
+        if (N > 256) return {};
+
         // Map to Eigen
         Eigen::Map<const Eigen::VectorXf> w_map(weights.data(), N);
 
@@ -77,10 +80,10 @@ namespace Resampling {
         std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
         float u0 = dist(rng);
 
-        if (N > 1000 && optmath::vulkan::is_available()) {
-            // Use GPU for CDF
-            std::vector<float> cdf = compute_cdf_vulkan(weights);
+        // Use GPU for CDF if available and size supported
+        std::vector<float> cdf = (N <= 256) ? compute_cdf_vulkan(weights) : std::vector<float>{};
 
+        if (!cdf.empty()) {
             // Search using CDF
             // u starts at u0.
             // We can use std::upper_bound or manual march. Manual march is O(N) which is fine.
@@ -151,8 +154,9 @@ namespace Resampling {
         size_t N = weights.size();
         std::vector<size_t> parents(N);
 
-        if (N > 1000 && optmath::vulkan::is_available()) {
-             std::vector<float> cdf = compute_cdf_vulkan(weights);
+        std::vector<float> cdf = (N <= 256) ? compute_cdf_vulkan(weights) : std::vector<float>{};
+
+        if (!cdf.empty()) {
              size_t k = 0;
 
              for (size_t i = 0; i < N; ++i) {

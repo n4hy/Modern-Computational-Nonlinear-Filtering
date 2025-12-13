@@ -11,6 +11,8 @@ inline std::vector<float> compute_cdf_vulkan(const std::vector<float>& weights) 
     if (!optmath::vulkan::is_available()) return {};
 
     size_t N = weights.size();
+    if (N > 256) return {};
+
     Eigen::Map<const Eigen::VectorXf> w_map(weights.data(), N);
 
     // Exclusive
@@ -30,8 +32,9 @@ std::vector<int> systematic_resampling(const std::vector<float>& weights, std::m
     std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
     float u0 = dist(rng);
 
-    if (N > 1000 && optmath::vulkan::is_available()) {
-        std::vector<float> cdf = compute_cdf_vulkan(weights);
+    std::vector<float> cdf = (N <= 256) ? compute_cdf_vulkan(weights) : std::vector<float>{};
+
+    if (!cdf.empty()) {
         size_t k = 0;
         for (size_t i = 0; i < N; ++i) {
             float u = u0 + static_cast<float>(i) / static_cast<float>(N);
@@ -60,8 +63,9 @@ std::vector<int> stratified_resampling(const std::vector<float>& weights, std::m
     size_t N = weights.size();
     std::vector<int> parents(N);
 
-    if (N > 1000 && optmath::vulkan::is_available()) {
-        std::vector<float> cdf = compute_cdf_vulkan(weights);
+    std::vector<float> cdf = (N <= 256) ? compute_cdf_vulkan(weights) : std::vector<float>{};
+
+    if (!cdf.empty()) {
         size_t k = 0;
         for (size_t i = 0; i < N; ++i) {
             std::uniform_real_distribution<float> dist(0.0f, 1.0f);
