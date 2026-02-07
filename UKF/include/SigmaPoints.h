@@ -48,6 +48,18 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
 
     float n = static_cast<float>(NX);
     float lambda = alpha * alpha * (n + kappa) - n;
+
+    // Prevent division by zero or near-zero: ensure n + lambda is reasonably positive
+    // This happens when alpha is too small relative to n
+    float n_lambda = n + lambda;
+    if (std::abs(n_lambda) < 0.1f) {  // Near-zero denominator
+        // Adjust kappa to ensure positive denominator
+        // We want: alpha^2 * (n + kappa_new) - n + n > 0.1
+        // So: alpha^2 * (n + kappa_new) > 0.1
+        kappa = (0.1f / (alpha * alpha)) - n + 1.0f;
+        lambda = alpha * alpha * (n + kappa) - n;
+    }
+
     out.lambda = lambda;
 
     // Weights

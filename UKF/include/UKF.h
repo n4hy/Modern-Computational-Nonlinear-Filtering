@@ -5,7 +5,6 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
-#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -67,12 +66,9 @@ public:
             State diff_x = sigmas.X.col(i) - x_;
             State diff_x_pred = X_pred.col(i) - x_pred_mean;
 
-            // Use NEON for outer products
-            Eigen::MatrixXf outer_pred = optmath::neon::neon_gemm(diff_x_pred, diff_x_pred.transpose());
-            P_pred += sigmas.Wc(i) * outer_pred;
-
-            Eigen::MatrixXf outer_cross = optmath::neon::neon_gemm(diff_x, diff_x_pred.transpose());
-            P_cross += sigmas.Wc(i) * outer_cross;
+            // Use Eigen operators for outer products
+            P_pred += sigmas.Wc(i) * (diff_x_pred * diff_x_pred.transpose());
+            P_cross += sigmas.Wc(i) * (diff_x * diff_x_pred.transpose());
         }
 
         P_pred += Q;
@@ -117,11 +113,8 @@ public:
              State diff_x = sigmas.X.col(i) - x_;
              Observation diff_y = Y_pred.col(i) - y_hat;
 
-             Eigen::MatrixXf outer_y = optmath::neon::neon_gemm(diff_y, diff_y.transpose());
-             S += sigmas.Wc(i) * outer_y;
-
-             Eigen::MatrixXf outer_xy = optmath::neon::neon_gemm(diff_x, diff_y.transpose());
-             Pxy += sigmas.Wc(i) * outer_xy;
+             S += sigmas.Wc(i) * (diff_y * diff_y.transpose());
+             Pxy += sigmas.Wc(i) * (diff_x * diff_y.transpose());
         }
         S += R;
 
@@ -134,14 +127,10 @@ public:
         Observation y_diff = y_k - y_hat;
 
         // State update
-        Eigen::MatrixXf corr = optmath::neon::neon_gemm(K, y_diff);
-        x_ = x_ + corr;
+        x_ = x_ + K * y_diff;
 
         // Covariance update
-        Eigen::MatrixXf KS = optmath::neon::neon_gemm(K, S);
-        Eigen::MatrixXf KSKt = optmath::neon::neon_gemm(KS, K.transpose());
-
-        P_ = P_ - KSKt;
+        P_ = P_ - K * S * K.transpose();
 
         // Symmetrize and ensure PD
         P_ = 0.5f * (P_ + P_.transpose());
