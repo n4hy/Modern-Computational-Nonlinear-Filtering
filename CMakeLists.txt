@@ -33,10 +33,10 @@ if(NOT Eigen3_FOUND)
 endif()
 
 # --- Dependency: OptimizedKernelsForRaspberryPi5 ---
-message(STATUS "Fetching OptimizedKernelsForRaspberryPi5...")
+message(STATUS "Using local OptimizedKernelsForRaspberryPi5_NvidiaCUDA...")
 FetchContent_Declare(
     OptimizedKernels
-    GIT_REPOSITORY https://github.com/n4hy/OptimizedKernelsForRaspberryPi5.git
+    GIT_REPOSITORY /home/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
     GIT_TAG main
 )
 FetchContent_MakeAvailable(OptimizedKernels)

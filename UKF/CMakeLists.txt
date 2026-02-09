@@ -25,12 +25,6 @@ target_link_libraries(ukf_test Eigen3::Eigen OptMathKernels)
 add_executable(srukf_test main_srukf.cpp)
 target_link_libraries(srukf_test Eigen3::Eigen OptMathKernels)
 
-# UKF vs SRUKF Comparison
-add_executable(compare_ukf_srukf compare_ukf_srukf.cpp)
-target_link_libraries(compare_ukf_srukf Eigen3::Eigen OptMathKernels)
-target_compile_options(compare_ukf_srukf PRIVATE -O3 -march=native)
-
-# Simple Comparison (stable test problem)
-add_executable(simple_comparison simple_comparison.cpp)
-target_link_libraries(simple_comparison Eigen3::Eigen OptMathKernels)
-target_compile_options(simple_comparison PRIVATE -O3 -march=native)
+# UKF vs SRUKF Comparison (disabled - source files not present)
+# add_executable(compare_ukf_srukf compare_ukf_srukf.cpp)
+# add_executable(simple_comparison simple_comparison.cpp)

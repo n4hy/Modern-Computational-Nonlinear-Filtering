@@ -462,8 +462,10 @@ The covariance collapsed due to:
 
 ### Hardware Optimization
 
-- **ARM NEON**: All matrix operations (multiply, add, transpose) use NEON intrinsics
+- **ARM NEON Dense Linear Algebra**: Cholesky decomposition (`neon_cholesky`), matrix inverse (`neon_inverse`), general matrix multiply (`neon_gemm`), and SPD solve (`neon_solve_spd`) via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) v0.4.0+
+- **ARM NEON Matrix Operations**: Element-wise multiply, add, transpose use NEON intrinsics
 - **Vulkan Compute**: Particle operations parallelized on GPU
+- **Graceful Fallback**: Every NEON call has an Eigen fallback chain (NEON -> NEON+jitter -> Eigen LLT/LDLT) for numerical robustness on ill-conditioned matrices
 - **Cache-Friendly**: Data structures aligned for optimal memory access
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
 
@@ -491,11 +493,12 @@ The covariance collapsed due to:
 - **C++20 Compiler**: GCC 10+, Clang 11+
 - **Eigen3**: Linear algebra (3.4+)
 - **CMake**: Build system (3.16+)
+- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/Vulkan acceleration library (fetched automatically via CMake FetchContent)
 
 ### Optional
 
-- **ARM NEON**: Automatic on ARM platforms (Raspberry Pi)
-- **Vulkan SDK**: For GPU acceleration (1.3+)
+- **ARM NEON**: Automatic on ARM platforms (Raspberry Pi 5 Cortex-A76)
+- **Vulkan SDK**: For GPU-accelerated particle filter (1.3+)
 - **Python 3**: For visualization scripts
 - **Matplotlib**: For plot generation (Python package)
 
@@ -764,6 +767,61 @@ Modern-Computational-Nonlinear-Filtering/
 
 ---
 
+## NEON Dense Linear Algebra Optimization
+
+All filter implementations have been optimized to use NEON-accelerated dense linear algebra from the [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) library (v0.4.0+). These replace the corresponding Eigen operations with ARM NEON SIMD intrinsics optimized for the Raspberry Pi 5 Cortex-A76.
+
+### Operations Replaced
+
+| Eigen Operation | NEON Replacement | Used In |
+|-----------------|-----------------|---------|
+| `Eigen::LLT` (Cholesky) | `neon_cholesky` | SigmaPoints, SRUKF, Smoothers, Benchmarks |
+| `.inverse()`, `.ldlt().solve(I)` | `neon_inverse` | EKF, UKF, SRUKF, Smoothers, RBPKF, Benchmarks |
+| Manual loop outer products | `neon_gemm` | UKF, SRUKF, Smoothers, EKF, RBPKF |
+| `.ldlt().solve(b)` | `neon_solve_spd` | RBPKF likelihood |
+| `.pseudoInverse()` | `neon_inverse` | EKF Kalman gain |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `UKF/include/SigmaPoints.h` | Cholesky for sigma point generation |
+| `UKF/include/UKF.h` | GEMM for covariance, inverse for Kalman gain |
+| `UKF/include/SRUKF.h` | Cholesky (init, Q, P_yy), GEMM for cross-covariance, inverse for Kalman gain |
+| `UKF/include/UnscentedFixedLagSmoother.h` | Inverse for smoothing gain, GEMM for state/cov updates |
+| `UKF/include/SRUKFFixedLagSmoother.h` | Cholesky, inverse, GEMM throughout smoother |
+| `EKF/src/EKF.cpp` | Inverse for Kalman gain |
+| `RBPKF/include/rbpf/rbpf_core.hpp` | GEMM for likelihood, solve_spd for Mahalanobis |
+| `RBPKF/include/rbpf/kalman_filter.hpp` | Inverse for Kalman gain |
+| `Benchmarks/include/BenchmarkRunner.h` | Inverse for NEES computation |
+| `Benchmarks/src/run_benchmarks.cpp` | Cholesky for noise generation |
+| `CMakeLists.txt` | FetchContent for OptimizedKernels |
+| `UKF/CMakeLists.txt` | Removed missing source files |
+| `PKF/CMakeLists.txt` | Added `-fshader-stage=compute` for .glsl shaders |
+
+### Fallback Pattern
+
+NEON functions return `Eigen::MatrixXf` (dynamic) and return an **empty matrix** (size 0) on failure (e.g., non-SPD input for Cholesky, singular matrix for inverse). Every call site uses a three-level fallback:
+
+```cpp
+// 1. Try NEON
+Eigen::MatrixXf L = optmath::neon::neon_cholesky(P);
+if (L.size() == 0) {
+    // 2. Try NEON with jitter
+    auto P_jitter = P + 1e-6f * Identity;
+    L = optmath::neon::neon_cholesky(P_jitter);
+    if (L.size() == 0) {
+        // 3. Fall back to Eigen
+        Eigen::LLT<StateMat> llt(P_jitter);
+        L = llt.matrixL();
+    }
+}
+```
+
+This ensures numerical robustness on ill-conditioned matrices (e.g., 10D Coupled Oscillators) while still benefiting from NEON acceleration on well-conditioned problems.
+
+---
+
 ## 🤝 Contributing
 
 Contributions welcome! Areas of interest:
@@ -821,7 +879,7 @@ This implementation incorporates lessons learned from real-world failures and nu
 
 ---
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Last Updated**: February 2026
 **Status**: ✅ Production Ready (with documented caveats)
 **Platform**: Raspberry Pi 5 + x86_64

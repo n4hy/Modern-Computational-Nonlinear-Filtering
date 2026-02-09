@@ -6,6 +6,7 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
+#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -56,13 +57,17 @@ public:
             }
         }
 
-        // Compute Cholesky factor of P0
-        Eigen::LLT<StateMat> llt(P0);
-        if (llt.info() != Eigen::Success) {
+        // Compute Cholesky factor of P0 using NEON-accelerated decomposition
+        Eigen::MatrixXf L0 = optmath::neon::neon_cholesky(P0);
+        if (L0.size() == 0) {
             StateMat P_jitter = P0 + 1e-6f * StateMat::Identity();
-            llt.compute(P_jitter);
+            L0 = optmath::neon::neon_cholesky(P_jitter);
+            if (L0.size() == 0) {
+                Eigen::LLT<StateMat> llt(P_jitter);
+                L0 = llt.matrixL();
+            }
         }
-        S_ = llt.matrixL();
+        S_ = L0;
     }
 
     /**
@@ -89,13 +94,16 @@ public:
 
         // 4. Compute Square Root of Predicted Covariance using QR decomposition
         StateMat Q = model_.Q(t_k);
-        Eigen::LLT<StateMat> llt_Q(Q);
-        if (llt_Q.info() != Eigen::Success) {
-            // Q is not positive definite, add regularization
+        Eigen::MatrixXf S_Q_dyn = optmath::neon::neon_cholesky(Q);
+        if (S_Q_dyn.size() == 0) {
             Q += 1e-8f * StateMat::Identity();
-            llt_Q.compute(Q);
+            S_Q_dyn = optmath::neon::neon_cholesky(Q);
+            if (S_Q_dyn.size() == 0) {
+                Eigen::LLT<StateMat> llt_Q(Q);
+                S_Q_dyn = llt_Q.matrixL();
+            }
         }
-        StateMat S_Q = llt_Q.matrixL();  // Square root of Q
+        StateMat S_Q = S_Q_dyn;
 
         // Build matrix for QR: [sqrt(Wc[1])*X_diff[1], ..., sqrt(Wc[n])*X_diff[n], S_Q]
         // Note: skip i=0 since it has special weight that can be negative
@@ -125,12 +133,13 @@ public:
         }
 
         // 5. Compute Cross Covariance P_{x_k, x_{k+1}} for smoothing
-        StateMat P_cross = StateMat::Zero();
+        // Build weighted diff matrices for NEON GEMM: P_cross = Dx_w * Dp^T
+        Eigen::Matrix<float, NX, SigmaPts::NSIG> Dx_w, Dp;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            State diff_x = sigmas.X.col(i) - x_;
-            State diff_x_pred = X_pred.col(i) - x_pred_mean;
-            P_cross += sigmas.Wc(i) * (diff_x * diff_x_pred.transpose());  // Use Eigen directly
+            Dp.col(i) = X_pred.col(i) - x_pred_mean;
+            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
+        StateMat P_cross = optmath::neon::neon_gemm(Dx_w, Dp.transpose());
 
         // Update state
         x_ = x_pred_mean;
@@ -162,13 +171,6 @@ public:
 
         // 4. Compute Square Root of Innovation Covariance using QR
         ObsMat R = model_.R(t_k);
-        Eigen::LLT<ObsMat> llt_R(R);
-        if (llt_R.info() != Eigen::Success) {
-            // R is not positive definite, add regularization
-            R += 1e-8f * ObsMat::Identity();
-            llt_R.compute(R);
-        }
-        ObsMat S_R = llt_R.matrixL();
 
         // Compute innovation covariance square root
         // For numerical robustness, compute P_yy directly from all sigma points
@@ -185,13 +187,17 @@ public:
         // Ensure positive definite
         P_yy = 0.5f * (P_yy + P_yy.transpose());
 
-        // Compute square root via Cholesky
-        Eigen::LLT<ObsMat> llt_Pyy(P_yy);
-        if (llt_Pyy.info() != Eigen::Success) {
+        // Compute square root via NEON-accelerated Cholesky
+        Eigen::MatrixXf S_yy_dyn = optmath::neon::neon_cholesky(P_yy);
+        if (S_yy_dyn.size() == 0) {
             P_yy += 1e-6f * ObsMat::Identity();
-            llt_Pyy.compute(P_yy);
+            S_yy_dyn = optmath::neon::neon_cholesky(P_yy);
+            if (S_yy_dyn.size() == 0) {
+                Eigen::LLT<ObsMat> llt_Pyy(P_yy);
+                S_yy_dyn = llt_Pyy.matrixL();
+            }
         }
-        ObsMat S_yy = llt_Pyy.matrixL();
+        ObsMat S_yy = S_yy_dyn;
 
         // Check S_yy for numerical issues
         for (int i = 0; i < NY; ++i) {
@@ -200,24 +206,28 @@ public:
             }
         }
 
-        // 5. Compute Cross Covariance Pxy
-        CrossMat Pxy = CrossMat::Zero();
+        // 5. Compute Cross Covariance Pxy using NEON GEMM
+        Eigen::Matrix<float, NX, NSIG> Dx_w;
+        Eigen::Matrix<float, NY, NSIG> Dy;
         for (int i = 0; i < NSIG; ++i) {
-            State diff_x = sigmas.X.col(i) - x_;
-            Observation diff_y = Y_pred.col(i) - y_hat;
-            Pxy += sigmas.Wc(i) * (diff_x * diff_y.transpose());  // Use Eigen directly
+            Dy.col(i) = Y_pred.col(i) - y_hat;
+            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
+        CrossMat Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
 
-        // 6. Kalman Gain: K = Pxy * inv(S_yy * S_yy^T)
-        // Since P_yy = S_yy * S_yy^T, we have K = Pxy * P_yy^{-1}
-        // Solve in two steps:
-        //   1. S_yy * temp^T = Pxy^T  => temp^T = S_yy^{-1} * Pxy^T
-        //   2. S_yy^T * K^T = temp^T  => K^T = (S_yy^T)^{-1} * temp^T
-        Eigen::Matrix<float, NY, NX> temp_T = S_yy.template triangularView<Eigen::Lower>()
-                                               .solve(Pxy.transpose());
-        Eigen::Matrix<float, NY, NX> K_T = S_yy.transpose().template triangularView<Eigen::Upper>()
-                                            .solve(temp_T);
-        Eigen::Matrix<float, NX, NY> K = K_T.transpose();
+        // 6. Kalman Gain: K = Pxy * P_yy^{-1} using NEON-accelerated inverse
+        Eigen::MatrixXf P_yy_inv = optmath::neon::neon_inverse(P_yy);
+        Eigen::Matrix<float, NX, NY> K;
+        if (P_yy_inv.size() > 0) {
+            K = optmath::neon::neon_gemm(Eigen::MatrixXf(Pxy), P_yy_inv);
+        } else {
+            // Fallback: use triangular solves with S_yy
+            Eigen::Matrix<float, NY, NX> temp_T = S_yy.template triangularView<Eigen::Lower>()
+                                                   .solve(Pxy.transpose());
+            Eigen::Matrix<float, NY, NX> K_T = S_yy.transpose().template triangularView<Eigen::Upper>()
+                                                .solve(temp_T);
+            K = K_T.transpose();
+        }
 
         // 7. State Update
         Observation innovation = y_k - y_hat;

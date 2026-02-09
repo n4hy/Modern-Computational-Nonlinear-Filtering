@@ -3,6 +3,7 @@
 
 #include <Eigen/Dense>
 #include <cmath>
+#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -75,19 +76,18 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
     }
 
     // Sigma Points Generation
-    // Factorize P using LLT (Cholesky)
-    Eigen::LLT<Eigen::Matrix<float, NX, NX>> llt;
-    Eigen::Matrix<float, NX, NX> P_copy = P;
-
-    llt.compute(P_copy);
-
-    if (llt.info() != Eigen::Success) {
-        // Add jitter
-        P_copy += 1e-6f * Eigen::Matrix<float, NX, NX>::Identity();
-        llt.compute(P_copy);
+    // Factorize P using NEON-accelerated Cholesky
+    Eigen::MatrixXf L = optmath::neon::neon_cholesky(P);
+    if (L.size() == 0) {
+        // Not SPD, add jitter and retry
+        Eigen::Matrix<float, NX, NX> P_jitter = P + 1e-6f * Eigen::Matrix<float, NX, NX>::Identity();
+        L = optmath::neon::neon_cholesky(P_jitter);
+        if (L.size() == 0) {
+            // Ultimate fallback to Eigen LLT
+            Eigen::LLT<Eigen::Matrix<float, NX, NX>> llt(P_jitter);
+            L = llt.matrixL();
+        }
     }
-
-    Eigen::Matrix<float, NX, NX> L = llt.matrixL();
     float scale = std::sqrt(n + lambda);
 
     out.X.col(0) = x;

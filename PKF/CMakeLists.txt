@@ -61,7 +61,7 @@ elseif(VEC_ADD_SHADER_SRC)
     if(GLSLC_EXECUTABLE)
         add_custom_command(
             OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
-            COMMAND ${GLSLC_EXECUTABLE} ${VEC_ADD_SHADER_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
+            COMMAND ${GLSLC_EXECUTABLE} -fshader-stage=compute ${VEC_ADD_SHADER_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
             DEPENDS ${VEC_ADD_SHADER_SRC}
             COMMENT "Compiling Vulkan shader vec_add.comp.glsl"
         )

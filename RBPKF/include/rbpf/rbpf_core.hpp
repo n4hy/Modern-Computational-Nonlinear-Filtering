@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <iostream>
 #include <numbers>
+#include <optmath/neon_kernels.hpp>
 
 namespace rbpf {
 
@@ -104,17 +105,26 @@ public:
 
             conditional_model_.get_observation(p.x_nl, t_k, offset, H, R);
 
-            // Likelihood calculation
+            // Likelihood calculation using NEON-accelerated operations
             // y_pred = H * x + offset
-            Eigen::MatrixXf Hx = H * p.kf.x;
+            Eigen::MatrixXf Hx = optmath::neon::neon_gemm(H, p.kf.x);
             Observation y_pred = Hx + offset;
             Observation innovation = y_k - y_pred;
 
-            // S = H * P * H^T + R
-            ObsCov S = H * p.kf.P * H.transpose() + R;
+            // S = H * P * H^T + R  using NEON GEMM
+            Eigen::MatrixXf HP = optmath::neon::neon_gemm(H, p.kf.P);
+            ObsCov S = optmath::neon::neon_gemm(HP, H.transpose());
+            S += R;
 
             float log_det = std::log(S.determinant());
-            float mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
+            Eigen::VectorXf S_solved = optmath::neon::neon_solve_spd(S, innovation);
+            float mahalanobis;
+            if (S_solved.size() > 0) {
+                mahalanobis = innovation.transpose() * S_solved;
+            } else {
+                // Fallback to Eigen LDLT
+                mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
+            }
             float log_lik = -0.5f * (mahalanobis + log_det + static_cast<float>(Types::Ny) * std::log(2.0f * std::numbers::pi_v<float>));
 
             p.log_weight += log_lik;

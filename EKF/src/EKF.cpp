@@ -58,9 +58,16 @@ void EKF::update(const Eigen::VectorXf& y, float t) {
     Eigen::MatrixXf S_part = optmath::neon::neon_gemm(HP, Ht);
     Eigen::MatrixXf S = S_part + R;
 
-    // 4. Kalman Gain: K = P * H^T * S^-1
-    // Use robust decomposition. S inversion is not optimized by our kernels yet.
-    Eigen::MatrixXf K = P_ * H.transpose() * S.completeOrthogonalDecomposition().pseudoInverse();
+    // 4. Kalman Gain: K = P * H^T * S^{-1} using NEON-accelerated inverse
+    Eigen::MatrixXf S_inv = optmath::neon::neon_inverse(S);
+    Eigen::MatrixXf PHt = optmath::neon::neon_gemm(P_, H.transpose());
+    Eigen::MatrixXf K;
+    if (S_inv.size() > 0) {
+        K = optmath::neon::neon_gemm(PHt, S_inv);
+    } else {
+        // Fallback to Eigen decomposition
+        K = PHt * S.completeOrthogonalDecomposition().pseudoInverse();
+    }
 
     // 5. Update State
     // x_ = x_ + K * innov

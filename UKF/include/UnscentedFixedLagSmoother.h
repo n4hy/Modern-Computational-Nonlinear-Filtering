@@ -127,21 +127,27 @@ private:
             const State& x_s_jp1 = smoothed_states_[j+1];
             const StateMat& P_s_jp1 = smoothed_covs_[j+1];
 
-            // Smoothing Gain G_j = P_cross * P_pred_{j+1}^{-1}
-            Eigen::LDLT<StateMat> ldlt(P_pred_jp1);
-            StateMat G_j = P_cross * ldlt.solve(StateMat::Identity());
+            // Smoothing Gain G_j = P_cross * P_pred_{j+1}^{-1} using NEON inverse
+            Eigen::MatrixXf P_pred_inv = neon_inverse(P_pred_jp1);
+            StateMat G_j;
+            if (P_pred_inv.size() > 0) {
+                G_j = neon_gemm(Eigen::MatrixXf(P_cross), P_pred_inv);
+            } else {
+                // Fallback to Eigen LDLT
+                Eigen::LDLT<StateMat> ldlt(P_pred_jp1);
+                G_j = P_cross * ldlt.solve(StateMat::Identity());
+            }
 
-            // Update with NEON/Float
-            // smoothed_states_[j] = x_f_j + G_j * (x_s_jp1 - x_pred_jp1);
+            // Update with NEON GEMM
             State diff_x = x_s_jp1 - x_pred_jp1;
-            Eigen::MatrixXf update_x = neon_gemm(G_j, diff_x);
-            smoothed_states_[j] = x_f_j + update_x;
+            Eigen::MatrixXf update_x = neon_gemm(Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_x));
+            smoothed_states_[j] = x_f_j + State(update_x);
 
-            // smoothed_covs_[j]   = P_f_j + G_j * (P_s_jp1 - P_pred_jp1) * G_j.transpose();
+            // Covariance smoothing using NEON GEMM
             StateMat diff_P = P_s_jp1 - P_pred_jp1;
-            Eigen::MatrixXf term1 = neon_gemm(G_j, diff_P);
-            Eigen::MatrixXf term2 = neon_gemm(term1, G_j.transpose());
-            smoothed_covs_[j] = P_f_j + term2;
+            Eigen::MatrixXf term1 = neon_gemm(Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_P));
+            Eigen::MatrixXf term2 = neon_gemm(term1, Eigen::MatrixXf(G_j.transpose()));
+            smoothed_covs_[j] = P_f_j + StateMat(term2);
         }
     }
 };

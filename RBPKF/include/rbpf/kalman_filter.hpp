@@ -80,10 +80,16 @@ public:
         Eigen::MatrixXf HPHt = optmath::neon::neon_gemm(HP, H.transpose());
         ObsCov S = HPHt + R;
 
-        // Kalman gain: K = P * H^T * S^{-1}
-        // Using LDLT for inverse
+        // Kalman gain: K = P * H^T * S^{-1} using NEON-accelerated inverse
+        Eigen::MatrixXf S_inv = optmath::neon::neon_inverse(S);
+        Eigen::MatrixXf PHt = optmath::neon::neon_gemm(P, H.transpose());
         Eigen::Matrix<float, Types::Nlin, Types::Ny> K;
-        K = P * H.transpose() * S.ldlt().solve(Eigen::Matrix<float, Types::Ny, Types::Ny>::Identity());
+        if (S_inv.size() > 0) {
+            K = optmath::neon::neon_gemm(PHt, S_inv);
+        } else {
+            // Fallback to Eigen LDLT
+            K = PHt * S.ldlt().solve(Eigen::Matrix<float, Types::Ny, Types::Ny>::Identity());
+        }
 
         // Update state: x = x + K*z
         Eigen::MatrixXf Kz = optmath::neon::neon_gemm(K, z);

@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <chrono>
 #include <cmath>
+#include <optmath/neon_kernels.hpp>
 
 namespace Benchmark {
 
@@ -160,7 +161,10 @@ std::pair<float, float> compute_nees(const std::vector<State>& true_states,
 
     for (size_t i = 0; i < true_states.size(); ++i) {
         State error = estimated_states[i] - true_states[i];
-        Eigen::MatrixXf P_inv = covs[i].inverse();
+        Eigen::MatrixXf P_inv = optmath::neon::neon_inverse(covs[i]);
+        if (P_inv.size() == 0) {
+            P_inv = covs[i].inverse();  // Fallback
+        }
         float nees = error.transpose() * P_inv * error;
         nees_values.push_back(nees);
     }

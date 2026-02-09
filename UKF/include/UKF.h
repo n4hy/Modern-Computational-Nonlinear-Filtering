@@ -5,6 +5,7 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
+#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -56,20 +57,19 @@ public:
             x_pred_mean += sigmas.Wm(i) * X_pred.col(i);
         }
 
-        // 4. Compute Predicted Covariance & Cross Covariance P_{x_k, x_{k+1}}
-        StateMat P_pred = StateMat::Zero();
-        StateMat P_cross = StateMat::Zero();
-
+        // 4. Compute Predicted Covariance & Cross Covariance using NEON GEMM
         StateMat Q = model_.Q(t_k);
 
+        // Build weighted diff matrices for batch outer product via GEMM
+        Eigen::Matrix<float, NX, SigmaPts::NSIG> Dp_w, Dp, Dx_w;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            State diff_x = sigmas.X.col(i) - x_;
             State diff_x_pred = X_pred.col(i) - x_pred_mean;
-
-            // Use Eigen operators for outer products
-            P_pred += sigmas.Wc(i) * (diff_x_pred * diff_x_pred.transpose());
-            P_cross += sigmas.Wc(i) * (diff_x * diff_x_pred.transpose());
+            Dp.col(i) = diff_x_pred;
+            Dp_w.col(i) = sigmas.Wc(i) * diff_x_pred;
+            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
+        StateMat P_pred = optmath::neon::neon_gemm(Dp_w, Dp.transpose());
+        StateMat P_cross = optmath::neon::neon_gemm(Dx_w, Dp.transpose());
 
         P_pred += Q;
 
@@ -104,33 +104,40 @@ public:
             y_hat += sigmas.Wm(i) * Y_pred.col(i);
         }
 
-        // 4. Compute Innovation Covariance S and Cross Covariance Pxy
-        ObsMat S = ObsMat::Zero();
-        CrossMat Pxy = CrossMat::Zero();
+        // 4. Compute Innovation Covariance S and Cross Covariance Pxy via NEON GEMM
         ObsMat R = model_.R(t_k);
 
+        Eigen::Matrix<float, NY, SigmaPts::NSIG> Dy_w, Dy;
+        Eigen::Matrix<float, NX, SigmaPts::NSIG> Dx_w;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-             State diff_x = sigmas.X.col(i) - x_;
              Observation diff_y = Y_pred.col(i) - y_hat;
-
-             S += sigmas.Wc(i) * (diff_y * diff_y.transpose());
-             Pxy += sigmas.Wc(i) * (diff_x * diff_y.transpose());
+             Dy.col(i) = diff_y;
+             Dy_w.col(i) = sigmas.Wc(i) * diff_y;
+             Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
+        ObsMat S = optmath::neon::neon_gemm(Dy_w, Dy.transpose());
+        CrossMat Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
         S += R;
 
-        // 5. Kalman Gain and Update
-        // K = Pxy * S^{-1}
-        Eigen::LDLT<ObsMat> ldlt(S);
-
-        Eigen::Matrix<float, NX, NY> K = Pxy * ldlt.solve(ObsMat::Identity());
+        // 5. Kalman Gain: K = Pxy * S^{-1} using NEON-accelerated inverse
+        Eigen::MatrixXf S_inv = optmath::neon::neon_inverse(S);
+        Eigen::Matrix<float, NX, NY> K;
+        if (S_inv.size() > 0) {
+            K = optmath::neon::neon_gemm(Eigen::MatrixXf(Pxy), S_inv);
+        } else {
+            // Fallback to Eigen LDLT
+            Eigen::LDLT<ObsMat> ldlt(S);
+            K = Pxy * ldlt.solve(ObsMat::Identity());
+        }
 
         Observation y_diff = y_k - y_hat;
 
         // State update
         x_ = x_ + K * y_diff;
 
-        // Covariance update
-        P_ = P_ - K * S * K.transpose();
+        // Covariance update: P = P - K*S*K^T using NEON GEMM
+        Eigen::MatrixXf KS = optmath::neon::neon_gemm(K, S);
+        P_ = P_ - optmath::neon::neon_gemm(KS, K.transpose());
 
         // Symmetrize and ensure PD
         P_ = 0.5f * (P_ + P_.transpose());
