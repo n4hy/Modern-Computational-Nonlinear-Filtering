@@ -213,13 +213,13 @@ public:
             Dy.col(i) = Y_pred.col(i) - y_hat;
             Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
-        CrossMat Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
+        Eigen::MatrixXf Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
 
         // 6. Kalman Gain: K = Pxy * P_yy^{-1} using NEON-accelerated inverse
         Eigen::MatrixXf P_yy_inv = optmath::neon::neon_inverse(P_yy);
         Eigen::Matrix<float, NX, NY> K;
         if (P_yy_inv.size() > 0) {
-            K = optmath::neon::neon_gemm(Eigen::MatrixXf(Pxy), P_yy_inv);
+            K = optmath::neon::neon_gemm(Pxy, P_yy_inv);
         } else {
             // Fallback: use triangular solves with S_yy
             Eigen::Matrix<float, NY, NX> temp_T = S_yy.template triangularView<Eigen::Lower>()

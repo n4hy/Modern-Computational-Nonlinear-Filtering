@@ -36,7 +36,7 @@ endif()
 message(STATUS "Using local OptimizedKernelsForRaspberryPi5_NvidiaCUDA...")
 FetchContent_Declare(
     OptimizedKernels
-    GIT_REPOSITORY /home/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
+    GIT_REPOSITORY $ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
     GIT_TAG main
 )
 FetchContent_MakeAvailable(OptimizedKernels)
