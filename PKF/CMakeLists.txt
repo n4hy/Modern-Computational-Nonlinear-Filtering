@@ -41,6 +41,8 @@ endif()
 
 # 1. Try to find pre-compiled SPV in the dependency build directory
 # The dependency puts them in ${BINARY_DIR}/src
+# Unset cached result to avoid stale paths after clean builds
+unset(VEC_ADD_SHADER_SPV CACHE)
 find_file(VEC_ADD_SHADER_SPV "vec_add.comp.spv"
     PATHS
         ${optimizedkernels_BINARY_DIR}/src
@@ -51,6 +53,7 @@ find_file(VEC_ADD_SHADER_SPV "vec_add.comp.spv"
 
 # 2. Try to find source in the dependency source directory
 # The dependency source is in src/vulkan/shaders/vec_add.comp.glsl
+unset(VEC_ADD_SHADER_SRC CACHE)
 find_file(VEC_ADD_SHADER_SRC "vec_add.comp.glsl"
     PATHS
         ${optimizedkernels_SOURCE_DIR}/src/vulkan/shaders
@@ -59,7 +62,7 @@ find_file(VEC_ADD_SHADER_SRC "vec_add.comp.glsl"
     DOC "Path to vec_add.comp.glsl source"
 )
 
-if(VEC_ADD_SHADER_SPV)
+if(VEC_ADD_SHADER_SPV AND EXISTS "${VEC_ADD_SHADER_SPV}")
     message(STATUS "Found pre-compiled shader: ${VEC_ADD_SHADER_SPV}")
     configure_file(${VEC_ADD_SHADER_SPV} ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv COPYONLY)
 elseif(VEC_ADD_SHADER_SRC)
