@@ -29,6 +29,7 @@ target_link_libraries(run_benchmarks
 
 # Enable optimization
 target_compile_options(run_benchmarks PRIVATE -O3 -march=native)
+enable_lto_if_supported(run_benchmarks)
 
 # Installation
 install(TARGETS run_benchmarks DESTINATION bin)

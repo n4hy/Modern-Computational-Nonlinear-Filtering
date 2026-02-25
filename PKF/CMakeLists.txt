@@ -18,10 +18,12 @@ endif()
 # Example Executable
 add_executable(pkf_example src/example_main.cpp)
 target_link_libraries(pkf_example PRIVATE PKF_Lib OptMathKernels)
+enable_lto_if_supported(pkf_example)
 
 # Test Executable
 add_executable(pkf_test tests/test_particle.cpp)
 target_link_libraries(pkf_test PRIVATE PKF_Lib OptMathKernels)
+enable_lto_if_supported(pkf_test)
 
 # Enable warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

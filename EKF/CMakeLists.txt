@@ -22,3 +22,4 @@ set(SOURCES
 # Executable
 add_executable(ekf_test ${SOURCES})
 target_link_libraries(ekf_test Eigen3::Eigen OptMathKernels)
+enable_lto_if_supported(ekf_test)

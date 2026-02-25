@@ -7,17 +7,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Optimization Flags for Release builds ---
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # Check LTO support but DO NOT enable globally - it conflicts with CUDA nvlink
+    # We'll apply LTO to specific targets after dependencies are loaded
     include(CheckIPOSupported)
-    check_ipo_supported(RESULT lto_supported OUTPUT lto_error)
-    if(lto_supported)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-        message(STATUS "LTO/IPO enabled")
+    check_ipo_supported(RESULT NLF_LTO_SUPPORTED OUTPUT lto_error)
+    if(NLF_LTO_SUPPORTED)
+        message(STATUS "LTO/IPO supported - will apply to local targets only (not CUDA)")
     else()
         message(STATUS "LTO/IPO not supported: ${lto_error}")
     endif()
     add_compile_definitions(EIGEN_NO_DEBUG EIGEN_FAST_MATH=1)
     add_compile_options(-ffast-math -march=native)
 endif()
+
+# Helper function to enable LTO on non-CUDA targets
+function(enable_lto_if_supported target)
+    if(NLF_LTO_SUPPORTED AND CMAKE_BUILD_TYPE STREQUAL "Release")
+        set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+endfunction()
 
 # --- OpenMP Support ---
 find_package(OpenMP)

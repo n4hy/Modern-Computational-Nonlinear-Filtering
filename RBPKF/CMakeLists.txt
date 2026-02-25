@@ -22,10 +22,15 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(rbpf_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
+# Enable LTO on library
+enable_lto_if_supported(rbpf_core)
+
 # Examples
 add_executable(example_rbpf_ctrv examples/example_rbpf_ctrv.cpp)
 target_link_libraries(example_rbpf_ctrv PRIVATE rbpf_core OptMathKernels)
+enable_lto_if_supported(example_rbpf_ctrv)
 
 # Tests
 add_executable(test_rbpf_basic tests/test_rbpf_basic.cpp)
 target_link_libraries(test_rbpf_basic PRIVATE rbpf_core OptMathKernels)
+enable_lto_if_supported(test_rbpf_basic)
