@@ -61,7 +61,8 @@ bool FixedLagSmoother::process(const Eigen::VectorXd& y,
         Eigen::MatrixXd& F = buffer_[i].F;
         Eigen::MatrixXd& P_pred_next = buffer_[i+1].P_pred;
 
-        Eigen::MatrixXd C = P_filt * F.transpose() * P_pred_next.inverse();
+        Eigen::MatrixXd C = P_filt * F.transpose() *
+            P_pred_next.completeOrthogonalDecomposition().pseudoInverse();
 
         x_smooth[i] = buffer_[i].x_upd + C * (x_smooth[i+1] - buffer_[i+1].x_pred);
         P_smooth[i] = P_filt + C * (P_smooth[i+1] - P_pred_next) * C.transpose();
@@ -118,7 +119,8 @@ bool FixedLagSmoother::flush(Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out) {
         Eigen::MatrixXd& P_filt = buffer_[i].P_upd;
         Eigen::MatrixXd& F = buffer_[i].F;
         Eigen::MatrixXd& P_pred_next = buffer_[i+1].P_pred;
-        Eigen::MatrixXd C = P_filt * F.transpose() * P_pred_next.inverse();
+        Eigen::MatrixXd C = P_filt * F.transpose() *
+            P_pred_next.completeOrthogonalDecomposition().pseudoInverse();
         x_smooth[i] = buffer_[i].x_upd + C * (x_smooth[i+1] - buffer_[i+1].x_pred);
         P_smooth[i] = P_filt + C * (P_smooth[i+1] - P_pred_next) * C.transpose();
     }

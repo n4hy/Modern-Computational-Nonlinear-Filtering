@@ -17,6 +17,11 @@ if(NOT TARGET Eigen3::Eigen)
 endif()
 target_link_libraries(rbpf_core PUBLIC Eigen3::Eigen)
 
+# Link OpenMP if available
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(rbpf_core PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
 # Examples
 add_executable(example_rbpf_ctrv examples/example_rbpf_ctrv.cpp)
 target_link_libraries(example_rbpf_ctrv PRIVATE rbpf_core OptMathKernels)

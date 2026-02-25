@@ -63,8 +63,14 @@ public:
             StateMat P_jitter = P0 + 1e-6f * StateMat::Identity();
             L0 = optmath::neon::neon_cholesky(P_jitter);
             if (L0.size() == 0) {
-                Eigen::LLT<StateMat> llt(P_jitter);
-                L0 = llt.matrixL();
+                Eigen::LDLT<StateMat> ldlt(P_jitter);
+                if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
+                    L0 = StateMat::Identity();  // Last resort
+                } else {
+                    StateMat P_ldlt = ldlt.matrixL();
+                    Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
+                    L0 = P_ldlt * D_sqrt.asDiagonal();
+                }
             }
         }
         S_ = L0;
@@ -99,8 +105,14 @@ public:
             Q += 1e-8f * StateMat::Identity();
             S_Q_dyn = optmath::neon::neon_cholesky(Q);
             if (S_Q_dyn.size() == 0) {
-                Eigen::LLT<StateMat> llt_Q(Q);
-                S_Q_dyn = llt_Q.matrixL();
+                Eigen::LDLT<StateMat> ldlt_Q(Q);
+                if (ldlt_Q.info() != Eigen::Success || !ldlt_Q.isPositive()) {
+                    S_Q_dyn = StateMat::Identity() * 1e-4f;  // Last resort
+                } else {
+                    StateMat Q_ldlt = ldlt_Q.matrixL();
+                    Eigen::VectorXf D_sqrt = ldlt_Q.vectorD().cwiseSqrt();
+                    S_Q_dyn = Q_ldlt * D_sqrt.asDiagonal();
+                }
             }
         }
         StateMat S_Q = S_Q_dyn;
@@ -193,8 +205,14 @@ public:
             P_yy += 1e-6f * ObsMat::Identity();
             S_yy_dyn = optmath::neon::neon_cholesky(P_yy);
             if (S_yy_dyn.size() == 0) {
-                Eigen::LLT<ObsMat> llt_Pyy(P_yy);
-                S_yy_dyn = llt_Pyy.matrixL();
+                Eigen::LDLT<ObsMat> ldlt_Pyy(P_yy);
+                if (ldlt_Pyy.info() != Eigen::Success || !ldlt_Pyy.isPositive()) {
+                    S_yy_dyn = ObsMat::Identity() * 0.01f;  // Last resort
+                } else {
+                    ObsMat Pyy_ldlt = ldlt_Pyy.matrixL();
+                    Eigen::VectorXf D_sqrt = ldlt_Pyy.vectorD().cwiseSqrt();
+                    S_yy_dyn = Pyy_ldlt * D_sqrt.asDiagonal();
+                }
             }
         }
         ObsMat S_yy = S_yy_dyn;
@@ -215,19 +233,17 @@ public:
         }
         Eigen::MatrixXf Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
 
-        // 6. Kalman Gain: K = Pxy * P_yy^{-1} using NEON-accelerated inverse
-        Eigen::MatrixXf P_yy_inv = optmath::neon::neon_inverse(P_yy);
+        // 6. Kalman Gain: K = Pxy * P_yy^{-1}
+        // Prefer triangular solve (O(N^2)) over explicit inverse (O(N^3)) since we have S_yy
+        // K = Pxy * (S_yy * S_yy^T)^{-1} = Pxy * S_yy^{-T} * S_yy^{-1}
+        // Solve: S_yy * temp = Pxy^T  =>  temp = S_yy^{-1} * Pxy^T
+        // Then:  S_yy^T * K^T = temp  =>  K^T = S_yy^{-T} * temp
         Eigen::Matrix<float, NX, NY> K;
-        if (P_yy_inv.size() > 0) {
-            K = optmath::neon::neon_gemm(Pxy, P_yy_inv);
-        } else {
-            // Fallback: use triangular solves with S_yy
-            Eigen::Matrix<float, NY, NX> temp_T = S_yy.template triangularView<Eigen::Lower>()
-                                                   .solve(Pxy.transpose());
-            Eigen::Matrix<float, NY, NX> K_T = S_yy.transpose().template triangularView<Eigen::Upper>()
-                                                .solve(temp_T);
-            K = K_T.transpose();
-        }
+        Eigen::Matrix<float, NY, NX> temp_T = S_yy.template triangularView<Eigen::Lower>()
+                                               .solve(Pxy.transpose());
+        Eigen::Matrix<float, NY, NX> K_T = S_yy.transpose().template triangularView<Eigen::Upper>()
+                                            .solve(temp_T);
+        K = K_T.transpose();
 
         // 7. State Update
         Observation innovation = y_k - y_hat;

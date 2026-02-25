@@ -101,11 +101,16 @@ std::pair<Eigen::VectorXf, Eigen::MatrixXf> EKFFixedLag::getSmoothedState(int la
     // lag L means time k-L (index N-1-L)
     // We check if we have enough history
 
+    // Check if smoothing was performed
+    if (x_smooth_.empty() || P_smooth_.empty()) {
+        // Return filtered state as fallback
+        return {buffer_.back().x_upd, buffer_.back().P_upd};
+    }
+
     size_t N = buffer_.size();
     if (lag < 0 || lag >= (int)N) {
         // Requested lag outside available window
-        // Return filtered state as fallback or empty?
-        // Let's return the oldest available smoothed state if lag is too large,
+        // Return the oldest available smoothed state if lag is too large,
         // or current if lag is too small.
         if (lag >= (int)N) lag = (int)N - 1;
         else lag = 0;

@@ -5,6 +5,28 @@ project(NonlinearFiltering)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --- Compiler Optimization Flags for Release builds ---
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT lto_supported OUTPUT lto_error)
+    if(lto_supported)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "LTO/IPO enabled")
+    else()
+        message(STATUS "LTO/IPO not supported: ${lto_error}")
+    endif()
+    add_compile_definitions(EIGEN_NO_DEBUG EIGEN_FAST_MATH=1)
+    add_compile_options(-ffast-math -march=native)
+endif()
+
+# --- OpenMP Support ---
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP found, enabling parallel particle filter")
+else()
+    message(STATUS "OpenMP not found, particle filter will run single-threaded")
+endif()
+
 include(FetchContent)
 
 # Module path

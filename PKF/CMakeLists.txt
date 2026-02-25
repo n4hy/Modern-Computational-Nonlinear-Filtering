@@ -10,6 +10,11 @@ add_library(PKF_Lib INTERFACE)
 target_include_directories(PKF_Lib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(PKF_Lib INTERFACE Eigen3::Eigen)
 
+# Link OpenMP if available
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(PKF_Lib INTERFACE OpenMP::OpenMP_CXX)
+endif()
+
 # Example Executable
 add_executable(pkf_example src/example_main.cpp)
 target_link_libraries(pkf_example PRIVATE PKF_Lib OptMathKernels)

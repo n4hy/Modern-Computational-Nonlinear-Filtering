@@ -23,6 +23,9 @@ namespace Resampling {
      */
     inline std::vector<size_t> systematic(const std::vector<double>& weights, std::mt19937_64& rng) {
         size_t N = weights.size();
+        if (N == 0) return std::vector<size_t>();
+        if (N == 1) return std::vector<size_t>{0};
+
         std::vector<size_t> parents(N);
 
         std::uniform_real_distribution<double> dist(0.0, 1.0 / static_cast<double>(N));
@@ -47,6 +50,9 @@ namespace Resampling {
     // Overload for float weights
     inline std::vector<size_t> systematic(const std::vector<float>& weights, std::mt19937_64& rng) {
         size_t N = weights.size();
+        if (N == 0) return std::vector<size_t>();
+        if (N == 1) return std::vector<size_t>{0};
+
         std::vector<size_t> parents(N);
 
         std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
@@ -81,6 +87,9 @@ namespace Resampling {
      */
     inline std::vector<size_t> stratified(const std::vector<double>& weights, std::mt19937_64& rng) {
         size_t N = weights.size();
+        if (N == 0) return std::vector<size_t>();
+        if (N == 1) return std::vector<size_t>{0};
+
         std::vector<size_t> parents(N);
 
         double csum = weights[0];
@@ -103,6 +112,9 @@ namespace Resampling {
     // Overload for float weights
     inline std::vector<size_t> stratified(const std::vector<float>& weights, std::mt19937_64& rng) {
         size_t N = weights.size();
+        if (N == 0) return std::vector<size_t>();
+        if (N == 1) return std::vector<size_t>{0};
+
         std::vector<size_t> parents(N);
 
         float csum = weights[0];

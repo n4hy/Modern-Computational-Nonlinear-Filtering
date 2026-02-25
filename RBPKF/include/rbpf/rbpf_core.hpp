@@ -15,6 +15,10 @@
 #include <numbers>
 #include <optmath/neon_kernels.hpp>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace rbpf {
 
 template<typename Types>
@@ -87,11 +91,19 @@ public:
         Observation offset;
         ObsCov R;
 
+#ifdef _OPENMP
+        #pragma omp parallel for
+#endif
         for (int i = 0; i < config_.num_particles; ++i) {
             auto& p = particles_[i];
 
             NonlinearState x_nl_prev = p.x_nl;
+#ifdef _OPENMP
+            thread_local std::mt19937_64 local_rng{std::random_device{}()};
+            p.x_nl = nonlinear_model_.propagate(x_nl_prev, t_k, u_k, local_rng);
+#else
             p.x_nl = nonlinear_model_.propagate(x_nl_prev, t_k, u_k, rng_);
+#endif
 
             conditional_model_.get_dynamics(x_nl_prev, t_k, bias, A, B, Q);
 
@@ -116,7 +128,23 @@ public:
             ObsCov S = optmath::neon::neon_gemm(HP, H.transpose());
             S += R;
 
-            float log_det = std::log(S.determinant());
+            // Compute log determinant with singularity protection
+            float det = S.determinant();
+            float log_det;
+            if (det <= 1e-30f) {
+                Eigen::LDLT<ObsCov> ldlt(S);
+                if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
+                    log_det = -1e10f;  // Particle will be downweighted
+                } else {
+                    auto D = ldlt.vectorD();
+                    log_det = 0.0f;
+                    for (int k = 0; k < D.size(); ++k)
+                        log_det += std::log(std::max(D(k), 1e-30f));
+                }
+            } else {
+                log_det = std::log(det);
+            }
+
             Eigen::VectorXf S_solved = optmath::neon::neon_solve_spd(S, innovation);
             float mahalanobis;
             if (S_solved.size() > 0) {

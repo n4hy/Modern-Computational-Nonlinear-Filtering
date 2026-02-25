@@ -11,6 +11,10 @@
 #include "resampling.hpp"
 #include <optmath/vulkan_backend.hpp>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace PKF {
 
 /**
@@ -40,6 +44,10 @@ public:
 
         particles_.resize(N_);
         log_weights_.resize(N_, -std::log(static_cast<float>(N_))); // Initialize with uniform weights
+
+        // Pre-allocate temporary vectors for step()
+        props_.resize(N_);
+        noises_.resize(N_);
 
         // Seed RNG
         std::random_device rd;
@@ -71,15 +79,25 @@ public:
 
         // 1. Propagation
         // We compute deterministic part and noise separately to allow potential batching
+        // Use pre-allocated props_ and noises_ vectors
 
-        // Temporary vectors
-        std::vector<State> props(N_);
-        std::vector<State> noises(N_);
-
-        for (size_t i = 0; i < N_; ++i) {
-            props[i] = model_->propagate(particles_[i], t_k, u_k);
-            noises[i] = model_->sample_process_noise(t_k, rng_);
+#ifdef _OPENMP
+        // Parallel propagation with thread-local RNG
+        #pragma omp parallel
+        {
+            thread_local std::mt19937_64 local_rng{std::random_device{}()};
+            #pragma omp for
+            for (size_t i = 0; i < N_; ++i) {
+                props_[i] = model_->propagate(particles_[i], t_k, u_k);
+                noises_[i] = model_->sample_process_noise(t_k, local_rng);
+            }
         }
+#else
+        for (size_t i = 0; i < N_; ++i) {
+            props_[i] = model_->propagate(particles_[i], t_k, u_k);
+            noises_[i] = model_->sample_process_noise(t_k, rng_);
+        }
+#endif
 
         // Vulkan Acceleration for Noise Addition
         if (N_ > 100 && optmath::vulkan::is_available()) {
@@ -88,8 +106,8 @@ public:
              Eigen::VectorXf flat_noises(N_ * NX);
 
              for (size_t i = 0; i < N_; ++i) {
-                 flat_props.segment<NX>(i * NX) = props[i];
-                 flat_noises.segment<NX>(i * NX) = noises[i];
+                 flat_props.segment<NX>(i * NX) = props_[i];
+                 flat_noises.segment<NX>(i * NX) = noises_[i];
              }
 
              // Run on GPU
@@ -101,12 +119,18 @@ public:
              }
         } else {
             // CPU fallback
+#ifdef _OPENMP
+            #pragma omp parallel for
+#endif
             for (size_t i = 0; i < N_; ++i) {
-                particles_[i] = props[i] + noises[i];
+                particles_[i] = props_[i] + noises_[i];
             }
         }
 
         // 2. Weight Update
+#ifdef _OPENMP
+        #pragma omp parallel for
+#endif
         for (size_t i = 0; i < N_; ++i) {
             float log_lik = model_->observation_loglik(y_k, particles_[i], t_k);
             log_weights_[i] += log_lik;
@@ -118,13 +142,25 @@ public:
 
     /**
      * @brief Calculate Effective Sample Size (ESS)
+     *
+     * Uses log-sum-exp trick to prevent underflow when log-weights are very negative.
      */
     float get_effective_sample_size() const {
-        double sum_sq = 0.0;
+        if (log_weights_.empty()) return 0.0f;
+
+        // Find max of 2*log_weights to use log-sum-exp trick
+        double max_2lw = 2.0 * *std::max_element(log_weights_.begin(), log_weights_.end());
+
+        double sum_exp = 0.0;
         for (double lw : log_weights_) {
-            sum_sq += std::exp(2.0 * lw);
+            sum_exp += std::exp(2.0 * lw - max_2lw);
         }
-        return 1.0f / static_cast<float>(sum_sq);
+
+        // log(sum(w^2)) = max_2lw + log(sum_exp)
+        double log_sum_sq = max_2lw + std::log(sum_exp);
+
+        // ESS = 1 / sum(w^2), clamped to valid range [1, N]
+        return static_cast<float>(std::clamp(std::exp(-log_sum_sq), 1.0, static_cast<double>(N_)));
     }
 
     /**
@@ -199,6 +235,10 @@ private:
     std::vector<State> particles_;
     std::vector<double> log_weights_;
     std::mt19937_64 rng_;
+
+    // Pre-allocated temporary vectors for step()
+    std::vector<State> props_;
+    std::vector<State> noises_;
 
     /**
      * @brief Normalize log-weights using log-sum-exp trick

@@ -6,6 +6,9 @@ namespace rbpf {
 
 std::vector<int> systematic_resampling(const std::vector<float>& weights, std::mt19937_64& rng) {
     size_t N = weights.size();
+    if (N == 0) return std::vector<int>();
+    if (N == 1) return std::vector<int>{0};
+
     std::vector<int> parents(N);
 
     std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
@@ -29,6 +32,9 @@ std::vector<int> systematic_resampling(const std::vector<float>& weights, std::m
 
 std::vector<int> stratified_resampling(const std::vector<float>& weights, std::mt19937_64& rng) {
     size_t N = weights.size();
+    if (N == 0) return std::vector<int>();
+    if (N == 1) return std::vector<int>{0};
+
     std::vector<int> parents(N);
 
     float csum = weights[0];
