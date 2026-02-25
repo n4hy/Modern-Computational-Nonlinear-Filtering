@@ -529,14 +529,23 @@ sudo apt install python3 python3-matplotlib  # For plots
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/Modern-Computational-Nonlinear-Filtering.git
+git clone https://github.com/n4hy/Modern-Computational-Nonlinear-Filtering.git
 cd Modern-Computational-Nonlinear-Filtering
 
 # Create build directory
 mkdir -p build && cd build
 
-# Configure
-cmake ..
+# Configure (minimal)
+cmake -DCMAKE_BUILD_TYPE=Release ..
+
+# Configure (full, for Raspberry Pi 5 with NEON + Vulkan)
+cmake -DCMAKE_BUILD_TYPE=Release \
+      -DENABLE_NEON=ON \
+      -DENABLE_VULKAN=ON \
+      -DENABLE_CUDA=OFF \
+      -DBUILD_TESTS=ON \
+      -DBUILD_BENCHMARKS=OFF \
+      ..
 
 # Build all targets
 make -j$(nproc)
@@ -545,15 +554,27 @@ make -j$(nproc)
 ./Benchmarks/run_benchmarks
 
 # Generate visualizations
-cd build
 python3 ../scripts/simple_plot_benchmarks.py .
 ```
+
+**CMake Options** (passed through to OptimizedKernels dependency):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ENABLE_NEON` | Auto-detected on ARM | ARM NEON SIMD acceleration |
+| `ENABLE_VULKAN` | OFF | Vulkan GPU compute for particle filter |
+| `ENABLE_CUDA` | OFF | CUDA acceleration (requires NVIDIA GPU) |
+| `BUILD_TESTS` | ON | Build OptimizedKernels test suite |
+| `BUILD_BENCHMARKS` | OFF | Build OptimizedKernels benchmarks |
 
 **Build Outputs**:
 - `./UKF/ukf_test` - UKF standalone test
 - `./UKF/srukf_test` - SRUKF standalone test
 - `./EKF/ekf_test` - EKF test
+- `./PKF/pkf_example` - Particle filter example
 - `./PKF/pkf_test` - Particle filter test
+- `./RBPKF/example_rbpf_ctrv` - RBPF CTRV example
+- `./RBPKF/test_rbpf_basic` - RBPF test
 - `./Benchmarks/run_benchmarks` - Full benchmark suite
 
 ---
@@ -734,32 +755,63 @@ python3 ../scripts/simple_plot_benchmarks.py .
 
 ```
 Modern-Computational-Nonlinear-Filtering/
+├── Common/                 # Shared interfaces
+│   └── include/
+│       ├── StateSpaceModel.h  # Abstract model base class
+│       ├── SystemModel.h      # Alternative model interface
+│       └── FileUtils.h        # CSV I/O utilities
+│
 ├── EKF/                    # Extended Kalman Filter
 │   ├── include/
-│   │   ├── EKF.h          # EKF implementation
-│   │   └── EKFSmoother.h  # RTS smoother
-│   └── ekf_test.cpp
+│   │   ├── EKF.h              # EKF implementation
+│   │   ├── EKFFixedLag.h      # EKF with fixed-lag smoothing
+│   │   ├── FixedLagSmoother.h # RTS smoother interface
+│   │   ├── BallTossModel.h    # Test model
+│   │   └── NonlinearOscillator.h
+│   ├── src/
+│   │   ├── EKF.cpp
+│   │   ├── EKFFixedLag.cpp
+│   │   └── FixedLagSmoother.cpp
+│   └── main.cpp
 │
 ├── UKF/                    # Unscented Kalman Filter
 │   ├── include/
-│   │   ├── UKF.h          # Standard UKF
-│   │   ├── SRUKF.h        # Square Root UKF ⭐
+│   │   ├── UKF.h              # Standard UKF
+│   │   ├── SRUKF.h            # Square Root UKF ⭐
+│   │   ├── SigmaPoints.h      # Sigma point generation
+│   │   ├── UnscentedFixedLagSmoother.h
 │   │   ├── SRUKFFixedLagSmoother.h
-│   │   ├── SigmaPoints.h  # Sigma point generation
-│   │   └── StateSpaceModel.h
-│   ├── ukf_test.cpp
-│   └── srukf_test.cpp     # SRUKF standalone test
+│   │   └── DragBallModel.h    # Test model
+│   ├── main.cpp               # UKF standalone test
+│   └── main_srukf.cpp         # SRUKF standalone test
 │
 ├── PKF/                    # Particle Filter
 │   ├── include/
-│   │   ├── ParticleFilter.h
-│   │   └── Resampling.h
-│   └── pkf_test.cpp
+│   │   ├── particle_filter.hpp
+│   │   ├── particle_fixed_lag.hpp
+│   │   ├── resampling.hpp
+│   │   ├── noise_models.hpp
+│   │   ├── state_space_model.hpp
+│   │   └── lorenz63_model.hpp
+│   ├── src/
+│   │   └── example_main.cpp
+│   └── tests/
+│       └── test_particle.cpp
 │
 ├── RBPKF/                  # Rao-Blackwellized Particle Filter
-│   ├── include/
-│   │   └── RBPF.h
+│   ├── include/rbpf/
+│   │   ├── rbpf_core.hpp      # Core RBPF implementation
+│   │   ├── kalman_filter.hpp  # Gaussian component
+│   │   ├── state_space_models.hpp
+│   │   ├── resampling.hpp
+│   │   ├── rbpf_config.hpp
+│   │   └── types.hpp
+│   ├── src/
+│   │   └── resampling.cpp
+│   ├── examples/
+│   │   └── example_rbpf_ctrv.cpp
 │   └── tests/
+│       └── test_rbpf_basic.cpp
 │
 ├── Benchmarks/             # Comprehensive test suite ⭐
 │   ├── include/
@@ -769,19 +821,23 @@ Modern-Computational-Nonlinear-Filtering/
 │   │   └── run_benchmarks.cpp
 │   └── README.md
 │
-├── OptMathKernels/        # NEON + Vulkan acceleration
-│   ├── include/
-│   │   ├── neon_kernels.hpp
-│   │   └── vulkan_kernels.hpp
-│   └── src/
+├── scripts/                # Visualization
+│   ├── simple_plot_benchmarks.py
+│   ├── plot_benchmarks.py
+│   ├── plot_optimized.py
+│   ├── plot_results.py
+│   ├── ukf_plot_results.py
+│   └── pkf_plot_results.py
 │
-├── scripts/
-│   └── simple_plot_benchmarks.py  # Visualization
+├── docs/
+│   └── images/            # Generated benchmark plots ⭐
 │
-└── docs/
-    ├── images/            # Generated plots ⭐
-    └── RELEASE_NOTES.md
+├── FINAL_AUDIT_SUMMARY.md
+├── COMPARISON_RESULTS.md
+└── SRUKF_STATUS.md
 ```
+
+**Note**: [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) (NEON + Vulkan acceleration) is fetched automatically via CMake FetchContent from a local clone.
 
 ---
 
@@ -908,6 +964,6 @@ This implementation incorporates lessons learned from real-world failures and nu
 <div align="center">
 
 **Built with ❤️ for robust, real-world nonlinear filtering**
-55fd6e449e0858bb7b0917d7ae9e813572204cfc
+
 </div>
 
