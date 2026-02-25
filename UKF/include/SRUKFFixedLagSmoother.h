@@ -74,6 +74,12 @@ public:
         // Update
         srukf_.update(t_k, y_k);
 
+        // NaN guard: if filter state/covariance is NaN, skip history recording
+        // to prevent corruption of smoother history
+        if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) {
+            return;
+        }
+
         SRUKFHistoryEntry<NX> new_entry;
         new_entry.x_filt = srukf_.getState();
         new_entry.S_filt = srukf_.getSqrtCovariance();

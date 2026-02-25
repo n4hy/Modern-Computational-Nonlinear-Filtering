@@ -506,11 +506,68 @@ int main() {
         }
     }
 
+    // ========== Problem 4: Reentry Vehicle (6D) ==========
+    {
+        std::cout << "\n\n========== Reentry Vehicle (6D) ==========" << std::endl;
+
+        ReentryVehicle<6, 3> model;
+        // Initial state: 100km above Earth surface, suborbital reentry trajectory
+        // Position in Earth-centered coords: altitude = ||pos|| - R0
+        float R0 = model.R0;
+        Eigen::Matrix<float, 6, 1> x0;
+        x0 << R0 + 100000.0f, 0.0f, 0.0f, 0.0f, 3000.0f, -200.0f;
+
+        Eigen::Matrix<float, 6, 6> P0 = Eigen::Matrix<float, 6, 6>::Identity();
+        P0.block<3,3>(0,0) *= 10000.0f;   // Position uncertainty (m^2)
+        P0.block<3,3>(3,3) *= 100.0f;     // Velocity uncertainty ((m/s)^2)
+
+        auto data = generate_trajectory(model, x0, 20.0f, 0.1f, 45);
+
+        // UKF
+        {
+            auto data_copy = data;
+            data_copy.filtered_states.clear();
+            data_copy.filtered_covs.clear();
+            auto metrics = run_ukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D");
+            metrics.print();
+            metrics.save_to_csv(summary_file);
+            all_metrics.push_back(metrics);
+            save_trajectory_csv("reentry_ukf.csv", data_copy);
+        }
+
+        // SRUKF
+        {
+            auto data_copy = data;
+            data_copy.filtered_states.clear();
+            data_copy.filtered_covs.clear();
+            auto metrics = run_srukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D");
+            metrics.print();
+            metrics.save_to_csv(summary_file);
+            all_metrics.push_back(metrics);
+            save_trajectory_csv("reentry_srukf.csv", data_copy);
+        }
+
+        // SRUKF + Smoother
+        {
+            auto data_copy = data;
+            data_copy.filtered_states.clear();
+            data_copy.filtered_covs.clear();
+            data_copy.smoothed_states.clear();
+            data_copy.smoothed_covs.clear();
+            auto metrics = run_srukf_smoother_benchmark(model, data_copy, x0, P0,
+                                                         "ReentryVehicle6D", 20);
+            metrics.print();
+            metrics.save_to_csv(summary_file);
+            all_metrics.push_back(metrics);
+            save_trajectory_csv("reentry_srukf_smooth.csv", data_copy);
+        }
+    }
+
     summary_file.close();
 
     std::cout << "\n\n========== Benchmark Complete ==========" << std::endl;
     std::cout << "Results saved to benchmark_results.csv" << std::endl;
-    std::cout << "Trajectory files saved with prefix: coupled_osc_, vanderpol_, bearing_" << std::endl;
+    std::cout << "Trajectory files saved with prefix: coupled_osc_, vanderpol_, bearing_, reentry_" << std::endl;
 
     return 0;
 }

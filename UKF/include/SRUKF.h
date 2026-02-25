@@ -52,7 +52,7 @@ public:
                 alpha = 1.0f;
                 kappa = 3.0f - static_cast<float>(NX);
             } else {
-                alpha = 1e-3f;
+                alpha = 1.0f;
                 kappa = 0.0f;
             }
         }
@@ -207,7 +207,16 @@ public:
             if (S_yy_dyn.size() == 0) {
                 Eigen::LDLT<ObsMat> ldlt_Pyy(P_yy);
                 if (ldlt_Pyy.info() != Eigen::Success || !ldlt_Pyy.isPositive()) {
-                    S_yy_dyn = ObsMat::Identity() * 0.01f;  // Last resort
+                    // Last resort: use Cholesky of R (measurement noise defines correct scale)
+                    Eigen::LLT<ObsMat> llt_R_fallback(R);
+                    if (llt_R_fallback.info() == Eigen::Success) {
+                        S_yy_dyn = llt_R_fallback.matrixL();
+                    } else {
+                        // R itself is diagonal, use sqrt of diagonal
+                        S_yy_dyn = ObsMat::Zero();
+                        for (int i = 0; i < NY; ++i)
+                            S_yy_dyn(i,i) = std::sqrt(R(i,i));
+                    }
                 } else {
                     ObsMat Pyy_ldlt = ldlt_Pyy.matrixL();
                     Eigen::VectorXf D_sqrt = ldlt_Pyy.vectorD().cwiseSqrt();
@@ -217,10 +226,10 @@ public:
         }
         ObsMat S_yy = S_yy_dyn;
 
-        // Check S_yy for numerical issues
+        // Check S_yy for numerical issues — use measurement noise scale
         for (int i = 0; i < NY; ++i) {
             if (!std::isfinite(S_yy(i,i)) || S_yy(i,i) < 1e-10f) {
-                S_yy(i,i) = 0.01f;  // Restore to reasonable value
+                S_yy(i,i) = std::sqrt(R(i,i));  // Scale-adaptive fallback
             }
         }
 
@@ -245,7 +254,10 @@ public:
                                             .solve(temp_T);
         K = K_T.transpose();
 
-        // 7. State Update
+        // 7. State Update with NaN detection and rollback
+        State x_prev = x_;
+        StateMat S_prev = S_;
+
         Observation innovation = y_k - y_hat;
         State correction = K * innovation;  // Use Eigen directly
         x_ = x_ + correction;
@@ -261,6 +273,12 @@ public:
             cholupdate_downdate(S_updated, U.col(i), 1.0f);
         }
         S_ = S_updated;
+
+        // NaN detection: rollback state and covariance if update produced NaN
+        if (!x_.allFinite() || !S_.allFinite()) {
+            x_ = x_prev;
+            S_ = S_prev;
+        }
     }
 
     // Getters
@@ -314,8 +332,8 @@ private:
             }
             float r_sq = S(k,k)*S(k,k) - v_scaled(k)*v_scaled(k);
             if (r_sq <= 0) {
-                // Numerical issue, add small jitter
-                r_sq = 1e-8f;
+                // Scale-adaptive jitter relative to diagonal element
+                r_sq = 1e-6f * S(k,k) * S(k,k);
             }
             float r = std::sqrt(r_sq);
             float c = r / S(k,k);
@@ -365,7 +383,8 @@ private:
             }
             float r_sq = S(k,k)*S(k,k) - v_scaled(k)*v_scaled(k);
             if (r_sq <= 0) {
-                r_sq = 1e-8f;
+                // Scale-adaptive jitter relative to diagonal element
+                r_sq = 1e-6f * S(k,k) * S(k,k);
             }
             float r = std::sqrt(r_sq);
             float c = r / S(k,k);
