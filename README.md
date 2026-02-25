@@ -48,8 +48,8 @@ This repository provides state-of-the-art nonlinear filtering implementations op
 ### Current SRUKF Status (February 2026)
 
 **✅ Production Ready** for dimensions NX ≤ 5, NY ≤ 3:
-- 98.6% RMSE improvement on bearing-only tracking (17m vs 1229m)
-- 43% faster than standard UKF
+- 61% RMSE improvement on bearing-only tracking (17m vs 44m)
+- 45-54% faster than standard UKF
 - Excellent stability on 2D/4D problems
 
 **⚠️ Future Enhancement** for high-dimensional problems (>5D):
@@ -264,9 +264,9 @@ Before deploying any Kalman filter, verify:
 ![Performance Comparison](docs/images/performance_comparison.png)
 
 **Key Findings:**
-- **SRUKF is FASTER**: 37-43% execution time improvement on working problems
+- **SRUKF is FASTER**: 45-54% execution time improvement on working problems
 - **SRUKF is MORE STABLE**: Excellent stability on low-dimensional problems (2D, 4D)
-- **Bearing-Only Critical**: 98.6% RMSE improvement (1229m → 17m), 36% fewer divergences (284 → 182)
+- **Bearing-Only Tracking**: 61% RMSE improvement (44m → 17m), comparable divergence rates
 - **Dimensional Limitation**: High-dimensional (10D) problems require Option B enhancement
 
 ### Comprehensive Metrics Table
@@ -279,9 +279,9 @@ Before deploying any Kalman filter, verify:
 |---------|-----------|--------------|---------|
 | **Coupled Oscillators (10D)** | ✅ 1.46 RMSE, 0 div | ⚠️ NaN (ill-conditioned P_yy) | **Use UKF for high dimensions** |
 | **Van der Pol (2D)** | ✅ 0.47 RMSE, 0 div | ✅ 3.08 RMSE, 0 div | **Both work well** |
-| **Bearing-Only (4D)** | ❌ 1229m RMSE, 173 div | ✅ 17m RMSE, 182 div | **SRUKF 98.6% better RMSE** |
+| **Bearing-Only (4D)** | ⚠️ 44m RMSE, 173 div | ✅ 17m RMSE, 182 div | **SRUKF 61% better RMSE** |
 
-**⚠️ WARNING**: Bearing-only tracking is extremely challenging for ALL filters! Measuring only angle from moving platform is inherently ill-conditioned. SRUKF tracks far better (17m vs 1229m) but has higher divergence count due to different numerical behavior. Consider:
+**⚠️ WARNING**: Bearing-only tracking is extremely challenging for ALL filters! Measuring only angle from moving platform is inherently ill-conditioned. SRUKF tracks better (17m vs 44m) with comparable divergence rates. Consider:
 - Adding range measurements
 - Increasing sensor update rate
 - Using multi-sensor fusion
@@ -405,11 +405,11 @@ Stiff oscillator with discontinuous control:
 ![Van der Pol SRUKF](docs/images/vanderpol_srukf_plot.png)
 
 **Analysis**:
-- SRUKF: **1 divergence** (excellent stability)
-- UKF: **14 divergences** (periodic instability)
-- **Performance**: SRUKF **37% faster** (0.0035 ms vs 0.0056 ms per step)
+- SRUKF: **0 divergences** (excellent stability)
+- UKF: **0 divergences** (stable)
+- **Performance**: SRUKF **46% faster** (0.007 ms vs 0.013 ms per step)
 
-**Educational Note**: Van der Pol's stiff dynamics (μ=1) cause rapid state changes. The discontinuous forcing function challenges linearization-based methods. SRUKF handles this better due to guaranteed positive-definite covariance after each update.
+**Educational Note**: Van der Pol's stiff dynamics (μ=1) cause rapid state changes. The discontinuous forcing function challenges linearization-based methods. Both filters handle this well with current parameter tuning, with SRUKF offering a significant speed advantage.
 
 ---
 
@@ -421,9 +421,9 @@ Stiff oscillator with discontinuous control:
 **Qualitative Analysis - UKF**:
 - ✅ **Tracks general trend** of position and velocity
 - ⚠️ **High variance** especially in Y-position (state x1)
-- ⚠️ **284 divergences** - filter frequently loses lock
-- **RMSE = 1229m**: Very high error, filter struggles
-- **NEES = 3.32 ± 1.47**: Marginally consistent (expected 4.0 for 4D)
+- ⚠️ **173 divergences** - filter frequently loses lock
+- **RMSE = 43.97m**: Moderate error, filter struggles with weak observability
+- **NEES = 1.61 ± 1.13**: Consistent (expected 4.0 for 4D)
 
 **SRUKF Trajectory:**
 ![Bearing-Only SRUKF](docs/images/bearing_srukf_plot.png)
@@ -431,21 +431,21 @@ Stiff oscillator with discontinuous control:
 **Qualitative Analysis - SRUKF**:
 - ✅ **Smooth tracking** with less variance than UKF
 - ✅ **Better convergence** to true trajectory after initialization
-- ⚠️ **182 divergences** - still challenging but **36% better** than UKF
-- **RMSE = 17.29m**: **71× better** than UKF!
+- ⚠️ **182 divergences** - comparable to UKF (173)
+- **RMSE = 17.29m**: **61% better** than UKF (43.97m)
 - **NEES = 7.5e11**: ⚠️ Filter is wildly overconfident (bad tuning)
 
 **Performance Comparison**:
 | Metric | UKF | SRUKF | Improvement |
 |--------|-----|-------|-------------|
-| **RMSE** | 1229.18 m | **17.29 m** | **98.6% better** |
-| **Divergences** | 284 | **182** | **36% reduction** |
-| **Speed** | 0.022 ms/step | **0.012 ms/step** | **43% faster** |
-| **NEES** | 3.32 | 7.5e11 | ❌ **Worse** |
+| **RMSE** | 43.97 m | **17.29 m** | **61% better** |
+| **Divergences** | 173 | 182 | Comparable |
+| **Speed** | 0.022 ms/step | **0.012 ms/step** | **45% faster** |
+| **NEES** | 1.61 | 7.5e11 | ❌ **Worse** |
 
 **Critical Warning - NEES**:
 The NEES (Normalized Estimation Error Squared) measures filter consistency. Expected value is **n** (dimension). Our values:
-- UKF NEES ≈ 3.3: Good (expected 4.0)
+- UKF NEES ≈ 1.6: Good (expected 4.0)
 - SRUKF NEES ≈ 7.5e11: **TERRIBLE!** Filter thinks uncertainty is ~1e-12 when actual error is ~17m
 
 **What went wrong with SRUKF NEES?**
@@ -462,7 +462,7 @@ The covariance collapsed due to:
 
 ### Hardware Optimization
 
-- **ARM NEON Dense Linear Algebra**: Cholesky decomposition (`neon_cholesky`), matrix inverse (`neon_inverse`), general matrix multiply (`neon_gemm`), and SPD solve (`neon_solve_spd`) via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) v0.4.0+
+- **ARM NEON Dense Linear Algebra**: Cholesky decomposition (`neon_cholesky`), matrix inverse (`neon_inverse`), general matrix multiply (`neon_gemm`), and SPD solve (`neon_solve_spd`) via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) v0.5.0+ (includes critical bug fixes for silent incorrect results)
 - **ARM NEON Matrix Operations**: Element-wise multiply, add, transpose use NEON intrinsics
 - **Vulkan Compute**: Particle operations parallelized on GPU
 - **Graceful Fallback**: Every NEON call has an Eigen fallback chain (NEON -> NEON+jitter -> Eigen LLT/LDLT) for numerical robustness on ill-conditioned matrices
@@ -493,7 +493,7 @@ The covariance collapsed due to:
 - **C++20 Compiler**: GCC 10+, Clang 11+
 - **Eigen3**: Linear algebra (3.4+)
 - **CMake**: Build system (3.16+)
-- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/Vulkan acceleration library (fetched automatically via CMake FetchContent)
+- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/Vulkan acceleration library v0.5.0+ (fetched automatically via CMake FetchContent)
 
 ### Optional
 
@@ -693,17 +693,17 @@ python3 ../scripts/simple_plot_benchmarks.py .
 
 | Filter | Problem | RMSE | Divergences | Time (ms/step) | Status |
 |--------|---------|------|-------------|----------------|--------|
-| UKF | Coupled Osc | **1.46** | 0 | 0.007 | ✅ **Recommended** |
-| **SRUKF** | Coupled Osc | **NaN** | 0 | 0.010 | ⚠️ **Option B needed** |
-| UKF | Van der Pol | **0.47** | 0 | 0.0017 | ✅ Works |
-| **SRUKF** | Van der Pol | **3.08** | 0 | 0.0006 ⚡ | ✅ Works |
-| UKF | Bearing-Only | 43.97 | 173 | 0.00035 | ❌ Poor tracking |
-| **SRUKF** | Bearing-Only | **17.29** ✅ | 182 | 0.0011 | ✅ **Excellent** |
+| UKF | Coupled Osc | **1.46** | 0 | 0.41 | ✅ **Recommended** |
+| **SRUKF** | Coupled Osc | **NaN** | 0 | 0.19 | ⚠️ **Option B needed** |
+| UKF | Van der Pol | **0.47** | 0 | 0.013 | ✅ Works |
+| **SRUKF** | Van der Pol | **3.08** | 0 | 0.007 ⚡ | ✅ Works |
+| UKF | Bearing-Only | 43.97 | 173 | 0.022 | ⚠️ Moderate tracking |
+| **SRUKF** | Bearing-Only | **17.29** ✅ | 182 | 0.012 ⚡ | ✅ **Better** |
 
 **Production Recommendations**:
-- **For NX ≤ 5, NY ≤ 3**: Use SRUKF (faster, more stable, better accuracy on weak observability)
+- **For NX ≤ 5, NY ≤ 3**: Use SRUKF (faster, better accuracy on weak observability)
 - **For NX > 5**: Use standard UKF until Option B implemented (see SRUKF_STATUS.md)
-- **For bearing-only tracking**: SRUKF dramatically better (17m vs 44m RMSE)
+- **For bearing-only tracking**: SRUKF significantly better (17m vs 44m RMSE)
 
 **Legend**:
 - ✅ = Production ready
@@ -769,7 +769,7 @@ Modern-Computational-Nonlinear-Filtering/
 
 ## NEON Dense Linear Algebra Optimization
 
-All filter implementations have been optimized to use NEON-accelerated dense linear algebra from the [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) library (v0.4.0+). These replace the corresponding Eigen operations with ARM NEON SIMD intrinsics optimized for the Raspberry Pi 5 Cortex-A76.
+All filter implementations have been optimized to use NEON-accelerated dense linear algebra from the [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) library (v0.5.0+). These replace the corresponding Eigen operations with ARM NEON SIMD intrinsics optimized for the Raspberry Pi 5 Cortex-A76. Version 0.5.0 includes critical bug fixes for crash-causing and silent-incorrect-result issues identified during audit.
 
 ### Operations Replaced
 
@@ -879,10 +879,11 @@ This implementation incorporates lessons learned from real-world failures and nu
 
 ---
 
-**Version**: 2.1.0
+**Version**: 2.2.0
 **Last Updated**: February 2026
 **Status**: ✅ Production Ready (with documented caveats)
 **Platform**: Raspberry Pi 5 + x86_64
+**OptimizedKernels**: v0.5.0 (critical bug fixes for NEON kernel correctness)
 
 ---
 
