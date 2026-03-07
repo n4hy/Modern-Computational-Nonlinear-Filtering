@@ -129,6 +129,58 @@ Eigen::Matrix<float, NX, NX> compute_covariance(const SigmaPoints<NX>& sigmas,
     return P;
 }
 
+/**
+ * Generates Sigma Points directly from the square root (Cholesky factor) S
+ * where P = S * S^T. This avoids recomputing the Cholesky decomposition.
+ *
+ * @param x Mean state
+ * @param S Lower triangular Cholesky factor of covariance
+ * @param alpha Spread parameter
+ * @param beta Prior knowledge of distribution (Gaussian = 2)
+ * @param kappa Secondary scaling parameter
+ * @param out_sigmas Output struct
+ */
+template<int NX>
+void generate_sigma_points_from_sqrt(const Eigen::Matrix<float, NX, 1>& x,
+                                      const Eigen::Matrix<float, NX, NX>& S,
+                                      float alpha,
+                                      float beta,
+                                      float kappa,
+                                      SigmaPoints<NX>& out) {
+
+    float n = static_cast<float>(NX);
+    float lambda = alpha * alpha * (n + kappa) - n;
+
+    // Prevent near-zero or negative (n + lambda) which collapses sigma point spread
+    float n_lambda = n + lambda;
+    if (n_lambda < 0.5f) {
+        kappa = n / (alpha * alpha) - n;
+        lambda = alpha * alpha * (n + kappa) - n;
+        n_lambda = n + lambda;
+    }
+
+    out.lambda = lambda;
+
+    // Weights
+    out.Wm(0) = lambda / (n + lambda);
+    out.Wc(0) = lambda / (n + lambda) + (1.0f - alpha * alpha + beta);
+
+    float w_i = 1.0f / (2.0f * (n + lambda));
+    for (int i = 1; i < SigmaPoints<NX>::NSIG; ++i) {
+        out.Wm(i) = w_i;
+        out.Wc(i) = w_i;
+    }
+
+    // Sigma Points: use S directly (no Cholesky needed)
+    float scale = std::sqrt(n + lambda);
+
+    out.X.col(0) = x;
+    for (int i = 0; i < NX; ++i) {
+        out.X.col(i + 1)      = x + scale * S.col(i);
+        out.X.col(i + 1 + NX) = x - scale * S.col(i);
+    }
+}
+
 } // namespace UKFCore
 
 #endif // SIGMA_POINTS_H

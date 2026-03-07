@@ -248,8 +248,15 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
     // Compute filtered metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
 
-    // Compute smoothed metrics
-    metrics.rmse_smoothed_overall = compute_rmse(data.true_states, data.smoothed_states);
+    // Compute smoothed metrics with correct time alignment
+    // smoothed_states[i] = smoother estimate for time i-lag
+    if (data.smoothed_states.size() > static_cast<size_t>(lag)) {
+        std::vector<State> aligned_true(data.true_states.begin(),
+                                         data.true_states.begin() + static_cast<long>(data.true_states.size()) - lag);
+        std::vector<State> aligned_smooth(data.smoothed_states.begin() + lag,
+                                           data.smoothed_states.end());
+        metrics.rmse_smoothed_overall = compute_rmse(aligned_true, aligned_smooth);
+    }
 
     auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
     metrics.mean_nees = nees.first;
@@ -311,7 +318,15 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
 
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
-    metrics.rmse_smoothed_overall = compute_rmse(data.true_states, data.smoothed_states);
+
+    // Compute smoothed metrics with correct time alignment
+    if (data.smoothed_states.size() > static_cast<size_t>(lag)) {
+        std::vector<State> aligned_true(data.true_states.begin(),
+                                         data.true_states.begin() + static_cast<long>(data.true_states.size()) - lag);
+        std::vector<State> aligned_smooth(data.smoothed_states.begin() + lag,
+                                           data.smoothed_states.end());
+        metrics.rmse_smoothed_overall = compute_rmse(aligned_true, aligned_smooth);
+    }
 
     auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
     metrics.mean_nees = nees.first;

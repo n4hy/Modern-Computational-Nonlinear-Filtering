@@ -140,15 +140,21 @@ int main() {
     // Compute RMSE for filtered and smoothed
     float rmse_filt = 0.0f;
     float rmse_smooth = 0.0f;
+    int smooth_count = 0;
     for (int i = 0; i < N; ++i) {
         Eigen::Matrix<float, NX, 1> error_filt = true_states[i] - filt_states[i];
         rmse_filt += error_filt.squaredNorm();
 
-        Eigen::Matrix<float, NX, 1> error_smooth = true_states[i] - smooth_states[i];
-        rmse_smooth += error_smooth.squaredNorm();
+        // Smoothed estimate at lag L obtained after step i corresponds to time i-lag
+        if (i >= lag) {
+            int k_delayed = i - lag;
+            Eigen::Matrix<float, NX, 1> error_smooth = true_states[k_delayed] - smooth_states[i];
+            rmse_smooth += error_smooth.squaredNorm();
+            smooth_count++;
+        }
     }
     rmse_filt = std::sqrt(rmse_filt / N);
-    rmse_smooth = std::sqrt(rmse_smooth / N);
+    rmse_smooth = (smooth_count > 0) ? std::sqrt(rmse_smooth / smooth_count) : 0.0f;
 
     std::cout << "Filtered RMSE: " << rmse_filt << std::endl;
     std::cout << "Smoothed RMSE: " << rmse_smooth << std::endl;
