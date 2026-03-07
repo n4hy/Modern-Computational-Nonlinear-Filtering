@@ -140,11 +140,11 @@ Weak observability problem (bearing-only). Smoothing improves RMSE by **14%**.
 
 | Filter | RMSE | Smoothed RMSE | NEES | Divergences |
 |--------|------|---------------|------|-------------|
-| **UKF** | 286.8 | — | 10.99 ± 1.90 | 200 |
-| **SRUKF** | **277.8** | — | 11.23 ± 1.97 | 200 |
-| **SRUKF+Smoother** | 277.8 | 278.8 | 11.23 ± 1.97 | 200 |
+| **UKF** | 369.4 m | — | 5.12 ± 2.77 | 0 |
+| **SRUKF** | 371.0 m | — | 5.14 ± 2.80 | 0 |
+| **SRUKF+Smoother** | 371.0 m | **236.6 m** | 5.14 ± 2.80 | 0 |
 
-Extremely challenging problem with large state magnitudes (Earth-centered coordinates). SRUKF provides 3% better filtering than UKF.
+Realistic spacecraft reentry tracking with altitude-dependent gravity (gravitational parameter μ/r²), exponential atmosphere drag model, and radar on Earth's surface. NEES close to expected value (6) indicates good filter consistency. Smoothing improves RMSE by **36%**.
 
 ### Filter & Smoother Test Results
 
@@ -539,6 +539,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 2.3.0
+**Version**: 2.4.0
 **Last Updated**: March 2026
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64
