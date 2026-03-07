@@ -262,10 +262,10 @@ public:
     float H0 = 9000.0f;        // Scale height (m)
     float rho0 = 1.225f;       // Sea level density (kg/m^3)
     float BC = 500.0f;         // Ballistic coefficient (kg/m^2)
-    float g = 9.81f;           // Gravity (m/s^2)
+    float mu = 3.986004418e14f; // Earth gravitational parameter (m^3/s^2)
 
-    // Radar position
-    Eigen::Vector3f radar_pos = Eigen::Vector3f(0.0f, 0.0f, 0.0f);
+    // Radar position on Earth's surface (tracking station)
+    Eigen::Vector3f radar_pos = Eigen::Vector3f(6371000.0f, 0.0f, 0.0f);
 
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next = x;
@@ -301,21 +301,27 @@ public:
     }
 
     StateMat Q(float t) const override {
-        StateMat q = StateMat::Identity();
-        // Small process noise
+        StateMat q = StateMat::Zero();
+        // Process noise tuned for highly dynamic reentry
+        // Position noise accounts for unmodeled dynamics
         for (int i = 0; i < 3; ++i) {
-            q(i, i) = 1.0f;        // Position noise (m^2)
-            q(i+3, i+3) = 0.1f;    // Velocity noise ((m/s)^2)
+            q(i, i) = 100.0f;         // Position noise (m^2) - 10m std dev
+            q(i+3, i+3) = 1000.0f;    // Velocity noise ((m/s)^2) - ~30m/s std dev
         }
         return q;
     }
 
     ObsMat R(float t) const override {
         ObsMat r = ObsMat::Identity();
-        r(0, 0) = 100.0f;                    // Range noise (m^2)
-        r(1, 1) = 0.001f;                    // Azimuth noise (rad^2)
-        r(2, 2) = 0.001f;                    // Elevation noise (rad^2)
+        r(0, 0) = 10000.0f;                  // Range noise (m^2) - 100m std dev
+        r(1, 1) = 0.0001f;                   // Azimuth noise (rad^2) - 0.01 rad std dev
+        r(2, 2) = 0.0001f;                   // Elevation noise (rad^2) - 0.01 rad std dev
         return r;
+    }
+
+    // Return appropriate divergence threshold for this problem's scale
+    float getDivergenceThreshold() const {
+        return 5000.0f;  // 5km position or 5km/s velocity error
     }
 
 private:
@@ -344,8 +350,13 @@ private:
             drag_acc = -0.5f * rho * speed * speed / BC * (vel / speed);
         }
 
-        // Gravity acceleration (pointing toward Earth center)
-        Eigen::Vector3f gravity_acc = -g * pos.normalized();
+        // Gravity acceleration using gravitational parameter (altitude-dependent)
+        // a_g = -mu / r^2 * (r_hat)
+        float r = pos.norm();
+        Eigen::Vector3f gravity_acc = Eigen::Vector3f::Zero();
+        if (r > 1e-6f) {
+            gravity_acc = -mu / (r * r) * pos.normalized();
+        }
 
         // Total acceleration
         Eigen::Vector3f acc = drag_acc + gravity_acc;

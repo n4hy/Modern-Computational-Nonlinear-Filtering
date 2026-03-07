@@ -92,7 +92,8 @@ BenchmarkMetrics run_ukf_benchmark(Model& model,
                                     TrajectoryData<typename Model::State, typename Model::Observation>& data,
                                     const typename Model::State& x0,
                                     const typename Model::StateMat& P0,
-                                    const std::string& problem_name) {
+                                    const std::string& problem_name,
+                                    float divergence_threshold = 10.0f) {
     using State = typename Model::State;
     constexpr int NX = Model::STATE_DIM;
     constexpr int NY = Model::OBS_DIM;
@@ -136,7 +137,7 @@ BenchmarkMetrics run_ukf_benchmark(Model& model,
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
-    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, 10.0f);
+    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, divergence_threshold);
 
     return metrics;
 }
@@ -149,7 +150,8 @@ BenchmarkMetrics run_srukf_benchmark(Model& model,
                                       TrajectoryData<typename Model::State, typename Model::Observation>& data,
                                       const typename Model::State& x0,
                                       const typename Model::StateMat& P0,
-                                      const std::string& problem_name) {
+                                      const std::string& problem_name,
+                                      float divergence_threshold = 10.0f) {
     using State = typename Model::State;
     constexpr int NX = Model::STATE_DIM;
     constexpr int NY = Model::OBS_DIM;
@@ -193,7 +195,7 @@ BenchmarkMetrics run_srukf_benchmark(Model& model,
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
-    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, 10.0f);
+    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, divergence_threshold);
 
     return metrics;
 }
@@ -207,7 +209,8 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
                                              const typename Model::State& x0,
                                              const typename Model::StateMat& P0,
                                              const std::string& problem_name,
-                                             int lag = 20) {
+                                             int lag = 20,
+                                             float divergence_threshold = 10.0f) {
     using State = typename Model::State;
     constexpr int NX = Model::STATE_DIM;
     constexpr int NY = Model::OBS_DIM;
@@ -264,7 +267,7 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
-    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, 10.0f);
+    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, divergence_threshold);
 
     return metrics;
 }
@@ -278,7 +281,8 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
                                                 const typename Model::State& x0,
                                                 const typename Model::StateMat& P0,
                                                 const std::string& problem_name,
-                                                int lag = 20) {
+                                                int lag = 20,
+                                                float divergence_threshold = 10.0f) {
     using State = typename Model::State;
     constexpr int NX = Model::STATE_DIM;
     constexpr int NY = Model::OBS_DIM;
@@ -334,7 +338,7 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
-    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, 10.0f);
+    metrics.num_divergences = count_divergences(data.true_states, data.filtered_states, divergence_threshold);
 
     return metrics;
 }
@@ -526,24 +530,34 @@ int main() {
         std::cout << "\n\n========== Reentry Vehicle (6D) ==========" << std::endl;
 
         ReentryVehicle<6, 3> model;
-        // Initial state: 100km above Earth surface, suborbital reentry trajectory
-        // Position in Earth-centered coords: altitude = ||pos|| - R0
+        // Initial state: 80km above Earth surface, realistic reentry trajectory
+        // Position offset from radar to provide good observability
         float R0 = model.R0;
+        float alt0 = 80000.0f;  // 80km initial altitude
+        // Start vehicle offset in y-z plane from radar for better angle diversity
         Eigen::Matrix<float, 6, 1> x0;
-        x0 << R0 + 100000.0f, 0.0f, 0.0f, 0.0f, 3000.0f, -200.0f;
+        x0 << R0 + alt0 * 0.7f,           // x position
+              alt0 * 0.5f,                 // y position (offset for observability)
+              alt0 * 0.5f,                 // z position
+              -500.0f,                     // vx (approaching radar)
+              2000.0f,                     // vy (tangential)
+              -300.0f;                     // vz (descending)
 
         Eigen::Matrix<float, 6, 6> P0 = Eigen::Matrix<float, 6, 6>::Identity();
-        P0.block<3,3>(0,0) *= 10000.0f;   // Position uncertainty (m^2)
-        P0.block<3,3>(3,3) *= 100.0f;     // Velocity uncertainty ((m/s)^2)
+        P0.block<3,3>(0,0) *= 100000.0f;  // Position uncertainty (m^2) - 316m std dev
+        P0.block<3,3>(3,3) *= 10000.0f;   // Velocity uncertainty ((m/s)^2) - 100m/s std dev
 
-        auto data = generate_trajectory(model, x0, 20.0f, 0.1f, 45);
+        auto data = generate_trajectory(model, x0, 30.0f, 0.1f, 45);
+
+        // Divergence threshold for reentry: 5km position or velocity error
+        float reentry_div_thresh = 5000.0f;
 
         // UKF
         {
             auto data_copy = data;
             data_copy.filtered_states.clear();
             data_copy.filtered_covs.clear();
-            auto metrics = run_ukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D");
+            auto metrics = run_ukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D", reentry_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
@@ -555,7 +569,7 @@ int main() {
             auto data_copy = data;
             data_copy.filtered_states.clear();
             data_copy.filtered_covs.clear();
-            auto metrics = run_srukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D");
+            auto metrics = run_srukf_benchmark(model, data_copy, x0, P0, "ReentryVehicle6D", reentry_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
@@ -570,7 +584,7 @@ int main() {
             data_copy.smoothed_states.clear();
             data_copy.smoothed_covs.clear();
             auto metrics = run_srukf_smoother_benchmark(model, data_copy, x0, P0,
-                                                         "ReentryVehicle6D", 20);
+                                                         "ReentryVehicle6D", 20, reentry_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
