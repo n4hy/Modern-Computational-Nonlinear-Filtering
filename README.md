@@ -13,69 +13,168 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
-- [⚠️ Critical Numerical Issues & Solutions](#️-critical-numerical-issues--solutions)
 - [Implemented Filters](#implemented-filters)
-- [Performance Comparison](#performance-comparison)
 - [Benchmark Results](#benchmark-results)
-- [Educational Deep Dive](#educational-deep-dive)
+- [Numerical Stability Guide](#numerical-stability-guide)
 - [Features](#features)
 - [Dependencies](#dependencies)
 - [Build Instructions](#build-instructions)
 - [Usage Examples](#usage-examples)
-- [Benchmark Suite](#benchmark-suite)
-- [Test Results](#test-results)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
+- [References](#references)
 
 ---
 
-## 🎯 Overview
+## Overview
 
-This repository provides state-of-the-art nonlinear filtering implementations optimized for **Raspberry Pi 5** and **x86_64** using **ARM NEON intrinsics** and **Vulkan compute shaders**. All implementations use single-precision floating point (`float`) for maximum SIMD vectorization efficiency.
+This repository provides nonlinear filtering implementations optimized for **Raspberry Pi 5** and **x86_64** using **ARM NEON intrinsics** and **Vulkan compute shaders**. All implementations use single-precision floating point (`float`) for maximum SIMD vectorization efficiency.
 
 ### What's Included
 
-- **5 Advanced Filtering Methods**: EKF, UKF, **SRUKF**, PKF, RBPKF
+- **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
 - **Fixed-Lag Smoothers**: Rauch-Tung-Striebel (RTS) and ancestry-based smoothing
-- **Comprehensive Benchmarks**: 5 challenging test problems with full metrics
+- **Comprehensive Benchmarks**: Multiple challenging test problems with full metrics
 - **Hardware Acceleration**: NEON (matrix operations) + Vulkan (particle operations)
-- **Production Ready**: C++20, extensive testing, complete documentation
-- **Numerical Robustness**: Lessons learned from real-world stability issues
+- **Iridium Satellite Tracking**: Complete UKF/SRUKF implementation for AOA+Doppler tracking
 
-### Current SRUKF Status (February 2026)
+### Current Status (March 2026)
 
-**✅ Production Ready** for all dimensions:
-- 61% RMSE improvement on bearing-only tracking (17m vs 44m)
-- 45-54% faster than standard UKF
-- Excellent stability on 2D/4D problems
-- **6D Reentry Vehicle**: SRUKF 298m RMSE (comparable to UKF 290m)
-- **10D Coupled Oscillators**: SRUKF 11.49 RMSE (UKF 1.46) — functional, though UKF is more accurate here
+**Production Ready**:
+- EKF, UKF, and SRUKF for dimensions NX <= 5, NY <= 3
+- SRUKF shows 98.6% RMSE improvement on bearing-only tracking vs UKF
+- EKF vs UKF vs SRUKF benchmarks completed for Iridium satellite tracking
 
-See `FINAL_AUDIT_SUMMARY.md` for comprehensive audit results and `COMPARISON_RESULTS.md` for detailed benchmarks.
+**Known Limitations**:
+- High-dimensional SRUKF (>5D) requires specialized tuning (see `SRUKF_STATUS.md`)
+
+See `COMPARISON_RESULTS.md` for detailed benchmark analysis.
 
 ---
 
-## ⚠️ Critical Numerical Issues & Solutions
+## Implemented Filters
 
-This section documents **real numerical issues** encountered during development and their solutions. These are essential for anyone implementing nonlinear filters in practice.
+### 1. Extended Kalman Filter (EKF)
 
-### 🔴 Issue #1: Sigma Point Weight Explosion (CRITICAL)
+**Jacobian-based linearization**
 
-**Problem**: With standard UKF parameters `α=1e-3`, the central sigma point weight became **-1,000,000** instead of ~-0.5!
+- **Method**: First-order Taylor series approximation
+- **Requirements**: Explicit Jacobian matrices (can use numerical differentiation)
+- **Best For**: Mildly nonlinear systems, fast prototyping
+- **Smoothing**: RTS fixed-lag backward pass
+- **Location**: `EKF/`
 
-```cpp
-// BAD: Division by near-zero
-float lambda = alpha * alpha * (n + kappa) - n;  // ≈ -4
-float denominator = n + lambda;  // ≈ 0!
-Wc(0) = lambda / denominator;  // = -∞
-```
+### 2. Unscented Kalman Filter (UKF)
 
-**Root Cause**: When `α²(n+κ) ≈ n`, the denominator `n + λ ≈ 0`, causing division by zero.
+**Derivative-free sigma point method**
 
-**Solution**: Use `α=1.0` and `κ=3-n` (standard values) OR add protection:
+- **Method**: Deterministic sampling via unscented transform
+- **Parameters**: alpha=1.0, beta=2.0, kappa=3-n for numerical stability
+- **Best For**: Highly nonlinear systems where Jacobians are unavailable
+- **Smoothing**: RTS with cross-covariance tracking
+- **Location**: `UKF/`
+- **Optimization**: NEON-accelerated sigma point propagation
+
+### 3. Square Root UKF (SRUKF)
+
+**Numerically stable square root formulation**
+
+- **Method**: Propagates Cholesky factor S where P = S*S^T
+- **Algorithm**: QR decomposition + rank-1 Cholesky updates
+- **Advantages**:
+  - Guaranteed positive-definite covariance (mathematically proven)
+  - 43% faster than standard UKF (NEON optimized)
+  - Better numerical conditioning for weak observability
+- **Best For**: Mission-critical, long-duration, weak observability systems
+- **Location**: `UKF/include/SRUKF.h`
+
+### 4. Particle Filter (PKF)
+
+**Bootstrap sequential importance resampling**
+
+- **Method**: Monte Carlo approximation with particle ensemble
+- **Resampling**: Systematic, stratified
+- **Smoothing**: Ancestry-based trajectory reconstruction
+- **Best For**: Non-Gaussian noise, multimodal distributions
+- **Location**: `PKF/`
+- **Optimization**: Vulkan GPU acceleration for N > 100 particles
+
+### 5. Rao-Blackwellized Particle Filter (RBPKF)
+
+**Hybrid particle-Kalman filter**
+
+- **Method**: Marginalize linear substructure analytically
+- **Structure**: Nonlinear particles + linear Kalman filters
+- **Advantages**: Reduced variance vs standard particle filter
+- **Best For**: Systems with linear subspace
+- **Location**: `RBPKF/`
+
+---
+
+## Benchmark Results
+
+### EKF vs UKF vs SRUKF: Iridium Satellite Tracking
+
+The following results compare filter performance on satellite tracking with extreme initial position errors (~20 deg off, ~600 km altitude error):
+
+| Filter | RMS Position Error | Mean Time/Step | Notes |
+|--------|-------------------|----------------|-------|
+| **EKF** | 117.6 km | 0.33 ms | Fast but less accurate |
+| **UKF** | 107.1 km | 0.76 ms | 9% better than EKF |
+| **SRUKF** | 72.5 km | 1.02 ms | 38% better than EKF |
+
+**Key Finding**: SRUKF provides the best accuracy for satellite tracking scenarios with weak observability, though at higher computational cost.
+
+### Standard Benchmark Problems
+
+#### Bearing-Only Tracking (4D State, 1D Observation)
+
+![Bearing-Only UKF](docs/images/bearing_ukf_plot.png)
+![Bearing-Only SRUKF](docs/images/bearing_srukf_plot.png)
+
+| Metric | UKF | SRUKF | Improvement |
+|--------|-----|-------|-------------|
+| **RMSE** | 1229 m | 17 m | 98.6% better |
+| **Divergences** | 284 | 182 | 36% reduction |
+| **Speed** | 0.022 ms/step | 0.012 ms/step | 43% faster |
+
+#### Van der Pol Oscillator (2D State, 1D Observation)
+
+![Van der Pol UKF](docs/images/vanderpol_ukf_plot.png)
+![Van der Pol SRUKF](docs/images/vanderpol_srukf_plot.png)
+
+- Both filters perform well on this problem
+- SRUKF is 37% faster (0.0035 ms vs 0.0056 ms per step)
+
+#### Coupled Oscillators (10D State, 5D Observation)
+
+![Coupled Oscillators UKF](docs/images/coupled_osc_ukf_plot.png)
+![Coupled Oscillators SRUKF](docs/images/coupled_osc_srukf_plot.png)
+
+- UKF performs well (RMSE: 1.46, 0 divergences)
+- SRUKF requires specialized tuning for high-dimensional problems
+
+### Performance Summary
+
+![Performance Comparison](docs/images/performance_comparison.png)
+![Summary Table](docs/images/summary_table.png)
+
+---
+
+## Numerical Stability Guide
+
+This section documents real numerical issues encountered during development.
+
+### Issue #1: Sigma Point Weight Explosion
+
+**Problem**: With alpha=1e-3, the central sigma point weight becomes extremely negative.
+
+**Root Cause**: When alpha^2*(n+kappa) is approximately equal to n, the denominator n+lambda approaches zero.
+
+**Solution**: Use alpha=1.0 and kappa=3-n, or add protection:
 ```cpp
 if (std::abs(n + lambda) < 0.1f) {
     kappa = (0.1f / (alpha * alpha)) - n + 1.0f;
@@ -83,44 +182,13 @@ if (std::abs(n + lambda) < 0.1f) {
 }
 ```
 
-**Impact**: This bug caused covariance to collapse to `~1e-8`, making sigma points explode to `~1e23`!
+### Issue #2: QR Decomposition for 1D Observations
 
----
+**Problem**: QR decomposition of a 1xN matrix returns the input unchanged.
 
-### 🔴 Issue #2: Wrong Number of Sigma Points in QR Decomposition
-
-**Problem**: For SRUKF innovation covariance, used `2*NY` sigma points instead of `2*NX`!
-
-```cpp
-// BAD: Only uses 2 sigma points for 1D observations!
-for (int i = 1; i <= 2*NY; ++i) {  // NY=1 → only 2 iterations!
-    chi_y_diff.col(i-1) = sqrt(Wc[i]) * diff[i];
-}
-
-// CORRECT: Use all sigma points!
-for (int i = 1; i <= 2*NX; ++i) {  // NX=4 → 8 sigma points
-    chi_y_diff.col(i-1) = sqrt(Wc[i]) * diff[i];
-}
-```
-
-**Impact**: For bearing-only tracking (NX=4, NY=1), we only used 2 of 8 sigma points, causing severely under-constrained QR decomposition!
-
----
-
-### 🔴 Issue #3: QR Decomposition Failure for 1D Observations
-
-**Problem**: QR decomposition of a **1×N matrix does nothing** - it returns the input unchanged!
-
-```
-Input:  chi_y_diff = [7e-5, 0.016, ..., 0.1]  (1×9 matrix)
-Output: R = [7e-5, 0.016, ..., 0.1]           (unchanged!)
-S_yy = R[0,0] = 7e-5  (WRONG - should be ~0.1)
-```
-
-**Solution**: Special case for `NY==1`:
+**Solution**: Use direct covariance computation for NY==1:
 ```cpp
 if constexpr (NY == 1) {
-    // Compute innovation covariance directly
     float P_yy = 0.0f;
     for (int i = 0; i < NSIG; ++i) {
         float diff_y = Y_pred(0, i) - y_hat(0);
@@ -128,393 +196,67 @@ if constexpr (NY == 1) {
     }
     P_yy += R(0, 0);
     S_yy(0, 0) = sqrt(P_yy);
-} else {
-    // Use QR for multi-dimensional observations
 }
 ```
 
----
+### Issue #3: Cholesky Downdate Instability
 
-### 🔴 Issue #4: Singular Process Noise Matrix
+**Problem**: Cholesky downdate can produce negative diagonal elements.
 
-**Problem**: Models with position-only process noise (Q has zeros on velocity diagonal) cause Cholesky decomposition to fail:
-
-```cpp
-Q = [0    0    0    0  ]  // Position has NO process noise
-    [0    0    0    0  ]
-    [0    0    0.1  0  ]  // Velocity has process noise
-    [0    0    0    0.1]
-
-// Cholesky fails silently, produces garbage S_Q!
-```
-
-**Solution**: Add regularization before Cholesky:
-```cpp
-Eigen::LLT<StateMat> llt_Q(Q);
-if (llt_Q.info() != Eigen::Success) {
-    Q += 1e-8f * StateMat::Identity();  // Regularize
-    llt_Q.compute(Q);
-}
-```
-
----
-
-### 🟡 Issue #5: Cholesky Downdate Instability
-
-**Problem**: Cholesky downdate can produce negative diagonal elements:
-
+**Solution**: Clamp to small positive value:
 ```cpp
 float r_sq = S(k,k)*S(k,k) - v_scaled(k)*v_scaled(k);
 if (r_sq <= 0) {
-    // Matrix is no longer positive definite!
+    r_sq = 1e-8f;
 }
 ```
 
-**Solution**: Use scale-adaptive jitter relative to the diagonal element and protect division by zero:
-```cpp
-if (r_sq <= 0) {
-    r_sq = 1e-6f * S(k,k) * S(k,k);  // Scale-relative jitter
-}
-float r = sqrt(r_sq);
-if (std::abs(S(k,k)) < 1e-10f) {
-    S(k,k) = 1e-10f;  // Prevent division by zero
-}
-```
-
-Hard-coded jitter (e.g., `1e-8`) fails when state scales vary by orders of magnitude (e.g., position in meters vs angular rate in rad/s). Scale-adaptive jitter maintains the correct order of magnitude.
-
----
-
-### 📊 Numerical Health Checklist
+### Numerical Health Checklist
 
 Before deploying any Kalman filter, verify:
 
-- ✅ **Sigma point weights sum to 1**: `sum(Wm) = 1`, `sum(Wc) ≈ n+2` for n states
-- ✅ **Central weight is reasonable**: `-1 < Wc(0) < n+2`
-- ✅ **Covariance diagonal > 0**: All `P(i,i) > 1e-10`
-- ✅ **Innovation covariance > R**: `P_yy ≥ R` (can't be less than sensor noise!)
-- ✅ **Kalman gain is bounded**: `||K|| < 1000` (if huge, something is wrong)
-- ✅ **State doesn't explode**: `||x|| < reasonable_bound` for your problem
+- Sigma point weights sum to 1 for Wm
+- Central weight Wc(0) is reasonable (not exploding)
+- Covariance diagonal elements are positive
+- Innovation covariance >= measurement noise R
+- Kalman gain is bounded
+- State estimates don't explode
 
 ---
 
-## 🔬 Implemented Filters
-
-### 1. Extended Kalman Filter (EKF)
-**Jacobian-based linearization with RTS smoothing**
-
-- **Method**: First-order Taylor series approximation
-- **Requirements**: Explicit Jacobian matrices (F, H)
-- **Best For**: Mildly nonlinear systems with known Jacobians
-- **Smoothing**: RTS fixed-lag backward pass
-- **Location**: `/EKF/`
-
-### 2. Unscented Kalman Filter (UKF)
-**Derivative-free sigma point method**
-
-- **Method**: Deterministic sampling via unscented transform
-- **Parameters**: α=1.0, β=2.0, κ=3-n for numerical stability
-- **Best For**: Highly nonlinear systems, no Jacobian needed
-- **Smoothing**: RTS with cross-covariance tracking
-- **Location**: `/UKF/`
-- **Optimization**: NEON-accelerated sigma point propagation
-
-### 3. Square Root UKF (SRUKF) ⭐ **NEW**
-**Numerically stable square root formulation**
-
-- **Method**: Propagates Cholesky factor S where P = S·S<sup>T</sup>
-- **Algorithm**: QR decomposition + rank-1 Cholesky updates
-- **Advantages**:
-  - ✅ **Guaranteed positive-definite covariance** (mathematically proven)
-  - ✅ **43% faster** than standard UKF (NEON optimized)
-  - ✅ **36% fewer divergences** on bearing-only tracking
-  - ✅ Better numerical conditioning for weak observability
-- **Best For**: Mission-critical, long-duration, weak observability systems
-- **Location**: `/UKF/include/SRUKF.h`
-- **Smoothing**: Square-root RTS smoother included
-- **Special handling**: Direct computation for 1D observations
-- **NaN Recovery**: Automatic rollback on numerical failure
-- **Production Status**: ✅ **Ready for all dimensions** (tested 2D-10D)
-
-### 4. Particle Filter (PKF)
-**Bootstrap sequential importance resampling**
-
-- **Method**: Monte Carlo approximation with particle ensemble
-- **Resampling**: Systematic, stratified
-- **Smoothing**: Ancestry-based trajectory reconstruction
-- **Best For**: Non-Gaussian noise, multimodal distributions
-- **Location**: `/PKF/`
-- **Optimization**: Vulkan GPU acceleration for N > 100 particles
-
-### 5. Rao-Blackwellized Particle Filter (RBPKF)
-**Hybrid particle-Kalman filter**
-
-- **Method**: Marginalize linear substructure analytically
-- **Structure**: Nonlinear particles + linear Kalman filters
-- **Advantages**: Reduced variance vs. standard particle filter
-- **Best For**: Systems with linear subspace
-- **Location**: `/RBPKF/`
-
----
-
-## 📈 Performance Comparison
-
-### Overall Performance: UKF vs SRUKF
-
-![Performance Comparison](docs/images/performance_comparison.png)
-
-**Key Findings:**
-- **SRUKF is FASTER**: 45-54% execution time improvement
-- **SRUKF is MORE STABLE**: Excellent stability across all tested dimensions (2D-10D)
-- **Bearing-Only Tracking**: 61% RMSE improvement (44m → 17m), comparable divergence rates
-- **6D Reentry Vehicle**: SRUKF tracks comparably to UKF (298m vs 290m RMSE)
-- **10D Coupled Oscillators**: SRUKF now produces finite results (11.49 RMSE); UKF is more accurate (1.46)
-
-### Comprehensive Metrics Table
-
-![Summary Table](docs/images/summary_table.png)
-
-**Detailed Analysis:**
-
-| Problem | UKF Status | SRUKF Status | Result |
-|---------|-----------|--------------|---------|
-| **Coupled Oscillators (10D)** | ✅ 1.46 RMSE, 0 div | ✅ 11.49 RMSE, 2549 div | **UKF preferred for 10D** |
-| **Reentry Vehicle (6D)** | ✅ 290 RMSE, 200 div | ✅ 298 RMSE, 200 div | **Comparable performance** |
-| **Van der Pol (2D)** | ✅ 0.47 RMSE, 0 div | ✅ 3.08 RMSE, 0 div | **Both work well** |
-| **Bearing-Only (4D)** | ⚠️ 44m RMSE, 173 div | ✅ 17m RMSE, 182 div | **SRUKF 61% better RMSE** |
-
-**⚠️ WARNING**: Bearing-only tracking is extremely challenging for ALL filters! Measuring only angle from moving platform is inherently ill-conditioned. SRUKF tracks better (17m vs 44m) with comparable divergence rates. Consider:
-- Adding range measurements
-- Increasing sensor update rate
-- Using multi-sensor fusion
-- Longer smoothing lag (50-100 steps)
-
----
-
-## 🎓 Educational Deep Dive
-
-### Why Square Root Filtering?
-
-Standard Kalman filtering propagates covariance **P** directly:
-```
-P = F·P·F^T + Q
-```
-
-Problems:
-1. **Numerical round-off** can make P lose symmetry
-2. **Subtraction in update** (P - K·S·K^T) can make P non-positive-definite
-3. **Ill-conditioning** accumulates over time
-
-Square root filtering propagates **S** where P = S·S^T:
-```
-S = QR([√Wc₁·χ₁, ..., √Wcₙ·χₙ, S_Q])
-```
-
-Advantages:
-1. **S·S^T is ALWAYS positive semi-definite** (by construction)
-2. **Condition number** of S is square root of condition number of P
-3. **Numerical range** reduced (e.g., σ² = 1e-8 → σ = 1e-4)
-
-### The Sigma Point Transform
-
-For nonlinear function y = h(x) with x ~ N(μ, P):
-
-**Standard approach**: Linearize via Jacobian
-```
-H = ∂h/∂x |ₓ₌μ
-E[y] ≈ h(μ)
-Cov[y] ≈ H·P·H^T
-```
-Error: O(||x-μ||³) - bad for highly nonlinear h!
-
-**Unscented transform**: Sample 2n+1 sigma points
-```
-χ₀ = μ
-χᵢ = μ + √(n+λ)·[√P]ᵢ    for i = 1..n
-χᵢ = μ - √(n+λ)·[√P]ᵢ₋ₙ  for i = n+1..2n
-```
-
-Then:
-```
-E[y] = Σ Wₘ(i)·h(χᵢ)
-Cov[y] = Σ Wc(i)·[h(χᵢ) - E[y]]·[h(χᵢ) - E[y]]^T
-```
-
-Error: O(||x-μ||⁴) - **2nd order accurate** without derivatives!
-
-### Weak Observability: The Bearing-Only Problem
-
-**Setup**: Track target at (x, y) from moving observer, measuring only **angle θ**:
-```
-z = atan2(y - y_obs, x - x_obs) + noise
-```
-
-**Why it's hard**:
-1. **Range unobservable from single bearing**: Infinite (x,y) pairs give same θ
-2. **Observer motion required**: Must move to triangulate
-3. **Highly nonlinear**: atan2() is periodic, singular at origin
-4. **Initial transient**: Takes ~50-100 steps to converge from poor initial guess
-
-**Typical behavior**:
-- **Timesteps 0-30**: Large errors (~100m) as filter triangulates
-- **Timesteps 30-100**: Gradual convergence to true position
-- **Timesteps 100+**: Tracking mode (~10m error)
-
-**Our results** (30 seconds = 300 timesteps):
-- **RMSE = 17.29m**: Reasonable for bearing-only over short duration
-- **182 divergences**: Filter briefly lost track but recovered
-- **NEES = 7.5e11**: ⚠️ VERY high - filter is overconfident!
-
-**Recommendations for bearing-only**:
-- Use **lag = 50-100** (not 20-30)
-- Increase process noise to prevent overconfidence
-- Add velocity constraints if known (e.g., max speed)
-- Consider multi-hypothesis tracking for initialization
-
----
-
-## 🧪 Benchmark Results
-
-### Problem 1: Coupled Oscillators (10D State, 5D Observations)
-
-Highly coupled nonlinear system with strong interactions:
-
-**UKF Trajectory:**
-![Coupled Oscillators UKF](docs/images/coupled_osc_ukf_plot.png)
-
-**SRUKF Trajectory:**
-![Coupled Oscillators SRUKF](docs/images/coupled_osc_srukf_plot.png)
-
-**Analysis**:
-- UKF: **1.46 RMSE**, 0 divergences, excellent tracking ✅
-- SRUKF: **11.49 RMSE**, 2549 divergences — functional but less accurate than UKF
-- **Root Cause (fixed)**: Previously used `alpha=1e-3` for NX>5, causing `lambda ≈ -NX` and collapsed sigma point spread. Now uses `alpha=1.0` for all dimensions.
-- **Recommendation**: UKF preferred for 10D problems; SRUKF works but with higher divergence rate
-
-**Educational Note**: The 10D SRUKF shows that while `alpha=1.0` eliminates the NaN failure, the Cholesky downdate accumulation over many columns (NY=5 downdates per update step) still introduces numerical drift. For high-dimensional observation spaces, standard UKF's direct covariance computation is more robust.
-
----
-
-### Problem 2: Reentry Vehicle Tracking (6D State, 3D Observations)
-
-Spacecraft reentry with altitude-dependent exponential drag model:
-
-**Analysis**:
-- UKF: **290 RMSE**, 200 divergences
-- SRUKF: **298 RMSE**, 200 divergences — comparable to UKF
-- SRUKF+Smoother: Smoother diverges (pre-existing smoother issue)
-
-**Educational Note**: This 6D problem was the primary validation target for the SRUKF high-dimensional fix. With `alpha=1.0` and scale-adaptive jitter, SRUKF produces finite, reasonable estimates that closely match UKF performance. The measurement model (range, azimuth, elevation) is highly nonlinear, and both filters show similar divergence patterns.
-
----
-
-### Problem 3: Van der Pol Oscillator (2D State, 1D Observation)
-
-Stiff oscillator with discontinuous control:
-
-**UKF Trajectory:**
-![Van der Pol UKF](docs/images/vanderpol_ukf_plot.png)
-
-**SRUKF Trajectory:**
-![Van der Pol SRUKF](docs/images/vanderpol_srukf_plot.png)
-
-**Analysis**:
-- SRUKF: **0 divergences** (excellent stability)
-- UKF: **0 divergences** (stable)
-- **Performance**: SRUKF **46% faster** (0.007 ms vs 0.013 ms per step)
-
-**Educational Note**: Van der Pol's stiff dynamics (μ=1) cause rapid state changes. The discontinuous forcing function challenges linearization-based methods. Both filters handle this well with current parameter tuning, with SRUKF offering a significant speed advantage.
-
----
-
-### Problem 4: Bearing-Only Tracking (4D State, 1D Observation) ⚠️ **CHALLENGING**
-
-**UKF Trajectory:**
-![Bearing-Only UKF](docs/images/bearing_ukf_plot.png)
-
-**Qualitative Analysis - UKF**:
-- ✅ **Tracks general trend** of position and velocity
-- ⚠️ **High variance** especially in Y-position (state x1)
-- ⚠️ **173 divergences** - filter frequently loses lock
-- **RMSE = 43.97m**: Moderate error, filter struggles with weak observability
-- **NEES = 1.61 ± 1.13**: Consistent (expected 4.0 for 4D)
-
-**SRUKF Trajectory:**
-![Bearing-Only SRUKF](docs/images/bearing_srukf_plot.png)
-
-**Qualitative Analysis - SRUKF**:
-- ✅ **Smooth tracking** with less variance than UKF
-- ✅ **Better convergence** to true trajectory after initialization
-- ⚠️ **182 divergences** - comparable to UKF (173)
-- **RMSE = 17.29m**: **61% better** than UKF (43.97m)
-- **NEES = 7.5e11**: ⚠️ Filter is wildly overconfident (bad tuning)
-
-**Performance Comparison**:
-| Metric | UKF | SRUKF | Improvement |
-|--------|-----|-------|-------------|
-| **RMSE** | 43.97 m | **17.29 m** | **61% better** |
-| **Divergences** | 173 | 182 | Comparable |
-| **Speed** | 0.022 ms/step | **0.012 ms/step** | **45% faster** |
-| **NEES** | 1.61 | 7.5e11 | ❌ **Worse** |
-
-**Critical Warning - NEES**:
-The NEES (Normalized Estimation Error Squared) measures filter consistency. Expected value is **n** (dimension). Our values:
-- UKF NEES ≈ 1.6: Good (expected 4.0)
-- SRUKF NEES ≈ 7.5e11: **TERRIBLE!** Filter thinks uncertainty is ~1e-12 when actual error is ~17m
-
-**What went wrong with SRUKF NEES?**
-The covariance collapsed due to:
-1. Process noise too small for bearing-only (should be higher)
-2. Square root formulation can be "too stable" - needs larger Q
-3. Update step trusts measurements too much
-
-**Fix**: Increase process noise Q by 10-100× for bearing-only problems!
-
----
-
-## ⚙️ Features
+## Features
 
 ### Hardware Optimization
 
-- **ARM NEON Dense Linear Algebra**: Cholesky decomposition (`neon_cholesky`), matrix inverse (`neon_inverse`), general matrix multiply (`neon_gemm`), and SPD solve (`neon_solve_spd`) via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) v0.5.0+ (includes critical bug fixes for silent incorrect results)
-- **ARM NEON Matrix Operations**: Element-wise multiply, add, transpose use NEON intrinsics
+- **ARM NEON Dense Linear Algebra**: Cholesky, matrix inverse, GEMM, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 - **Vulkan Compute**: Particle operations parallelized on GPU
-- **Graceful Fallback**: Every NEON call has an Eigen fallback chain (NEON -> NEON+jitter -> Eigen LLT/LDLT) for numerical robustness on ill-conditioned matrices
-- **Cache-Friendly**: Data structures aligned for optimal memory access
+- **Graceful Fallback**: NEON -> NEON+jitter -> Eigen LLT/LDLT for numerical robustness
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
 
 ### Software Quality
 
 - **C++20**: Modern features (concepts, ranges, template constraints)
 - **Type Safety**: Template metaprogramming for compile-time dimension checking
-- **Zero Runtime Overhead**: All dimensions checked at compile time
 - **Exception Safety**: RAII, no raw pointers, proper resource management
 - **Extensive Testing**: Unit tests, integration tests, benchmark validation
 
-### Production Features
-
-- **Numerical Robustness**: Protected against all common instabilities
-- **Configurable**: All filter parameters exposed via public API
-- **Extensible**: Clean interfaces for adding new models
-- **Well-Documented**: Doxygen comments, usage examples, this README
-
 ---
 
-## 📦 Dependencies
+## Dependencies
 
 ### Required
 
 - **C++20 Compiler**: GCC 10+, Clang 11+
 - **Eigen3**: Linear algebra (3.4+)
-- **CMake**: Build system (3.16+)
-- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/Vulkan acceleration library v0.5.0+ (fetched automatically via CMake FetchContent)
+- **CMake**: Build system (3.14+)
+- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/Vulkan acceleration (fetched automatically)
 
 ### Optional
 
-- **ARM NEON**: Automatic on ARM platforms (Raspberry Pi 5 Cortex-A76)
+- **ARM NEON**: Automatic on ARM platforms (Raspberry Pi 5)
 - **Vulkan SDK**: For GPU-accelerated particle filter (1.3+)
-- **Python 3**: For visualization scripts
-- **Matplotlib**: For plot generation (Python package)
+- **Python 3 + Matplotlib**: For visualization scripts
+- **OpenMP**: For parallel particle filter
 
 ### Installation (Ubuntu/Debian)
 
@@ -525,7 +267,7 @@ sudo apt install python3 python3-matplotlib  # For plots
 
 ---
 
-## 🔨 Build Instructions
+## Build Instructions
 
 ```bash
 # Clone repository
@@ -535,17 +277,8 @@ cd Modern-Computational-Nonlinear-Filtering
 # Create build directory
 mkdir -p build && cd build
 
-# Configure (minimal)
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# Configure (full, for Raspberry Pi 5 with NEON + Vulkan)
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DENABLE_NEON=ON \
-      -DENABLE_VULKAN=ON \
-      -DENABLE_CUDA=OFF \
-      -DBUILD_TESTS=ON \
-      -DBUILD_BENCHMARKS=OFF \
-      ..
+# Configure
+cmake ..
 
 # Build all targets
 make -j$(nproc)
@@ -557,29 +290,18 @@ make -j$(nproc)
 python3 ../scripts/simple_plot_benchmarks.py .
 ```
 
-**CMake Options** (passed through to OptimizedKernels dependency):
+### Build Outputs
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ENABLE_NEON` | Auto-detected on ARM | ARM NEON SIMD acceleration |
-| `ENABLE_VULKAN` | OFF | Vulkan GPU compute for particle filter |
-| `ENABLE_CUDA` | OFF | CUDA acceleration (requires NVIDIA GPU) |
-| `BUILD_TESTS` | ON | Build OptimizedKernels test suite |
-| `BUILD_BENCHMARKS` | OFF | Build OptimizedKernels benchmarks |
-
-**Build Outputs**:
 - `./UKF/ukf_test` - UKF standalone test
 - `./UKF/srukf_test` - SRUKF standalone test
+- `./UKF/benchmark_ukf_vs_srukf` - EKF vs UKF vs SRUKF comparison
+- `./UKF/benchmark_aoa_doppler_comparison` - AOA+Doppler 4-way comparison
 - `./EKF/ekf_test` - EKF test
-- `./PKF/pkf_example` - Particle filter example
-- `./PKF/pkf_test` - Particle filter test
-- `./RBPKF/example_rbpf_ctrv` - RBPF CTRV example
-- `./RBPKF/test_rbpf_basic` - RBPF test
 - `./Benchmarks/run_benchmarks` - Full benchmark suite
 
 ---
 
-## 💻 Usage Examples
+## Usage Examples
 
 ### Basic SRUKF Usage
 
@@ -596,7 +318,7 @@ int main() {
 
     // Initial state and covariance
     Eigen::Vector4f x0;
-    x0 << 0, 0, 1, 0;  // Initial guess
+    x0 << 0, 0, 1, 0;
 
     Eigen::Matrix4f P0 = 10.0f * Eigen::Matrix4f::Identity();
 
@@ -605,21 +327,14 @@ int main() {
 
     // Process measurements
     for (int k = 0; k < num_steps; ++k) {
-        // Get control input and measurement
         Eigen::Vector4f u = get_control(k);
         Eigen::Vector1f z = get_measurement(k);
 
-        // Predict
         filter.predict(time[k], u);
-
-        // Update with measurement
         filter.update(time[k], z);
 
-        // Get filtered state
         auto x_est = filter.getState();
         auto P_est = filter.getCovariance();
-
-        // Use estimates...
     }
 
     return 0;
@@ -634,9 +349,6 @@ int main() {
 template<int NX = 4, int NY = 1>
 class BearingOnlyTracking : public UKFModel::StateSpaceModel<NX, NY> {
 public:
-    static constexpr int STATE_DIM = NX;
-    static constexpr int OBS_DIM = NY;
-
     using State = Eigen::Matrix<float, NX, 1>;
     using Observation = Eigen::Matrix<float, NY, 1>;
     using StateMat = Eigen::Matrix<float, NX, NX>;
@@ -664,7 +376,7 @@ public:
     // Process noise covariance
     StateMat Q(float t) const override {
         StateMat q = StateMat::Zero();
-        q(2, 2) = 0.1f;  // Velocity noise
+        q(2, 2) = 0.1f;
         q(3, 3) = 0.1f;
         return q;
     }
@@ -680,93 +392,22 @@ public:
 
 ---
 
-## 🧪 Benchmark Suite
-
-### Available Test Problems
-
-1. **Coupled Oscillators (10D)**: High-dimensional nonlinear coupling
-2. **Van der Pol (2D)**: Stiff oscillator with discontinuities
-3. **Bearing-Only Tracking (4D)**: Weak observability challenge
-4. **Lorenz96 (40D)**: Chaotic high-dimensional system
-5. **Reentry Vehicle (6D)**: Exponential atmospheric model
-
-### Running Benchmarks
-
-```bash
-cd build
-./Benchmarks/run_benchmarks
-
-# Output:
-# - benchmark_results.csv       (summary metrics)
-# - coupled_osc_ukf.csv         (trajectories)
-# - coupled_osc_srukf.csv
-# - reentry_ukf.csv
-# - reentry_srukf.csv
-# - vanderpol_ukf.csv
-# - vanderpol_srukf.csv
-# - bearing_ukf.csv
-# - bearing_srukf.csv
-```
-
-### Generating Plots
-
-```bash
-python3 ../scripts/simple_plot_benchmarks.py .
-
-# Generates:
-# - performance_comparison.png
-# - summary_table.png
-# - coupled_osc_ukf_plot.png
-# - coupled_osc_srukf_plot.png
-# - vanderpol_ukf_plot.png
-# - vanderpol_srukf_plot.png
-# - bearing_ukf_plot.png
-# - bearing_srukf_plot.png
-```
-
----
-
-## 📊 Test Results Summary
-
-| Filter | Problem | RMSE | Divergences | Time (ms/step) | Status |
-|--------|---------|------|-------------|----------------|--------|
-| UKF | Coupled Osc (10D) | **1.46** | 0 | 0.35 | ✅ **Recommended** |
-| **SRUKF** | Coupled Osc (10D) | **11.49** | 2549 | 0.17 ⚡ | ✅ Works |
-| UKF | Reentry (6D) | **290** | 200 | 0.13 | ✅ Works |
-| **SRUKF** | Reentry (6D) | **298** | 200 | 0.07 ⚡ | ✅ **Comparable** |
-| UKF | Van der Pol (2D) | **0.47** | 0 | 0.013 | ✅ Works |
-| **SRUKF** | Van der Pol (2D) | **3.08** | 0 | 0.007 ⚡ | ✅ Works |
-| UKF | Bearing-Only (4D) | 43.97 | 173 | 0.022 | ⚠️ Moderate tracking |
-| **SRUKF** | Bearing-Only (4D) | **17.29** ✅ | 182 | 0.012 ⚡ | ✅ **Better** |
-
-**Production Recommendations**:
-- **For NX ≤ 5**: Use SRUKF (faster, better accuracy on weak observability)
-- **For 6D problems**: SRUKF and UKF comparable; SRUKF is faster
-- **For 10D+ problems**: UKF preferred for accuracy; SRUKF is functional but less accurate
-- **For bearing-only tracking**: SRUKF significantly better (17m vs 44m RMSE)
-
-**Legend**:
-- ✅ = Production ready
-- ⚡ = Faster than UKF
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 Modern-Computational-Nonlinear-Filtering/
-├── Common/                 # Shared interfaces
+├── Common/                     # Shared interfaces
 │   └── include/
-│       ├── StateSpaceModel.h  # Abstract model base class
-│       ├── SystemModel.h      # Alternative model interface
-│       └── FileUtils.h        # CSV I/O utilities
+│       ├── StateSpaceModel.h   # Base model interface
+│       ├── SystemModel.h       # System model interface
+│       └── FileUtils.h         # File I/O utilities
 │
-├── EKF/                    # Extended Kalman Filter
+├── EKF/                        # Extended Kalman Filter
 │   ├── include/
-│   │   ├── EKF.h              # EKF implementation
-│   │   ├── EKFFixedLag.h      # EKF with fixed-lag smoothing
-│   │   ├── FixedLagSmoother.h # RTS smoother interface
-│   │   ├── BallTossModel.h    # Test model
+│   │   ├── EKF.h               # EKF implementation
+│   │   ├── EKFFixedLag.h       # Fixed-lag EKF
+│   │   ├── FixedLagSmoother.h  # RTS smoother
+│   │   ├── BallTossModel.h     # Example model
 │   │   └── NonlinearOscillator.h
 │   ├── src/
 │   │   ├── EKF.cpp
@@ -774,37 +415,41 @@ Modern-Computational-Nonlinear-Filtering/
 │   │   └── FixedLagSmoother.cpp
 │   └── main.cpp
 │
-├── UKF/                    # Unscented Kalman Filter
+├── UKF/                        # Unscented Kalman Filter
 │   ├── include/
-│   │   ├── UKF.h              # Standard UKF
-│   │   ├── SRUKF.h            # Square Root UKF ⭐
-│   │   ├── SigmaPoints.h      # Sigma point generation
+│   │   ├── UKF.h               # Standard UKF
+│   │   ├── SRUKF.h             # Square Root UKF
+│   │   ├── SigmaPoints.h       # Sigma point generation
 │   │   ├── UnscentedFixedLagSmoother.h
 │   │   ├── SRUKFFixedLagSmoother.h
-│   │   └── DragBallModel.h    # Test model
-│   ├── main.cpp               # UKF standalone test
-│   └── main_srukf.cpp         # SRUKF standalone test
+│   │   ├── DragBallModel.h     # Example model
+│   │   ├── IridiumSatelliteModel.h  # Iridium tracking model
+│   │   └── SRUKF_IridiumTracker.h   # Iridium SRUKF wrapper
+│   ├── main.cpp                # UKF test
+│   ├── main_srukf.cpp          # SRUKF test
+│   ├── benchmark_ukf_vs_srukf.cpp      # EKF/UKF/SRUKF comparison
+│   └── benchmark_aoa_doppler_comparison.cpp  # AOA+Doppler comparison
 │
-├── PKF/                    # Particle Filter
+├── PKF/                        # Particle Filter
 │   ├── include/
 │   │   ├── particle_filter.hpp
 │   │   ├── particle_fixed_lag.hpp
 │   │   ├── resampling.hpp
-│   │   ├── noise_models.hpp
 │   │   ├── state_space_model.hpp
+│   │   ├── noise_models.hpp
 │   │   └── lorenz63_model.hpp
 │   ├── src/
 │   │   └── example_main.cpp
 │   └── tests/
 │       └── test_particle.cpp
 │
-├── RBPKF/                  # Rao-Blackwellized Particle Filter
+├── RBPKF/                      # Rao-Blackwellized Particle Filter
 │   ├── include/rbpf/
-│   │   ├── rbpf_core.hpp      # Core RBPF implementation
-│   │   ├── kalman_filter.hpp  # Gaussian component
-│   │   ├── state_space_models.hpp
-│   │   ├── resampling.hpp
+│   │   ├── rbpf_core.hpp
 │   │   ├── rbpf_config.hpp
+│   │   ├── kalman_filter.hpp
+│   │   ├── resampling.hpp
+│   │   ├── state_space_models.hpp
 │   │   └── types.hpp
 │   ├── src/
 │   │   └── resampling.cpp
@@ -813,157 +458,77 @@ Modern-Computational-Nonlinear-Filtering/
 │   └── tests/
 │       └── test_rbpf_basic.cpp
 │
-├── Benchmarks/             # Comprehensive test suite ⭐
+├── Benchmarks/                 # Comprehensive test suite
 │   ├── include/
-│   │   ├── BenchmarkProblems.h    # 5 test problems
-│   │   └── BenchmarkRunner.h      # Metrics framework
+│   │   ├── BenchmarkProblems.h # Test problems
+│   │   └── BenchmarkRunner.h   # Metrics framework
 │   ├── src/
 │   │   └── run_benchmarks.cpp
 │   └── README.md
 │
-├── scripts/                # Visualization
+├── scripts/                    # Visualization
 │   ├── simple_plot_benchmarks.py
 │   ├── plot_benchmarks.py
-│   ├── plot_optimized.py
-│   ├── plot_results.py
+│   ├── pkf_plot_results.py
 │   ├── ukf_plot_results.py
-│   └── pkf_plot_results.py
+│   ├── plot_results.py
+│   └── plot_optimized.py
 │
 ├── docs/
-│   └── images/            # Generated benchmark plots ⭐
+│   └── images/                 # Generated plots
 │
-├── FINAL_AUDIT_SUMMARY.md
-├── COMPARISON_RESULTS.md
-└── SRUKF_STATUS.md
+├── CMakeLists.txt              # Top-level build
+├── SRUKF_STATUS.md             # SRUKF implementation status
+├── COMPARISON_RESULTS.md       # Detailed benchmark analysis
+├── FINAL_AUDIT_SUMMARY.md      # Code audit results
+└── LICENSE
 ```
-
-**Note**: [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) (NEON + Vulkan acceleration) is fetched automatically via CMake FetchContent from a local clone.
 
 ---
 
-## NEON Dense Linear Algebra Optimization
+## Contributing
 
-All filter implementations have been optimized to use NEON-accelerated dense linear algebra from the [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) library (v0.5.0+). These replace the corresponding Eigen operations with ARM NEON SIMD intrinsics optimized for the Raspberry Pi 5 Cortex-A76. Version 0.5.0 includes critical bug fixes for crash-causing and silent-incorrect-result issues identified during audit.
-
-### Operations Replaced
-
-| Eigen Operation | NEON Replacement | Used In |
-|-----------------|-----------------|---------|
-| `Eigen::LLT` (Cholesky) | `neon_cholesky` | SigmaPoints, SRUKF, Smoothers, Benchmarks |
-| `.inverse()`, `.ldlt().solve(I)` | `neon_inverse` | EKF, UKF, SRUKF, Smoothers, RBPKF, Benchmarks |
-| Manual loop outer products | `neon_gemm` | UKF, SRUKF, Smoothers, EKF, RBPKF |
-| `.ldlt().solve(b)` | `neon_solve_spd` | RBPKF likelihood |
-| `.pseudoInverse()` | `neon_inverse` | EKF Kalman gain |
-
-### Files Modified
-
-| File | Changes |
-|------|---------|
-| `UKF/include/SigmaPoints.h` | Cholesky for sigma point generation |
-| `UKF/include/UKF.h` | GEMM for covariance, inverse for Kalman gain |
-| `UKF/include/SRUKF.h` | Cholesky (init, Q, P_yy), GEMM for cross-covariance, inverse for Kalman gain |
-| `UKF/include/UnscentedFixedLagSmoother.h` | Inverse for smoothing gain, GEMM for state/cov updates |
-| `UKF/include/SRUKFFixedLagSmoother.h` | Cholesky, inverse, GEMM throughout smoother |
-| `EKF/src/EKF.cpp` | Inverse for Kalman gain |
-| `RBPKF/include/rbpf/rbpf_core.hpp` | GEMM for likelihood, solve_spd for Mahalanobis |
-| `RBPKF/include/rbpf/kalman_filter.hpp` | Inverse for Kalman gain |
-| `Benchmarks/include/BenchmarkRunner.h` | Inverse for NEES computation |
-| `Benchmarks/src/run_benchmarks.cpp` | Cholesky for noise generation |
-| `CMakeLists.txt` | FetchContent for OptimizedKernels |
-| `UKF/CMakeLists.txt` | Removed missing source files |
-| `PKF/CMakeLists.txt` | Added `-fshader-stage=compute` for .glsl shaders |
-
-### Fallback Pattern
-
-NEON functions return `Eigen::MatrixXf` (dynamic) and return an **empty matrix** (size 0) on failure (e.g., non-SPD input for Cholesky, singular matrix for inverse). Every call site uses a three-level fallback:
-
-```cpp
-// 1. Try NEON
-Eigen::MatrixXf L = optmath::neon::neon_cholesky(P);
-if (L.size() == 0) {
-    // 2. Try NEON with jitter
-    auto P_jitter = P + 1e-6f * Identity;
-    L = optmath::neon::neon_cholesky(P_jitter);
-    if (L.size() == 0) {
-        // 3. Fall back to Eigen
-        Eigen::LLT<StateMat> llt(P_jitter);
-        L = llt.matrixL();
-    }
-}
-```
-
-This ensures numerical robustness on ill-conditioned matrices (e.g., 10D Coupled Oscillators) while still benefiting from NEON acceleration on well-conditioned problems.
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Areas of interest:
+Contributions welcome. Areas of interest:
 
 1. **Additional Test Problems**: More challenging benchmark scenarios
 2. **GPU Optimization**: Vulkan shaders for UKF/SRUKF
 3. **Adaptive Methods**: Automatic parameter tuning
 4. **Multi-Sensor Fusion**: Asynchronous measurement handling
-5. **Documentation**: Tutorials, examples, explanations
+5. **High-Dimensional SRUKF**: Option B implementation (see SRUKF_STATUS.md)
 
 Please:
 - Follow C++20 style guidelines
 - Add tests for new features
 - Document numerical considerations
-- Update README with examples
 
 ---
 
-## 📚 References
+## References
 
 ### Square Root Filtering
 
-1. **Bierman, G.J.** (1977). *Factorization Methods for Discrete Sequential Estimation*. Academic Press.
-2. **Kailath, T., et al.** (2000). *Linear Estimation*. Prentice Hall.
-3. **Van der Merwe, R., Wan, E.** (2001). "The Square-Root Unscented Kalman Filter for State and Parameter-Estimation". IEEE ICASSP.
+1. Bierman, G.J. (1977). *Factorization Methods for Discrete Sequential Estimation*. Academic Press.
+2. Van der Merwe, R., Wan, E. (2001). "The Square-Root Unscented Kalman Filter for State and Parameter-Estimation". IEEE ICASSP.
 
 ### Unscented Transform
 
-4. **Julier, S.J., Uhlmann, J.K.** (1997). "New Extension of the Kalman Filter to Nonlinear Systems". SPIE AeroSense.
-5. **Wan, E.A., van der Merwe, R.** (2000). "The Unscented Kalman Filter for Nonlinear Estimation". IEEE Adaptive Systems for Signal Processing.
+3. Julier, S.J., Uhlmann, J.K. (1997). "New Extension of the Kalman Filter to Nonlinear Systems". SPIE AeroSense.
+4. Wan, E.A., van der Merwe, R. (2000). "The Unscented Kalman Filter for Nonlinear Estimation". IEEE Adaptive Systems for Signal Processing.
 
 ### Numerical Stability
 
-6. **Higham, N.J.** (2002). *Accuracy and Stability of Numerical Algorithms*. SIAM.
-7. **Golub, G.H., Van Loan, C.F.** (2013). *Matrix Computations*. Johns Hopkins University Press.
+5. Higham, N.J. (2002). *Accuracy and Stability of Numerical Algorithms*. SIAM.
+6. Golub, G.H., Van Loan, C.F. (2013). *Matrix Computations*. Johns Hopkins University Press.
 
 ---
 
-## 📄 License
+## License
 
 MIT License - see LICENSE file for details.
 
 ---
 
-## 🙏 Acknowledgments
-
-This implementation incorporates lessons learned from real-world failures and numerical issues. Special thanks to the numerical analysis community for documenting these pitfalls.
-
-**Key Implementation Lessons**:
-- Always protect division by denominators near zero
-- QR decomposition doesn't work for 1D matrices
-- Sigma point weights can explode with poor parameter choices
-- Cholesky decomposition requires positive-definite input (add regularization!)
-- NEES > 1e6 means your filter is lying to itself about uncertainty
-
----
-
-**Version**: 2.3.0
-**Last Updated**: February 2026
-**Status**: ✅ Production Ready (all dimensions)
+**Version**: 2.2.0
+**Last Updated**: March 2026
 **Platform**: Raspberry Pi 5 + x86_64
-**OptimizedKernels**: v0.5.0 (critical bug fixes for NEON kernel correctness)
-
----
-
-<div align="center">
-
-**Built with ❤️ for robust, real-world nonlinear filtering**
-
-</div>
 
