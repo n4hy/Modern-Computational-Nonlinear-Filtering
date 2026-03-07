@@ -37,6 +37,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 - **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
 - **Fixed-Lag Smoothers**: Rauch-Tung-Striebel (RTS) backward pass and ancestry-based smoothing
+- **Iridium Satellite Tracking**: UKF-based AOA/Doppler tracking for Iridium-Next satellites using two-antenna coherent receivers
 - **Comprehensive Benchmarks**: 4 challenging test problems with full metrics (10D coupled oscillators, Van der Pol, bearing-only tracking, reentry vehicle)
 - **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 
@@ -98,6 +99,23 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 - **Advantages**: Reduced variance vs standard particle filter
 - **Best For**: Systems with conditionally linear subspace (e.g., CTRV models)
 - **Location**: `RBPKF/`
+
+### 6. Iridium Satellite Tracking (UKF AOA/Doppler)
+
+**Two-antenna coherent receiver satellite tracking**
+
+- **Method**: UKF with angle-of-arrival and Doppler measurements from Iridium-Next satellites
+- **Measurements**:
+  - Azimuth/Elevation from two-antenna phase difference
+  - Doppler shift from carrier frequency offset (±35 kHz max)
+- **Features**:
+  - SGP4 simplified orbital propagator for TLE-based predictions
+  - WGS84 geodetic coordinate transformations
+  - Multi-satellite tracking for improved GDOP
+  - Iridium burst demodulator support (8.28ms TDMA bursts)
+  - Configurable Doppler accuracy modes (coarse/fine/precise: 100/10/1 Hz)
+- **Best For**: LEO satellite tracking, geolocation applications
+- **Location**: `Iridium/`, `include/optmath/`
 
 ---
 
@@ -301,6 +319,9 @@ make -j$(nproc)
 | `RBPKF/test_rbpf_basic` | RBPF unit tests |
 | `RBPKF/example_rbpf_ctrv` | RBPF on CTRV vehicle model |
 | `Benchmarks/run_benchmarks` | Full benchmark suite (4 problems, 4 filters) |
+| `Iridium/iridium_aoa_tracking` | Basic Iridium AOA tracking simulation |
+| `Iridium/compare_aoa_doppler` | AOA vs AOA+Doppler comparison tool |
+| `Iridium/iridium_tracking_complete` | Complete multi-satellite tracking demo |
 
 ---
 
@@ -408,6 +429,46 @@ public:
 };
 ```
 
+### Iridium Satellite Tracking
+
+```cpp
+#include <optmath/ukf_aoa_tracking.hpp>
+#include <optmath/ukf_aoa_doppler_tracking.hpp>
+
+using namespace optmath::tracking;
+
+int main() {
+    // Configure simulation
+    SimulationConfig cfg = SimulationConfig::default_config();
+    cfg.duration_sec = 600.0;
+    cfg.antenna.baseline = 0.1;        // 10cm antenna spacing
+    cfg.antenna.phase_noise_std = 0.1; // Phase noise [rad]
+
+    // Set observer location (Boulder, CO)
+    cfg.observer.latitude = 40.015 * constants::DEG2RAD;
+    cfg.observer.longitude = -105.27 * constants::DEG2RAD;
+    cfg.observer.altitude = 1655.0;
+
+    // Create UKF tracker with AOA + Doppler
+    UKF_AOADopplerTracker tracker;
+    DopplerConfig doppler_cfg = DopplerConfig::default_iridium(
+        DopplerConfig::AccuracyMode::FINE  // 10 Hz accuracy
+    );
+
+    // Process measurements from demodulated bursts
+    for (const auto& burst : demodulated_bursts) {
+        AOADopplerMeasurement meas;
+        meas.azimuth = burst.azimuth;
+        meas.elevation = burst.elevation;
+        meas.doppler = burst.doppler_hz;
+        meas.timestamp = burst.timestamp_jd;
+
+        tracker.update(meas);
+        auto state = tracker.get_state();
+    }
+}
+```
+
 ---
 
 ## Architecture
@@ -472,6 +533,18 @@ Modern-Computational-Nonlinear-Filtering/
 │   └── tests/
 │       └── test_rbpf_basic.cpp
 │
+├── Iridium/                    # Iridium Satellite Tracking
+│   ├── CMakeLists.txt
+│   ├── iridium_aoa_tracking.cpp       # Basic AOA tracking
+│   ├── compare_aoa_doppler.cpp        # AOA vs AOA+Doppler comparison
+│   └── iridium_tracking_complete.cpp  # Full tracking demo
+│
+├── include/optmath/            # Iridium Tracking Headers
+│   ├── ukf_aoa_tracking.hpp           # Base UKF AOA tracker
+│   ├── ukf_aoa_doppler_tracking.hpp   # AOA + Doppler tracker
+│   ├── multi_satellite_tracker.hpp    # Multi-satellite tracking
+│   └── iridium_burst_demodulator.hpp  # Burst demodulation
+│
 ├── Benchmarks/                 # Comprehensive test suite
 │   ├── include/
 │   │   ├── BenchmarkProblems.h # 4 test problems
@@ -501,6 +574,7 @@ Contributions welcome. Areas of interest:
 3. **Adaptive Methods**: Automatic parameter tuning (adaptive Q/R)
 4. **Multi-Sensor Fusion**: Asynchronous measurement handling
 5. **Extended Benchmarks**: Monte Carlo consistency analysis, filter divergence studies
+6. **Satellite Tracking Enhancements**: Additional constellations (Starlink, OneWeb), improved propagators (SGP4/SDP4)
 
 Please:
 - Follow C++20 style guidelines
@@ -539,6 +613,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 2.4.0
+**Version**: 2.5.0
 **Last Updated**: March 2026
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64
