@@ -1,0 +1,36 @@
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index 771477c..fa4e486 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -9,6 +9,31 @@ target_link_libraries(demo PRIVATE OptMathKernels::OptMathKernels)
+ # If you want to enable specific compiler flags for the example
+ target_compile_features(demo PRIVATE cxx_std_20)
+ 
++# UKF AOA Tracking Simulation for Iridium-Next satellites
++add_executable(iridium_aoa_tracking iridium_aoa_tracking.cpp)
++target_include_directories(iridium_aoa_tracking PRIVATE ${CMAKE_SOURCE_DIR}/include)
++target_compile_features(iridium_aoa_tracking PRIVATE cxx_std_20)
++# Enable math functions
++if(UNIX)
++    target_link_libraries(iridium_aoa_tracking PRIVATE m)
++endif()
++
++# AOA vs AOA+Doppler comparison tool
++add_executable(compare_aoa_doppler compare_aoa_doppler.cpp)
++target_include_directories(compare_aoa_doppler PRIVATE ${CMAKE_SOURCE_DIR}/include)
++target_compile_features(compare_aoa_doppler PRIVATE cxx_std_20)
++if(UNIX)
++    target_link_libraries(compare_aoa_doppler PRIVATE m)
++endif()
++
++# Complete Iridium tracking system with all features
++add_executable(iridium_tracking_complete iridium_tracking_complete.cpp)
++target_include_directories(iridium_tracking_complete PRIVATE ${CMAKE_SOURCE_DIR}/include)
++target_compile_features(iridium_tracking_complete PRIVATE cxx_std_20)
++if(UNIX)
++    target_link_libraries(iridium_tracking_complete PRIVATE m)
++endif()
++
+ # CUDA demo (only if CUDA is enabled)
+ # TODO: Enable when shorthand radar functions are implemented
+ # if(ENABLE_CUDA)
