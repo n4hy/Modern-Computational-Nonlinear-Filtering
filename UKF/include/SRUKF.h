@@ -81,10 +81,9 @@ public:
      * Returns cross-covariance P_{x_k, x_{k+1}} for smoothing
      */
     StateMat predict(float t_k, const Eigen::Ref<const State>& u_k) {
-        // 1. Generate Sigma Points from current estimate using S
-        StateMat P = S_ * S_.transpose();
+        // 1. Generate Sigma Points directly from S (no P computation needed!)
         SigmaPts sigmas;
-        generate_sigma_points<NX>(x_, P, alpha, beta, kappa, sigmas);
+        generate_sigma_points_from_sqrt<NX>(x_, S_, alpha, beta, kappa, sigmas);
 
         // 2. Propagate Sigma Points
         typename SigmaPts::SigmaMat X_pred;
@@ -117,21 +116,24 @@ public:
         }
         StateMat S_Q = S_Q_dyn;
 
-        // Build matrix for QR: [sqrt(Wc[1])*X_diff[1], ..., sqrt(Wc[n])*X_diff[n], S_Q]
+        // Build matrix for QR: each ROW is sqrt(Wc[i])*diff[i]
+        // For SRUKF, we compute QR of A^T where A has columns sqrt(Wc[i])*diff[i]
+        // If A^T = Q*R, then A*A^T = R^T*R, so S = R^T is the Cholesky factor
         // Note: skip i=0 since it has special weight that can be negative
-        Eigen::Matrix<float, NX, 3*NX> chi_diff;
+        Eigen::Matrix<float, 3*NX, NX> chi_diff_T;  // Transposed form for QR
         for (int i = 1; i < SigmaPts::NSIG; ++i) {
             State diff = X_pred.col(i) - x_pred_mean;
             float wc_sign = (sigmas.Wc(i) >= 0) ? 1.0f : -1.0f;
-            chi_diff.col(i-1) = std::sqrt(std::abs(sigmas.Wc(i))) * diff * wc_sign;
+            chi_diff_T.row(i-1) = (std::sqrt(std::abs(sigmas.Wc(i))) * diff * wc_sign).transpose();
         }
-        chi_diff.block(0, 2*NX, NX, NX) = S_Q;  // Copy full S_Q matrix
+        // Add S_Q rows (transpose of S_Q columns)
+        chi_diff_T.block(2*NX, 0, NX, NX) = S_Q.transpose();
 
-        // QR decomposition to get S_pred
-        Eigen::HouseholderQR<Eigen::Matrix<float, NX, 3*NX>> qr(chi_diff);
-        // Extract R factor (upper triangular), transpose to get lower triangular
-        Eigen::Matrix<float, NX, 3*NX> R_matrix = qr.matrixQR().template triangularView<Eigen::Upper>();
-        StateMat S_pred = R_matrix.block(0, 0, NX, NX).transpose();
+        // QR decomposition: chi_diff_T = Q * R where R is NX × NX upper triangular
+        Eigen::HouseholderQR<Eigen::Matrix<float, 3*NX, NX>> qr(chi_diff_T);
+        // Extract R factor (upper triangular), transpose to get lower triangular S
+        StateMat R_matrix = qr.matrixQR().template block<NX, NX>(0, 0).template triangularView<Eigen::Upper>();
+        StateMat S_pred = R_matrix.transpose();
 
         // Handle the i=0 term with rank-1 update (cholupdate)
         State diff_0 = X_pred.col(0) - x_pred_mean;
@@ -164,10 +166,9 @@ public:
      * Update Step using Square Root formulation
      */
     void update(float t_k, const Observation& y_k) {
-        // 1. Generate Sigma Points from predicted state
-        StateMat P = S_ * S_.transpose();
+        // 1. Generate Sigma Points directly from S (no P computation needed!)
         SigmaPts sigmas;
-        generate_sigma_points<NX>(x_, P, alpha, beta, kappa, sigmas);
+        generate_sigma_points_from_sqrt<NX>(x_, S_, alpha, beta, kappa, sigmas);
 
         // 2. Propagate through measurement function
         Eigen::Matrix<float, NY, SigmaPts::NSIG> Y_pred;
@@ -254,12 +255,23 @@ public:
                                             .solve(temp_T);
         K = K_T.transpose();
 
-        // 7. State Update with NaN detection and rollback
-        State x_prev = x_;
-        StateMat S_prev = S_;
-
+        // 7. State Update with innovation gating
         Observation innovation = y_k - y_hat;
-        State correction = K * innovation;  // Use Eigen directly
+
+        // Gate the innovation to prevent catastrophic updates
+        // Compute Mahalanobis distance: d^2 = innovation^T * P_yy^{-1} * innovation
+        // If d^2 > threshold, scale down the correction
+        Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
+        float mahal_dist_sq = temp_innov.squaredNorm();
+        float gate_threshold = 9.0f;  // Chi-squared threshold for NY degrees of freedom (95% = ~5.99 for NY=2)
+
+        float scale = 1.0f;
+        if (mahal_dist_sq > gate_threshold) {
+            // Scale down the correction to prevent divergence
+            scale = std::sqrt(gate_threshold / mahal_dist_sq);
+        }
+
+        State correction = scale * (K * innovation);
         x_ = x_ + correction;
 
         // 8. Covariance Update using square root form
@@ -267,17 +279,46 @@ public:
         // Use QR to compute: [S^T, (K*S_yy)^T]^T and extract updated S
         Eigen::Matrix<float, NX, NY> U = K * S_yy;
 
-        // Use cholupdate for each column of U (rank-NY downdate)
+        // Try rank-1 downdates, but detect if they fail
         StateMat S_updated = S_;
-        for (int i = 0; i < NY; ++i) {
-            cholupdate_downdate(S_updated, U.col(i), 1.0f);
+        bool downdate_failed = false;
+        for (int i = 0; i < NY && !downdate_failed; ++i) {
+            downdate_failed = !cholupdate_downdate_safe(S_updated, U.col(i), 1.0f);
         }
-        S_ = S_updated;
 
-        // NaN detection: rollback state and covariance if update produced NaN
-        if (!x_.allFinite() || !S_.allFinite()) {
-            x_ = x_prev;
-            S_ = S_prev;
+        if (downdate_failed) {
+            // Fallback: compute P directly and take Cholesky
+            // P_new = P - K * P_yy * K^T = S*S^T - K*S_yy*S_yy^T*K^T
+            StateMat P_curr = S_ * S_.transpose();
+            StateMat KPyyKT = U * U.transpose();  // U = K*S_yy, so U*U^T = K*S_yy*S_yy^T*K^T
+            StateMat P_new = P_curr - KPyyKT;
+
+            // Ensure positive definiteness
+            P_new = 0.5f * (P_new + P_new.transpose());
+            // Add small regularization
+            P_new += 1e-8f * StateMat::Identity();
+
+            // Take Cholesky factor
+            Eigen::MatrixXf S_new = optmath::neon::neon_cholesky(P_new);
+            if (S_new.size() == 0) {
+                // Even more regularization
+                P_new += 1e-6f * StateMat::Identity();
+                Eigen::LDLT<StateMat> ldlt(P_new);
+                if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+                    StateMat L = ldlt.matrixL();
+                    Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
+                    S_new = L * D_sqrt.asDiagonal();
+                } else {
+                    // Last resort: keep current S with slight regularization
+                    S_new = S_;
+                    for (int i = 0; i < NX; ++i) {
+                        if (S_new(i,i) < 1e-6f) S_new(i,i) = 1e-6f;
+                    }
+                }
+            }
+            S_ = S_new;
+        } else {
+            S_ = S_updated;
         }
     }
 
@@ -322,6 +363,36 @@ private:
     /**
      * Rank-1 Cholesky downdate: S_new such that
      * S_new * S_new^T = S * S^T - alpha^2 * v * v^T
+     * Returns false if downdate fails (result would not be positive definite).
+     */
+    bool cholupdate_downdate_safe(StateMat& S, const State& v, float alpha) {
+        State v_scaled = alpha * v;
+        constexpr float eps = 1e-10f;
+        for (int k = 0; k < NX; ++k) {
+            if (std::abs(S(k,k)) < eps) {
+                S(k,k) = eps;  // Regularize to prevent division by zero
+            }
+            float r_sq = S(k,k)*S(k,k) - v_scaled(k)*v_scaled(k);
+            if (r_sq <= 0) {
+                // Downdate would produce non-positive-definite matrix
+                return false;
+            }
+            float r = std::sqrt(r_sq);
+            float c = r / S(k,k);
+            float s = v_scaled(k) / S(k,k);
+            S(k,k) = r;
+            if (k < NX - 1) {
+                if (std::abs(c) > eps) {
+                    S.block(k+1, k, NX-k-1, 1) = (S.block(k+1, k, NX-k-1, 1) - s * v_scaled.segment(k+1, NX-k-1)) / c;
+                }
+                v_scaled.segment(k+1, NX-k-1) = c * v_scaled.segment(k+1, NX-k-1) - s * S.block(k+1, k, NX-k-1, 1);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Rank-1 Cholesky downdate (legacy version, silently handles failures)
      */
     void cholupdate_downdate(StateMat& S, const State& v, float alpha) {
         State v_scaled = alpha * v;
