@@ -2,8 +2,8 @@
 #define SIGMA_POINTS_H
 
 #include <Eigen/Dense>
+#include <Eigen/Cholesky>
 #include <cmath>
-#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -77,16 +77,20 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
     }
 
     // Sigma Points Generation
-    // Factorize P using NEON-accelerated Cholesky
-    Eigen::MatrixXf L = optmath::neon::neon_cholesky(P);
-    if (L.size() == 0) {
+    // Factorize P using Eigen LLT
+    Eigen::LLT<Eigen::Matrix<float, NX, NX>> llt(P);
+    Eigen::Matrix<float, NX, NX> L;
+    if (llt.info() == Eigen::Success) {
+        L = llt.matrixL();
+    } else {
         // Not SPD, add jitter and retry
         Eigen::Matrix<float, NX, NX> P_jitter = P + 1e-6f * Eigen::Matrix<float, NX, NX>::Identity();
-        L = optmath::neon::neon_cholesky(P_jitter);
-        if (L.size() == 0) {
-            // Ultimate fallback to Eigen LLT
-            Eigen::LLT<Eigen::Matrix<float, NX, NX>> llt(P_jitter);
-            L = llt.matrixL();
+        Eigen::LLT<Eigen::Matrix<float, NX, NX>> llt_jitter(P_jitter);
+        if (llt_jitter.info() == Eigen::Success) {
+            L = llt_jitter.matrixL();
+        } else {
+            // Ultimate fallback to identity
+            L = Eigen::Matrix<float, NX, NX>::Identity();
         }
     }
     float scale = std::sqrt(n + lambda);

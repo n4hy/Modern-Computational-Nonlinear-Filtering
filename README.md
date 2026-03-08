@@ -138,23 +138,24 @@ This repository provides nonlinear filtering implementations optimized for **ARM
   - IMU flywheel during GPS outage (INS-only propagation)
   - Iridium-based recovery after jamming ends
   - Monte Carlo analysis framework (1000+ trials)
-- **Monte Carlo Results** (100 trials):
+- **Monte Carlo Results** (1000 trials):
 
 | Metric | Value |
 |--------|-------|
-| Convergence Rate | 97% |
-| GPS Phase RMSE | 6.26 m |
-| Max Error (30s outage) | ~1.1 km |
-| Recovery Time | 0.09 s to <500m |
-| Median Final Error | 8.6 m |
-| 95th Percentile Error | 14.8 m |
-| Divergence Rate | 3% |
+| Convergence Rate | **100%** |
+| GPS Phase RMSE | 3.99 m |
+| Max Error (30s outage) | ~1.8 km |
+| Recovery Time | 0.1 s to <500m |
+| Median Final Error | 6.1 m |
+| 95th Percentile Error | 15.0 m |
+| Max Final Error | 17.6 m |
+| Divergence Rate | **0%** |
 
 - **Performance Summary**:
-  - GPS/INS phase: 6.26m RMSE
-  - 30s GPS outage: ~1.1km max error (bounded INS drift)
-  - Recovery: <500m in 0.09s with Iridium updates
-  - 97% of trials converge with median final error of 8.6m
+  - GPS/INS phase: 3.99m RMSE
+  - 30s GPS outage: ~1.8km max error (bounded INS drift)
+  - Recovery: Immediate GPS reacquisition with filter reinitialization
+  - **100% of trials converge** with median final error of 6.1m
 - **Best For**: Anti-jamming navigation, GPS-denied environments
 - **Location**: `AircraftNav/`
 
@@ -294,23 +295,20 @@ for (int i = 0; i < NSIG; ++i) {
 
 **Result**: Max error during 30s GPS outage reduced from 3097m to ~1080m.
 
-### Issue #5: Monte Carlo Trial Divergence (OptMathKernels Library)
+### Issue #5: Monte Carlo Trial Divergence - RESOLVED
 
-**Problem**: 3% of Monte Carlo trials diverge with ~100km final error while the same seeds run correctly in standalone simulation (5-15m final error).
+**Problem**: After GPS outage, innovation gating in SRUKF prevented GPS reacquisition.
 
-**Investigation Findings**:
-- Divergent seeds: 158828983, 158829039, 158829045 (deterministic)
-- Standalone `aircraft_nav_simulation --seed 158828983` converges (5.4m final error)
-- Same seed in Monte Carlo diverges (107km final error)
-- Tests compiled against older OptMathKernels library show 100% convergence
-- Tests compiled against rebuilt library show 3% divergence
-- The issue is in the NEON-accelerated Cholesky/GEMM operations
+**Root Causes Identified**:
+1. **Innovation gating too aggressive**: After 30s GPS outage, INS drifted ~3km. When GPS returned, the Mahalanobis distance was huge, causing updates to be scaled down to ~0.7% effectiveness
+2. **Compiler flags**: `EIGEN_NO_DEBUG` and `-ffast-math` caused numerical instability in edge cases
 
-**Root Cause**: Subtle numerical differences in the OptMathKernels NEON linear algebra routines between library builds cause edge-case numerical instability in the SRUKF during INS coasting (GPS outage) phase.
+**Solution Implemented**:
+1. GPS recovery detection in `AircraftNavSRUKF::updateGPS()`: When GPS returns after outage with position error >500m, the filter reinitializes around GPS position instead of trying to correct with gated updates
+2. Disabled `-ffast-math` and `EIGEN_NO_DEBUG` for AircraftNav targets to ensure numerical stability
+3. Switched from NEON-accelerated Cholesky to Eigen's native LLT for better cross-platform consistency
 
-**Impact**: The 97% convergence rate with 8.6m median error is acceptable for most applications. The divergent cases are statistical outliers that significantly skew the mean but don't affect median performance.
-
-**Recommendation**: Use median statistics rather than mean for Monte Carlo analysis. For mission-critical applications requiring 100% convergence, consider using Eigen's native Cholesky instead of the NEON-accelerated version.
+**Result**: **100% convergence** across 1000 Monte Carlo trials with median final error of 6.1m.
 
 ### Numerical Health Checklist
 

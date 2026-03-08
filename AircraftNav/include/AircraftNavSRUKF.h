@@ -284,11 +284,65 @@ public:
      * GPS updates ONLY affect the GPS filter. The Iridium filter maintains
      * its own independent state using IMU + Iridium measurements.
      * When GPS goes out, we switch to using the Iridium filter's state.
+     *
+     * IMPORTANT: After GPS outage, the filter may have drifted significantly.
+     * If the innovation is too large, we reinitialize around GPS position
+     * rather than trying to correct with a gated update.
      */
     void updateGPS(const GPSObs& gps_meas) {
         if (!initialized_) return;
 
-        // Switch to GPS mode if not already
+        // Check if we're recovering from GPS outage
+        bool recovering_from_outage = (mode_ != NavMode::GPS_INS);
+
+        // Compute innovation to check for large drift during outage
+        if (recovering_from_outage) {
+            State current = srukf_gps_.getState();
+
+            // Compute position error (GPS measurement - current estimate)
+            float dlat = gps_meas(0) - current(LAT);
+            float dlon = gps_meas(1) - current(LON);
+            float dalt = gps_meas(2) - current(ALT);
+
+            // Convert to meters
+            float R_M = 6371000.0f;
+            float pos_error_m = std::sqrt(
+                (dlat * R_M) * (dlat * R_M) +
+                (dlon * R_M * std::cos(current(LAT))) * (dlon * R_M * std::cos(current(LAT))) +
+                dalt * dalt);
+
+            // If position error > 500m, reinitialize around GPS position
+            // instead of trying to correct with gated update
+            if (pos_error_m > 500.0f) {
+                // Reinitialize GPS filter with GPS position and INS velocity/attitude
+                State new_state = current;
+                new_state(LAT) = gps_meas(0);
+                new_state(LON) = gps_meas(1);
+                new_state(ALT) = gps_meas(2);
+                new_state(VN) = gps_meas(3);
+                new_state(VE) = gps_meas(4);
+                new_state(VD) = gps_meas(5);
+
+                // Use recovery covariance (larger uncertainty for non-GPS states)
+                StateMat P_recovery = AircraftNavStateSpaceModel::getInitialCovariance();
+                // Tight GPS position/velocity since we just got GPS fix
+                P_recovery(LAT, LAT) = std::pow(4.0f / 6371000.0f, 2);  // 4m
+                P_recovery(LON, LON) = std::pow(4.0f / 6371000.0f, 2);  // 4m
+                P_recovery(ALT, ALT) = std::pow(6.0f, 2);  // 6m
+                P_recovery(VN, VN) = std::pow(0.1f, 2);   // 0.1 m/s
+                P_recovery(VE, VE) = std::pow(0.1f, 2);   // 0.1 m/s
+                P_recovery(VD, VD) = std::pow(0.15f, 2);  // 0.15 m/s
+
+                srukf_gps_.initialize(new_state, P_recovery);
+                state_ = new_state;
+                S_ = computeCholesky(P_recovery);
+                mode_ = NavMode::GPS_INS;
+                time_since_gps_ = 0.0f;
+                return;
+            }
+        }
+
+        // Normal GPS update path
         if (mode_ != NavMode::GPS_INS) {
             switchToGPSMode();
         }

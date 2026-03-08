@@ -37,11 +37,15 @@ add_executable(aircraft_nav_simulation
 target_link_libraries(aircraft_nav_simulation
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    Threads::Threads
+        Threads::Threads
 )
 
-target_compile_options(aircraft_nav_simulation PRIVATE -O3 -march=native)
+# Disable fast-math and Eigen optimizations for numerical stability in Kalman filters
+target_compile_options(aircraft_nav_simulation PRIVATE -O3 -march=native -fno-fast-math)
+# Override global EIGEN defines that cause numerical instability
+target_compile_definitions(aircraft_nav_simulation PRIVATE EIGEN_FAST_MATH=0)
+# Undefine EIGEN_NO_DEBUG to keep safety checks (must come before Eigen headers)
+target_compile_options(aircraft_nav_simulation PRIVATE -UEIGEN_NO_DEBUG)
 enable_lto_if_supported(aircraft_nav_simulation)
 
 # Monte Carlo analysis executable
@@ -52,11 +56,15 @@ add_executable(monte_carlo_analysis
 target_link_libraries(monte_carlo_analysis
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    Threads::Threads
+        Threads::Threads
 )
 
-target_compile_options(monte_carlo_analysis PRIVATE -O3 -march=native)
+# Disable fast-math and Eigen optimizations for numerical stability in Kalman filters
+target_compile_options(monte_carlo_analysis PRIVATE -O3 -march=native -fno-fast-math)
+# Override global EIGEN defines that cause numerical instability
+target_compile_definitions(monte_carlo_analysis PRIVATE EIGEN_FAST_MATH=0)
+# Undefine EIGEN_NO_DEBUG to keep safety checks (must come before Eigen headers)
+target_compile_options(monte_carlo_analysis PRIVATE -UEIGEN_NO_DEBUG)
 enable_lto_if_supported(monte_carlo_analysis)
 
 # Unit tests
@@ -70,8 +78,7 @@ add_executable(test_aircraft_dynamics
 target_link_libraries(test_aircraft_dynamics
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    GTest::gtest
+        GTest::gtest
     GTest::gtest_main
     Threads::Threads
 )
@@ -86,8 +93,7 @@ add_executable(test_ins_error
 target_link_libraries(test_ins_error
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    GTest::gtest
+        GTest::gtest
     GTest::gtest_main
     Threads::Threads
 )
@@ -102,8 +108,7 @@ add_executable(test_convergence
 target_link_libraries(test_convergence
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    GTest::gtest
+        GTest::gtest
     GTest::gtest_main
     Threads::Threads
 )
@@ -118,8 +123,7 @@ add_executable(test_monte_carlo
 target_link_libraries(test_monte_carlo
     PRIVATE
     Eigen3::Eigen
-    OptMathKernels
-    GTest::gtest
+        GTest::gtest
     GTest::gtest_main
     Threads::Threads
 )
