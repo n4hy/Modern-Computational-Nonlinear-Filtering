@@ -85,16 +85,59 @@ public:
         SigmaPts sigmas;
         generate_sigma_points_from_sqrt<NX>(x_, S_, alpha, beta, kappa, sigmas);
 
+
         // 2. Propagate Sigma Points
+        // NOTE: Use explicit temporary to force evaluation and avoid aliasing issues
         typename SigmaPts::SigmaMat X_pred;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            X_pred.col(i) = model_.f(sigmas.X.col(i), t_k, u_k);
+            State temp = model_.f(sigmas.X.col(i), t_k, u_k);
+            X_pred.col(i) = temp;
         }
 
-        // 3. Compute Predicted Mean
-        State x_pred_mean = State::Zero();
+        // 3. Compute Predicted Mean (using circular mean for angular states)
+        // CRITICAL FIX: Force explicit evaluation by copying ALL sigma point data
+        // to plain C arrays to break any Eigen aliasing/expression template issues.
+
+        // Copy X_pred to a plain 2D array
+        float X_pred_raw[NX][SigmaPts::NSIG];
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            x_pred_mean += sigmas.Wm(i) * X_pred.col(i);
+            for (int j = 0; j < NX; ++j) {
+                X_pred_raw[j][i] = X_pred(j, i);
+            }
+        }
+
+        // Copy weights to plain array
+        float Wm_raw[SigmaPts::NSIG];
+        for (int i = 0; i < SigmaPts::NSIG; ++i) {
+            Wm_raw[i] = sigmas.Wm(i);
+        }
+
+        // Compute mean using ONLY plain C arrays - no Eigen involved
+        float x_pred_mean_raw[NX] = {0};
+        for (int i = 0; i < SigmaPts::NSIG; ++i) {
+            float w = Wm_raw[i];
+            for (int j = 0; j < NX; ++j) {
+                x_pred_mean_raw[j] += w * X_pred_raw[j][i];
+            }
+        }
+
+        // Copy back to Eigen vector
+        State x_pred_mean;
+        for (int j = 0; j < NX; ++j) {
+            x_pred_mean(j) = x_pred_mean_raw[j];
+        }
+
+
+        // Apply circular mean for angular states (using raw arrays for consistency)
+        for (int j = 0; j < NX; ++j) {
+            if (model_.isAngularState(j)) {
+                float sin_sum = 0.0f, cos_sum = 0.0f;
+                for (int i = 0; i < SigmaPts::NSIG; ++i) {
+                    sin_sum += sigmas.Wm(i) * std::sin(X_pred(j, i));
+                    cos_sum += sigmas.Wm(i) * std::cos(X_pred(j, i));
+                }
+                x_pred_mean(j) = std::atan2(sin_sum, cos_sum);
+            }
         }
 
         // 4. Compute Square Root of Predicted Covariance using QR decomposition
@@ -123,6 +166,13 @@ public:
         Eigen::Matrix<float, 3*NX, NX> chi_diff_T;  // Transposed form for QR
         for (int i = 1; i < SigmaPts::NSIG; ++i) {
             State diff = X_pred.col(i) - x_pred_mean;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff(j) > M_PI) diff(j) -= 2.0f * M_PI;
+                    while (diff(j) < -M_PI) diff(j) += 2.0f * M_PI;
+                }
+            }
             float wc_sign = (sigmas.Wc(i) >= 0) ? 1.0f : -1.0f;
             chi_diff_T.row(i-1) = (std::sqrt(std::abs(sigmas.Wc(i))) * diff * wc_sign).transpose();
         }
@@ -137,6 +187,13 @@ public:
 
         // Handle the i=0 term with rank-1 update (cholupdate)
         State diff_0 = X_pred.col(0) - x_pred_mean;
+        // Wrap angular state differences to [-π, π]
+        for (int j = 0; j < NX; ++j) {
+            if (model_.isAngularState(j)) {
+                while (diff_0(j) > M_PI) diff_0(j) -= 2.0f * M_PI;
+                while (diff_0(j) < -M_PI) diff_0(j) += 2.0f * M_PI;
+            }
+        }
         float wc_0 = sigmas.Wc(0);
         if (wc_0 < 0) {
             // Rank-1 downdate
@@ -150,8 +207,19 @@ public:
         // Build weighted diff matrices for NEON GEMM: P_cross = Dx_w * Dp^T
         Eigen::Matrix<float, NX, SigmaPts::NSIG> Dx_w, Dp;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            Dp.col(i) = X_pred.col(i) - x_pred_mean;
-            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+            State diff_pred = X_pred.col(i) - x_pred_mean;
+            State diff_x = sigmas.X.col(i) - x_;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff_pred(j) > M_PI) diff_pred(j) -= 2.0f * M_PI;
+                    while (diff_pred(j) < -M_PI) diff_pred(j) += 2.0f * M_PI;
+                    while (diff_x(j) > M_PI) diff_x(j) -= 2.0f * M_PI;
+                    while (diff_x(j) < -M_PI) diff_x(j) += 2.0f * M_PI;
+                }
+            }
+            Dp.col(i) = diff_pred;
+            Dx_w.col(i) = sigmas.Wc(i) * diff_x;
         }
         StateMat P_cross = optmath::neon::neon_gemm(Dx_w, Dp.transpose());
 
@@ -239,7 +307,15 @@ public:
         Eigen::Matrix<float, NY, NSIG> Dy;
         for (int i = 0; i < NSIG; ++i) {
             Dy.col(i) = Y_pred.col(i) - y_hat;
-            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+            State diff_x = sigmas.X.col(i) - x_;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff_x(j) > M_PI) diff_x(j) -= 2.0f * M_PI;
+                    while (diff_x(j) < -M_PI) diff_x(j) += 2.0f * M_PI;
+                }
+            }
+            Dx_w.col(i) = sigmas.Wc(i) * diff_x;
         }
         Eigen::MatrixXf Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
 
@@ -259,15 +335,14 @@ public:
         Observation innovation = y_k - y_hat;
 
         // Gate the innovation to prevent catastrophic updates
-        // Compute Mahalanobis distance: d^2 = innovation^T * P_yy^{-1} * innovation
-        // If d^2 > threshold, scale down the correction
+        // Use larger threshold to allow GPS corrections while protecting against bad Iridium
         Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
         float mahal_dist_sq = temp_innov.squaredNorm();
-        float gate_threshold = 9.0f;  // Chi-squared threshold for NY degrees of freedom (95% = ~5.99 for NY=2)
+        float gate_threshold = 25.0f;  // Chi-squared threshold (larger to allow GPS)
 
         float scale = 1.0f;
         if (mahal_dist_sq > gate_threshold) {
-            // Scale down the correction to prevent divergence
+            // Scale down large corrections
             scale = std::sqrt(gate_threshold / mahal_dist_sq);
         }
 

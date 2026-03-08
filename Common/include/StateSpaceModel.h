@@ -48,6 +48,20 @@ public:
      * Measurement Noise Covariance Matrix R_k
      */
     virtual ObsMat R(float t_k) const = 0;
+
+    /**
+     * Returns true if state index i is an angular state (requires circular mean).
+     * Default implementation returns false for all states.
+     * Override for models with angular states (e.g., attitude).
+     */
+    virtual bool isAngularState(int i) const { return false; }
+
+    /**
+     * Returns true if observation index i is an angular observation.
+     * Default implementation returns false for all observations.
+     * Override for models with angular observations (e.g., AOA measurements).
+     */
+    virtual bool isAngularObservation(int i) const { return false; }
 };
 
 } // namespace UKFModel
