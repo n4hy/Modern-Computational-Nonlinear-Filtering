@@ -304,14 +304,17 @@ public:
 
     /**
      * @brief Run single trial for Monte Carlo
+     *
+     * NOTE: The simulation object should be constructed fresh for each trial
+     * with the desired seed. This method just runs the simulation and computes
+     * results. The constructor already initializes dynamics/antenna/rng with
+     * the seed, so we don't need to reinitialize them here.
      */
     TrialResult runTrial(int trial_id, uint64_t seed) {
-        // Reinitialize with new seed
-        dynamics_ = AircraftDynamicsModel(config_.aircraft, seed);
-        antenna_ = AircraftAntennaModel(config_.antenna, seed + 1);
-        rng_.seed(seed + 2);
+        // Note: filter is initialized fresh in run() via filter_.initialize(x0)
+        // No explicit reset needed since simulation object is created fresh per trial
 
-        // Run simulation
+        // Run simulation (dynamics/antenna/rng already initialized by constructor)
         SimulationTrajectory traj = run();
 
         // Compute trial results

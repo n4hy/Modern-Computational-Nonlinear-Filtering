@@ -18,6 +18,7 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <memory>
+#include <cmath>
 #include "SRUKF.h"
 #include "AircraftNavStateSpaceModel.h"
 #include "AircraftAntennaModel.h"
@@ -133,9 +134,11 @@ public:
         state_ = x0;
         S_ = computeCholesky(P0);
 
+        // Reset all timing and mode state for fresh trial
         mode_ = NavMode::GPS_INS;
         time_since_gps_ = 0.0f;
         time_since_iridium_ = 0.0f;
+        current_time_ = 0.0f;
         initialized_ = true;
     }
 
@@ -188,6 +191,43 @@ public:
 
         // Set mode to Iridium navigation
         mode_ = NavMode::IRIDIUM_NAV;
+    }
+
+    /**
+     * @brief Check if state is numerically valid
+     * @return true if state contains no NaN/Inf and covariance is bounded
+     */
+    bool isStateValid() const {
+        // Check for NaN/Inf in state
+        for (int i = 0; i < 15; ++i) {
+            if (!std::isfinite(state_(i))) return false;
+        }
+
+        // Check for NaN/Inf in covariance
+        for (int i = 0; i < 15; ++i) {
+            for (int j = 0; j < 15; ++j) {
+                if (!std::isfinite(S_(i, j))) return false;
+            }
+        }
+
+        // Check for excessive position uncertainty (> 1000 km in radians)
+        float R_M = 6371000.0f;
+        float max_pos_std = 1000000.0f / R_M;  // 1000 km in radians
+        if (S_(LAT, LAT) > max_pos_std || S_(LON, LON) > max_pos_std) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @brief Reinitialize filter if state is invalid
+     * @param x0 State to reinitialize with
+     */
+    void recoverIfInvalid(const State& x0) {
+        if (!isStateValid()) {
+            initialize(x0);
+        }
     }
 
     /**
@@ -412,6 +452,31 @@ public:
         time_since_iridium_ = 0.0f;
         current_time_ = 0.0f;
         initialized_ = false;
+    }
+
+    /**
+     * @brief Full reset for Monte Carlo trials
+     *
+     * Resets all internal state to ensure complete isolation between trials.
+     * This prevents any numerical artifacts from affecting subsequent runs.
+     */
+    void resetForNewTrial() {
+        // Reset timing and mode
+        mode_ = NavMode::GPS_INS;
+        time_since_gps_ = 0.0f;
+        time_since_iridium_ = 0.0f;
+        current_time_ = 0.0f;
+        initialized_ = false;
+
+        // Reset state and covariance to defaults
+        state_.setZero();
+        S_.setIdentity();
+
+        // Reset both SRUKF instances with default state
+        State default_state = State::Zero();
+        StateMat default_P = AircraftNavStateSpaceModel::getInitialCovariance();
+        srukf_gps_.initialize(default_state, default_P);
+        srukf_iridium_.initialize(default_state, default_P);
     }
 
 private:

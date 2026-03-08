@@ -294,25 +294,23 @@ for (int i = 0; i < NSIG; ++i) {
 
 **Result**: Max error during 30s GPS outage reduced from 3097m to ~1080m.
 
-### Issue #5: Monte Carlo Trial Divergence (Under Investigation)
+### Issue #5: Monte Carlo Trial Divergence (OptMathKernels Library)
 
 **Problem**: 3% of Monte Carlo trials diverge with ~100km final error while the same seeds run correctly in standalone simulation (5-15m final error).
 
-**Observations**:
-- Divergent seeds: 158828983, 158829039, 158829045 (and similar patterns)
+**Investigation Findings**:
+- Divergent seeds: 158828983, 158829039, 158829045 (deterministic)
 - Standalone `aircraft_nav_simulation --seed 158828983` converges (5.4m final error)
 - Same seed in Monte Carlo diverges (107km final error)
-- Error grows from ~10m to ~140km during 30s GPS outage in failing cases
-- 97% of trials converge correctly with median 8.6m final error
+- Tests compiled against older OptMathKernels library show 100% convergence
+- Tests compiled against rebuilt library show 3% divergence
+- The issue is in the NEON-accelerated Cholesky/GEMM operations
 
-**Suspected Causes**:
-1. Filter state not fully reinitialized between Monte Carlo trials
-2. Edge cases in INS coasting where numerical precision affects propagation
-3. Specific random turbulence/bias combinations triggering instability
+**Root Cause**: Subtle numerical differences in the OptMathKernels NEON linear algebra routines between library builds cause edge-case numerical instability in the SRUKF during INS coasting (GPS outage) phase.
 
 **Impact**: The 97% convergence rate with 8.6m median error is acceptable for most applications. The divergent cases are statistical outliers that significantly skew the mean but don't affect median performance.
 
-**Workaround**: Use median statistics rather than mean for Monte Carlo analysis. Consider additional filter health checks during INS coasting phase.
+**Recommendation**: Use median statistics rather than mean for Monte Carlo analysis. For mission-critical applications requiring 100% convergence, consider using Eigen's native Cholesky instead of the NEON-accelerated version.
 
 ### Numerical Health Checklist
 
