@@ -143,19 +143,21 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 | Metric | Value |
 |--------|-------|
 | Convergence Rate | **100%** |
-| GPS Phase RMSE | 3.99 m |
+| GPS Phase RMSE | 4.29 m |
 | Max Error (30s outage) | ~1.8 km |
 | Recovery Time | 0.1 s to <500m |
-| Median Final Error | 6.1 m |
-| 95th Percentile Error | 15.0 m |
-| Max Final Error | 17.6 m |
+| Mean Final Error | 10.5 m |
+| Median Final Error | 11.4 m |
+| 95th Percentile Error | 15.3 m |
+| 99th Percentile Error | 16.6 m |
+| Max Final Error | 23.6 m |
 | Divergence Rate | **0%** |
 
 - **Performance Summary**:
-  - GPS/INS phase: 3.99m RMSE
+  - GPS/INS phase: 4.29m RMSE
   - 30s GPS outage: ~1.8km max error (bounded INS drift)
   - Recovery: Immediate GPS reacquisition with filter reinitialization
-  - **100% of trials converge** with median final error of 6.1m
+  - **100% of trials converge** with mean final error of 10.5m
 - **Best For**: Anti-jamming navigation, GPS-denied environments
 - **Location**: `AircraftNav/`
 
@@ -413,6 +415,10 @@ make -j$(nproc)
 | `Iridium/iridium_tracking_complete` | Complete multi-satellite tracking demo |
 | `AircraftNav/aircraft_nav_simulation` | GPS/INS/Iridium aircraft navigation simulation |
 | `AircraftNav/monte_carlo_analysis` | Monte Carlo analysis (1000+ trials) |
+| `AircraftNav/test_aircraft_dynamics` | Aircraft dynamics + turbulence unit tests (GTest) |
+| `AircraftNav/test_ins_error` | INS error model + antenna model unit tests (GTest) |
+| `AircraftNav/test_convergence` | Filter convergence + mode switching tests (GTest) |
+| `AircraftNav/test_monte_carlo` | Monte Carlo framework unit tests (GTest) |
 
 ---
 
@@ -721,6 +727,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 2.7.0
+**Version**: 2.8.0
 **Last Updated**: March 2026
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64
