@@ -119,7 +119,7 @@ public:
 
             // Likelihood calculation using NEON-accelerated operations
             // y_pred = H * x + offset
-            Eigen::MatrixXf Hx = optmath::neon::neon_gemm(H, p.kf.x);
+            Eigen::VectorXf Hx = optmath::neon::neon_mat_vec_mul(H, Eigen::VectorXf(p.kf.x));
             Observation y_pred = Hx + offset;
             Observation innovation = y_k - y_pred;
 

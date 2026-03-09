@@ -44,7 +44,7 @@ public:
         // x_k|k-1 = A * x_{k-1|k-1} + bias
         // Use NEON GEMM for A*x (Matrix * Vector)
         // A is Nlin x Nlin, x is Nlin x 1.
-        Eigen::MatrixXf Ax = optmath::neon::neon_gemm(A, x);
+        Eigen::VectorXf Ax = optmath::neon::neon_mat_vec_mul(A, Eigen::VectorXf(x));
         x = Ax + bias;
 
         // P_k|k-1 = A * P_{k-1|k-1} * A^T + Q
@@ -72,7 +72,7 @@ public:
                 const Eigen::Ref<const Observation>& offset,
                 const ObsCov& R) {
         // Innovation: z = y - (H*x + offset)
-        Eigen::MatrixXf Hx = optmath::neon::neon_gemm(H, x);
+        Eigen::VectorXf Hx = optmath::neon::neon_mat_vec_mul(H, Eigen::VectorXf(x));
         Observation z = y - (Hx + offset);
 
         // Innovation covariance: S = H*P*H^T + R
@@ -92,7 +92,7 @@ public:
         }
 
         // Update state: x = x + K*z
-        Eigen::MatrixXf Kz = optmath::neon::neon_gemm(K, z);
+        Eigen::VectorXf Kz = optmath::neon::neon_mat_vec_mul(K, Eigen::VectorXf(z));
         x = x + Kz;
 
         // Update covariance (Joseph form): P = (I - KH)P(I - KH)^T + KRK^T

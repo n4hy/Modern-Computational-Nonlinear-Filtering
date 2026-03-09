@@ -66,7 +66,7 @@ void EKF::update(const Eigen::VectorXf& y, float t) {
         K = optmath::neon::neon_gemm(PHt, S_inv);
     } else {
         // Fallback to Eigen decomposition
-        K = PHt * S.completeOrthogonalDecomposition().pseudoInverse();
+        K = PHt * S.ldlt().solve(Eigen::MatrixXf::Identity(S.rows(), S.cols()));
     }
 
     // 5. Update State

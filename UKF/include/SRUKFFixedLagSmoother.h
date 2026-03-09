@@ -162,8 +162,8 @@ private:
 
             // State smoothing using NEON GEMM
             State diff_x = x_s_jp1 - x_pred_jp1;
-            Eigen::MatrixXf update_x = optmath::neon::neon_gemm(
-                Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_x));
+            Eigen::VectorXf update_x = optmath::neon::neon_mat_vec_mul(
+                Eigen::MatrixXf(G_j), Eigen::VectorXf(diff_x));
             smoothed_states_[j] = x_f_j + State(update_x);
 
             // Covariance smoothing using NEON GEMM

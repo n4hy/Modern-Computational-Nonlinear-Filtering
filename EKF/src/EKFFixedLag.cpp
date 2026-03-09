@@ -1,5 +1,6 @@
 #include "EKFFixedLag.h"
 #include <iostream>
+#include <optmath/neon_kernels.hpp>
 
 EKFFixedLag::EKFFixedLag(SystemModel* model, const Eigen::VectorXf& x0, const Eigen::MatrixXf& P0, int lag_L)
     : model_(model), ekf_(model, x0, P0), lag_L_(lag_L) {
@@ -77,14 +78,24 @@ void EKFFixedLag::step(const Eigen::VectorXf& y_k, const Eigen::VectorXf& u_k, f
         const Eigen::MatrixXf& P_j_plus_1_pred = buffer_[j + 1].P_pred;
 
         // Smoothing Gain G_j = P_{j|j} * F_{j+1}^T * P_{j+1|j}^-1
-        // Use robust solve
-        Eigen::MatrixXf G_j = P_j_filt * F_j_plus_1.transpose() * P_j_plus_1_pred.completeOrthogonalDecomposition().pseudoInverse();
+        Eigen::MatrixXf P_pred_inv = optmath::neon::neon_inverse(P_j_plus_1_pred);
+        Eigen::MatrixXf PFt = optmath::neon::neon_gemm(P_j_filt, F_j_plus_1.transpose());
+        Eigen::MatrixXf G_j;
+        if (P_pred_inv.size() > 0) {
+            G_j = optmath::neon::neon_gemm(PFt, P_pred_inv);
+        } else {
+            Eigen::LDLT<Eigen::MatrixXf> ldlt(P_j_plus_1_pred);
+            G_j = PFt * ldlt.solve(Eigen::MatrixXf::Identity(P_j_plus_1_pred.rows(), P_j_plus_1_pred.cols()));
+        }
 
         // Smoothed state: x_{j|k} = x_{j|j} + G_j * (x_{j+1|k} - x_{j+1|j})
-        x_smooth_[j] = x_j_filt + G_j * (x_smooth_[j + 1] - x_j_plus_1_pred);
+        Eigen::VectorXf diff_x = x_smooth_[j + 1] - x_j_plus_1_pred;
+        x_smooth_[j] = x_j_filt + optmath::neon::neon_mat_vec_mul(G_j, diff_x);
 
         // Smoothed covariance: P_{j|k} = P_{j|j} + G_j * (P_{j+1|k} - P_{j+1|j}) * G_j^T
-        P_smooth_[j] = P_j_filt + G_j * (P_smooth_[j + 1] - P_j_plus_1_pred) * G_j.transpose();
+        Eigen::MatrixXf diff_P = P_smooth_[j + 1] - P_j_plus_1_pred;
+        Eigen::MatrixXf term1 = optmath::neon::neon_gemm(G_j, diff_P);
+        P_smooth_[j] = P_j_filt + optmath::neon::neon_gemm(term1, G_j.transpose());
     }
 }
 

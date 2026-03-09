@@ -80,7 +80,20 @@ elseif(VEC_ADD_SHADER_SRC)
         add_dependencies(pkf_example CompilePKFShaders)
         add_dependencies(pkf_test CompilePKFShaders)
     else()
-        message(WARNING "glslc not found. PKF Vulkan acceleration will fail at runtime (missing vec_add.comp.spv).")
+        find_program(GLSLANG_VALIDATOR glslangValidator)
+        if(GLSLANG_VALIDATOR)
+            add_custom_command(
+                OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
+                COMMAND ${GLSLANG_VALIDATOR} -V -S comp ${VEC_ADD_SHADER_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv
+                DEPENDS ${VEC_ADD_SHADER_SRC}
+                COMMENT "Compiling Vulkan shader vec_add.comp.glsl (glslangValidator)"
+            )
+            add_custom_target(CompilePKFShaders ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/vec_add.comp.spv)
+            add_dependencies(pkf_example CompilePKFShaders)
+            add_dependencies(pkf_test CompilePKFShaders)
+        else()
+            message(WARNING "Neither glslc nor glslangValidator found. PKF Vulkan acceleration will fail at runtime (missing vec_add.comp.spv).")
+        endif()
     endif()
 else()
     message(WARNING "Could not find vec_add.comp.spv or vec_add.comp.glsl in OptimizedKernels dependency.")

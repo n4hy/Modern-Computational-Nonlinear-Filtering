@@ -109,10 +109,10 @@ Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. All b
 
 | Filter | RMSE | Smoothed RMSE | NEES | Avg Step Time | Divergences |
 |--------|------|---------------|------|---------------|-------------|
-| **UKF** | 1.457 | — | 10.58 ± 4.80 | 0.025 ms | 0 |
-| **SRUKF** | 1.456 | — | 10.59 ± 4.81 | 0.020 ms | 0 |
-| **UKF+Smoother** | 1.457 | **1.148** | 10.58 ± 4.80 | 0.118 ms | 0 |
-| **SRUKF+Smoother** | 1.456 | **1.148** | 10.59 ± 4.81 | 0.173 ms | 0 |
+| **UKF** | 1.457 | — | 10.58 ± 4.80 | 0.021 ms | 0 |
+| **SRUKF** | 1.456 | — | 10.59 ± 4.81 | 0.019 ms | 0 |
+| **UKF+Smoother** | 1.457 | **1.148** | 10.58 ± 4.80 | 0.112 ms | 0 |
+| **SRUKF+Smoother** | 1.456 | **1.148** | 10.59 ± 4.81 | 0.165 ms | 0 |
 
 Smoothing improves RMSE by **21%** on this 10-dimensional problem.
 
@@ -122,7 +122,7 @@ Smoothing improves RMSE by **21%** on this 10-dimensional problem.
 |--------|------|---------------|---------------|-------------|
 | **UKF** | 0.468 | — | 0.001 ms | 0 |
 | **SRUKF** | 0.466 | — | 0.0006 ms | 0 |
-| **SRUKF+Smoother** | 0.466 | **0.429** | 0.017 ms | 0 |
+| **SRUKF+Smoother** | 0.466 | **0.429** | 0.016 ms | 0 |
 
 Smoothing improves RMSE by **8%**. SRUKF is slightly faster than UKF.
 
@@ -153,7 +153,7 @@ Extremely challenging problem with large state magnitudes (Earth-centered coordi
 | EKF (Nonlinear Oscillator, 2D) | 0.060 | 0.052 | 13% |
 | UKF (Drag Ball, 4D) | 0.228 | 0.119 | 48% |
 | SRUKF (Drag Ball, 4D) | 0.355 | 0.166 | 53% |
-| PKF (Lorenz-63, 3D) | 0.805 | 0.604 | 25% |
+| PKF (Lorenz-63, 3D) | 0.806 | 0.595 | 26% |
 
 ---
 
@@ -220,7 +220,7 @@ Before deploying any Kalman filter, verify:
 
 ### Hardware Optimization
 
-- **ARM NEON Dense Linear Algebra**: Cholesky, matrix inverse, GEMM, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+- **ARM NEON Dense Linear Algebra**: Cholesky, matrix inverse, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 - **SVE2 Support**: Scalable Vector Extension 2 with FCMA and I8MM on supported platforms
 - **Vulkan Compute**: Particle operations parallelized on GPU
 - **Graceful Fallback**: NEON -> NEON+jitter -> Eigen LLT/LDLT for numerical robustness
@@ -424,13 +424,11 @@ Modern-Computational-Nonlinear-Filtering/
 │   ├── include/
 │   │   ├── EKF.h
 │   │   ├── EKFFixedLag.h
-│   │   ├── FixedLagSmoother.h
 │   │   ├── BallTossModel.h
 │   │   └── NonlinearOscillator.h
 │   ├── src/
 │   │   ├── EKF.cpp
-│   │   ├── EKFFixedLag.cpp
-│   │   └── FixedLagSmoother.cpp
+│   │   └── EKFFixedLag.cpp
 │   └── main.cpp
 │
 ├── UKF/                        # Unscented Kalman Filters
@@ -539,6 +537,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 2.3.0
+**Version**: 2.4.0
 **Last Updated**: March 2026
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64
