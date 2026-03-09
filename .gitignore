@@ -13,3 +13,4 @@ eigen_install/
 *.png
 .DS_Store
 _deps/
+nlfvenv/

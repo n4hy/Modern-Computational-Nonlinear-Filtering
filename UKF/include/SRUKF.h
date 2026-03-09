@@ -3,10 +3,10 @@
 
 #include <Eigen/Dense>
 #include <Eigen/QR>
+#include <Eigen/Cholesky>
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
-#include <optmath/neon_kernels.hpp>
 
 namespace UKFCore {
 
@@ -57,12 +57,19 @@ public:
             }
         }
 
-        // Compute Cholesky factor of P0 using NEON-accelerated decomposition
-        Eigen::MatrixXf L0 = optmath::neon::neon_cholesky(P0);
-        if (L0.size() == 0) {
+        // Compute Cholesky factor of P0 using Eigen LLT
+        Eigen::LLT<StateMat> llt_P0(P0);
+        StateMat L0;
+        if (llt_P0.info() == Eigen::Success) {
+            L0 = llt_P0.matrixL();
+        } else {
+            // Add jitter and retry
             StateMat P_jitter = P0 + 1e-6f * StateMat::Identity();
-            L0 = optmath::neon::neon_cholesky(P_jitter);
-            if (L0.size() == 0) {
+            Eigen::LLT<StateMat> llt_jitter(P_jitter);
+            if (llt_jitter.info() == Eigen::Success) {
+                L0 = llt_jitter.matrixL();
+            } else {
+                // Fallback to LDLT
                 Eigen::LDLT<StateMat> ldlt(P_jitter);
                 if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
                     L0 = StateMat::Identity();  // Last resort
@@ -85,36 +92,85 @@ public:
         SigmaPts sigmas;
         generate_sigma_points_from_sqrt<NX>(x_, S_, alpha, beta, kappa, sigmas);
 
+
         // 2. Propagate Sigma Points
+        // NOTE: Use explicit temporary to force evaluation and avoid aliasing issues
         typename SigmaPts::SigmaMat X_pred;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            X_pred.col(i) = model_.f(sigmas.X.col(i), t_k, u_k);
+            State temp = model_.f(sigmas.X.col(i), t_k, u_k);
+            X_pred.col(i) = temp;
         }
 
-        // 3. Compute Predicted Mean
-        State x_pred_mean = State::Zero();
+        // 3. Compute Predicted Mean (using circular mean for angular states)
+        // CRITICAL FIX: Force explicit evaluation by copying ALL sigma point data
+        // to plain C arrays to break any Eigen aliasing/expression template issues.
+
+        // Copy X_pred to a plain 2D array
+        float X_pred_raw[NX][SigmaPts::NSIG];
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            x_pred_mean += sigmas.Wm(i) * X_pred.col(i);
+            for (int j = 0; j < NX; ++j) {
+                X_pred_raw[j][i] = X_pred(j, i);
+            }
+        }
+
+        // Copy weights to plain array
+        float Wm_raw[SigmaPts::NSIG];
+        for (int i = 0; i < SigmaPts::NSIG; ++i) {
+            Wm_raw[i] = sigmas.Wm(i);
+        }
+
+        // Compute mean using ONLY plain C arrays - no Eigen involved
+        float x_pred_mean_raw[NX] = {0};
+        for (int i = 0; i < SigmaPts::NSIG; ++i) {
+            float w = Wm_raw[i];
+            for (int j = 0; j < NX; ++j) {
+                x_pred_mean_raw[j] += w * X_pred_raw[j][i];
+            }
+        }
+
+        // Copy back to Eigen vector
+        State x_pred_mean;
+        for (int j = 0; j < NX; ++j) {
+            x_pred_mean(j) = x_pred_mean_raw[j];
+        }
+
+
+        // Apply circular mean for angular states (using raw arrays for consistency)
+        for (int j = 0; j < NX; ++j) {
+            if (model_.isAngularState(j)) {
+                float sin_sum = 0.0f, cos_sum = 0.0f;
+                for (int i = 0; i < SigmaPts::NSIG; ++i) {
+                    sin_sum += sigmas.Wm(i) * std::sin(X_pred(j, i));
+                    cos_sum += sigmas.Wm(i) * std::cos(X_pred(j, i));
+                }
+                x_pred_mean(j) = std::atan2(sin_sum, cos_sum);
+            }
         }
 
         // 4. Compute Square Root of Predicted Covariance using QR decomposition
         StateMat Q = model_.Q(t_k);
-        Eigen::MatrixXf S_Q_dyn = optmath::neon::neon_cholesky(Q);
-        if (S_Q_dyn.size() == 0) {
+        Eigen::LLT<StateMat> llt_Q(Q);
+        StateMat S_Q;
+        if (llt_Q.info() == Eigen::Success) {
+            S_Q = llt_Q.matrixL();
+        } else {
+            // Add jitter and retry
             Q += 1e-8f * StateMat::Identity();
-            S_Q_dyn = optmath::neon::neon_cholesky(Q);
-            if (S_Q_dyn.size() == 0) {
+            Eigen::LLT<StateMat> llt_Q_jitter(Q);
+            if (llt_Q_jitter.info() == Eigen::Success) {
+                S_Q = llt_Q_jitter.matrixL();
+            } else {
+                // Fallback to LDLT
                 Eigen::LDLT<StateMat> ldlt_Q(Q);
                 if (ldlt_Q.info() != Eigen::Success || !ldlt_Q.isPositive()) {
-                    S_Q_dyn = StateMat::Identity() * 1e-4f;  // Last resort
+                    S_Q = StateMat::Identity() * 1e-4f;  // Last resort
                 } else {
                     StateMat Q_ldlt = ldlt_Q.matrixL();
                     Eigen::VectorXf D_sqrt = ldlt_Q.vectorD().cwiseSqrt();
-                    S_Q_dyn = Q_ldlt * D_sqrt.asDiagonal();
+                    S_Q = Q_ldlt * D_sqrt.asDiagonal();
                 }
             }
         }
-        StateMat S_Q = S_Q_dyn;
 
         // Build matrix for QR: each ROW is sqrt(Wc[i])*diff[i]
         // For SRUKF, we compute QR of A^T where A has columns sqrt(Wc[i])*diff[i]
@@ -123,6 +179,13 @@ public:
         Eigen::Matrix<float, 3*NX, NX> chi_diff_T;  // Transposed form for QR
         for (int i = 1; i < SigmaPts::NSIG; ++i) {
             State diff = X_pred.col(i) - x_pred_mean;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff(j) > M_PI) diff(j) -= 2.0f * M_PI;
+                    while (diff(j) < -M_PI) diff(j) += 2.0f * M_PI;
+                }
+            }
             float wc_sign = (sigmas.Wc(i) >= 0) ? 1.0f : -1.0f;
             chi_diff_T.row(i-1) = (std::sqrt(std::abs(sigmas.Wc(i))) * diff * wc_sign).transpose();
         }
@@ -137,6 +200,13 @@ public:
 
         // Handle the i=0 term with rank-1 update (cholupdate)
         State diff_0 = X_pred.col(0) - x_pred_mean;
+        // Wrap angular state differences to [-π, π]
+        for (int j = 0; j < NX; ++j) {
+            if (model_.isAngularState(j)) {
+                while (diff_0(j) > M_PI) diff_0(j) -= 2.0f * M_PI;
+                while (diff_0(j) < -M_PI) diff_0(j) += 2.0f * M_PI;
+            }
+        }
         float wc_0 = sigmas.Wc(0);
         if (wc_0 < 0) {
             // Rank-1 downdate
@@ -150,10 +220,21 @@ public:
         // Build weighted diff matrices for NEON GEMM: P_cross = Dx_w * Dp^T
         Eigen::Matrix<float, NX, SigmaPts::NSIG> Dx_w, Dp;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            Dp.col(i) = X_pred.col(i) - x_pred_mean;
-            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+            State diff_pred = X_pred.col(i) - x_pred_mean;
+            State diff_x = sigmas.X.col(i) - x_;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff_pred(j) > M_PI) diff_pred(j) -= 2.0f * M_PI;
+                    while (diff_pred(j) < -M_PI) diff_pred(j) += 2.0f * M_PI;
+                    while (diff_x(j) > M_PI) diff_x(j) -= 2.0f * M_PI;
+                    while (diff_x(j) < -M_PI) diff_x(j) += 2.0f * M_PI;
+                }
+            }
+            Dp.col(i) = diff_pred;
+            Dx_w.col(i) = sigmas.Wc(i) * diff_x;
         }
-        StateMat P_cross = optmath::neon::neon_gemm(Dx_w, Dp.transpose());
+        StateMat P_cross = Dx_w * Dp.transpose();
 
         // Update state
         x_ = x_pred_mean;
@@ -200,32 +281,38 @@ public:
         // Ensure positive definite
         P_yy = 0.5f * (P_yy + P_yy.transpose());
 
-        // Compute square root via NEON-accelerated Cholesky
-        Eigen::MatrixXf S_yy_dyn = optmath::neon::neon_cholesky(P_yy);
-        if (S_yy_dyn.size() == 0) {
+        // Compute square root via Eigen LLT
+        Eigen::LLT<ObsMat> llt_Pyy(P_yy);
+        ObsMat S_yy;
+        if (llt_Pyy.info() == Eigen::Success) {
+            S_yy = llt_Pyy.matrixL();
+        } else {
+            // Add jitter and retry
             P_yy += 1e-6f * ObsMat::Identity();
-            S_yy_dyn = optmath::neon::neon_cholesky(P_yy);
-            if (S_yy_dyn.size() == 0) {
+            Eigen::LLT<ObsMat> llt_Pyy_jitter(P_yy);
+            if (llt_Pyy_jitter.info() == Eigen::Success) {
+                S_yy = llt_Pyy_jitter.matrixL();
+            } else {
+                // Fallback to LDLT
                 Eigen::LDLT<ObsMat> ldlt_Pyy(P_yy);
                 if (ldlt_Pyy.info() != Eigen::Success || !ldlt_Pyy.isPositive()) {
                     // Last resort: use Cholesky of R (measurement noise defines correct scale)
                     Eigen::LLT<ObsMat> llt_R_fallback(R);
                     if (llt_R_fallback.info() == Eigen::Success) {
-                        S_yy_dyn = llt_R_fallback.matrixL();
+                        S_yy = llt_R_fallback.matrixL();
                     } else {
                         // R itself is diagonal, use sqrt of diagonal
-                        S_yy_dyn = ObsMat::Zero();
+                        S_yy = ObsMat::Zero();
                         for (int i = 0; i < NY; ++i)
-                            S_yy_dyn(i,i) = std::sqrt(R(i,i));
+                            S_yy(i,i) = std::sqrt(R(i,i));
                     }
                 } else {
                     ObsMat Pyy_ldlt = ldlt_Pyy.matrixL();
                     Eigen::VectorXf D_sqrt = ldlt_Pyy.vectorD().cwiseSqrt();
-                    S_yy_dyn = Pyy_ldlt * D_sqrt.asDiagonal();
+                    S_yy = Pyy_ldlt * D_sqrt.asDiagonal();
                 }
             }
         }
-        ObsMat S_yy = S_yy_dyn;
 
         // Check S_yy for numerical issues — use measurement noise scale
         for (int i = 0; i < NY; ++i) {
@@ -239,9 +326,17 @@ public:
         Eigen::Matrix<float, NY, NSIG> Dy;
         for (int i = 0; i < NSIG; ++i) {
             Dy.col(i) = Y_pred.col(i) - y_hat;
-            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+            State diff_x = sigmas.X.col(i) - x_;
+            // Wrap angular state differences to [-π, π]
+            for (int j = 0; j < NX; ++j) {
+                if (model_.isAngularState(j)) {
+                    while (diff_x(j) > M_PI) diff_x(j) -= 2.0f * M_PI;
+                    while (diff_x(j) < -M_PI) diff_x(j) += 2.0f * M_PI;
+                }
+            }
+            Dx_w.col(i) = sigmas.Wc(i) * diff_x;
         }
-        Eigen::MatrixXf Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
+        CrossMat Pxy = Dx_w * Dy.transpose();
 
         // 6. Kalman Gain: K = Pxy * P_yy^{-1}
         // Prefer triangular solve (O(N^2)) over explicit inverse (O(N^3)) since we have S_yy
@@ -259,15 +354,14 @@ public:
         Observation innovation = y_k - y_hat;
 
         // Gate the innovation to prevent catastrophic updates
-        // Compute Mahalanobis distance: d^2 = innovation^T * P_yy^{-1} * innovation
-        // If d^2 > threshold, scale down the correction
+        // Use larger threshold to allow GPS corrections while protecting against bad Iridium
         Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
         float mahal_dist_sq = temp_innov.squaredNorm();
-        float gate_threshold = 9.0f;  // Chi-squared threshold for NY degrees of freedom (95% = ~5.99 for NY=2)
+        float gate_threshold = 25.0f;  // Chi-squared threshold (larger to allow GPS)
 
         float scale = 1.0f;
         if (mahal_dist_sq > gate_threshold) {
-            // Scale down the correction to prevent divergence
+            // Scale down large corrections
             scale = std::sqrt(gate_threshold / mahal_dist_sq);
         }
 
@@ -298,21 +392,29 @@ public:
             // Add small regularization
             P_new += 1e-8f * StateMat::Identity();
 
-            // Take Cholesky factor
-            Eigen::MatrixXf S_new = optmath::neon::neon_cholesky(P_new);
-            if (S_new.size() == 0) {
+            // Take Cholesky factor using Eigen LLT
+            Eigen::LLT<StateMat> llt_Pnew(P_new);
+            StateMat S_new;
+            if (llt_Pnew.info() == Eigen::Success) {
+                S_new = llt_Pnew.matrixL();
+            } else {
                 // Even more regularization
                 P_new += 1e-6f * StateMat::Identity();
-                Eigen::LDLT<StateMat> ldlt(P_new);
-                if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
-                    StateMat L = ldlt.matrixL();
-                    Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
-                    S_new = L * D_sqrt.asDiagonal();
+                Eigen::LLT<StateMat> llt_Pnew_jitter(P_new);
+                if (llt_Pnew_jitter.info() == Eigen::Success) {
+                    S_new = llt_Pnew_jitter.matrixL();
                 } else {
-                    // Last resort: keep current S with slight regularization
-                    S_new = S_;
-                    for (int i = 0; i < NX; ++i) {
-                        if (S_new(i,i) < 1e-6f) S_new(i,i) = 1e-6f;
+                    Eigen::LDLT<StateMat> ldlt(P_new);
+                    if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+                        StateMat L = ldlt.matrixL();
+                        Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
+                        S_new = L * D_sqrt.asDiagonal();
+                    } else {
+                        // Last resort: keep current S with slight regularization
+                        S_new = S_;
+                        for (int i = 0; i < NX; ++i) {
+                            if (S_new(i,i) < 1e-6f) S_new(i,i) = 1e-6f;
+                        }
                     }
                 }
             }
