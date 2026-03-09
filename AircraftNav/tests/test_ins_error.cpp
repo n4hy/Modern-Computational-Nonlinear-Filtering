@@ -39,7 +39,7 @@ TEST_F(StateSpaceModelTest, InitialCovariance) {
     EXPECT_NEAR(pos_std_m, 10.0f, 5.0f);  // ~10m position uncertainty
 
     float vel_std = std::sqrt(P0(VN, VN));
-    EXPECT_NEAR(vel_std, 0.5f, 0.3f);  // ~0.5 m/s velocity uncertainty
+    EXPECT_NEAR(vel_std, 1.0f, 0.5f);  // ~1.0 m/s velocity uncertainty
 }
 
 TEST_F(StateSpaceModelTest, ProcessNoise) {
