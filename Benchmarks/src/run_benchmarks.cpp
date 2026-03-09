@@ -131,9 +131,7 @@ BenchmarkMetrics run_ukf_benchmark(Model& model,
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
 
-    auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
-    metrics.mean_nees = nees.first;
-    metrics.std_nees = nees.second;
+    compute_nees(data.true_states, data.filtered_states, data.filtered_covs, metrics);
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
@@ -189,9 +187,7 @@ BenchmarkMetrics run_srukf_benchmark(Model& model,
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
 
-    auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
-    metrics.mean_nees = nees.first;
-    metrics.std_nees = nees.second;
+    compute_nees(data.true_states, data.filtered_states, data.filtered_covs, metrics);
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
@@ -261,9 +257,7 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
         metrics.rmse_smoothed_overall = compute_rmse(aligned_true, aligned_smooth);
     }
 
-    auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
-    metrics.mean_nees = nees.first;
-    metrics.std_nees = nees.second;
+    compute_nees(data.true_states, data.filtered_states, data.filtered_covs, metrics);
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
@@ -332,9 +326,7 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
         metrics.rmse_smoothed_overall = compute_rmse(aligned_true, aligned_smooth);
     }
 
-    auto nees = compute_nees(data.true_states, data.filtered_states, data.filtered_covs);
-    metrics.mean_nees = nees.first;
-    metrics.std_nees = nees.second;
+    compute_nees(data.true_states, data.filtered_states, data.filtered_covs, metrics);
 
     metrics.convergence_time = compute_convergence_time(data.times, data.true_states,
                                                          data.filtered_states, 1.0f);
