@@ -89,8 +89,23 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
         if (llt_jitter.info() == Eigen::Success) {
             L = llt_jitter.matrixL();
         } else {
-            // Ultimate fallback to identity
-            L = Eigen::Matrix<float, NX, NX>::Identity();
+            // Try LDLT decomposition
+            Eigen::LDLT<Eigen::Matrix<float, NX, NX>> ldlt(P_jitter);
+            if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+                Eigen::Matrix<float, NX, NX> L_ldlt = ldlt.matrixL();
+                Eigen::Matrix<float, NX, 1> D_vec = ldlt.vectorD();
+                for (int j = 0; j < NX; ++j) {
+                    D_vec(j) = std::sqrt(std::max(D_vec(j), 1e-10f));
+                }
+                L = L_ldlt * D_vec.asDiagonal();
+            } else {
+                // Ultimate fallback to scaled identity based on P diagonal
+                std::cerr << "[SigmaPoints] WARNING: Covariance decomposition failed, using diagonal fallback" << std::endl;
+                L = Eigen::Matrix<float, NX, NX>::Zero();
+                for (int j = 0; j < NX; ++j) {
+                    L(j, j) = std::sqrt(std::max(P(j, j), 1e-8f));
+                }
+            }
         }
     }
     float scale = std::sqrt(n + lambda);

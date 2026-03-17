@@ -246,12 +246,33 @@ private:
     void normalize_weights() {
         double max_log_w = -std::numeric_limits<double>::infinity();
         for (double w : log_weights_) {
-            if (w > max_log_w) max_log_w = w;
+            if (std::isfinite(w) && w > max_log_w) max_log_w = w;
+        }
+
+        // Handle degenerate case: all particles dead (weights = -inf)
+        if (!std::isfinite(max_log_w)) {
+            // Reset to uniform weights
+            double uniform_log_w = -std::log(static_cast<double>(N_));
+            for (double& w : log_weights_) {
+                w = uniform_log_w;
+            }
+            return;
         }
 
         double sum_exp = 0.0;
         for (double w : log_weights_) {
-            sum_exp += std::exp(w - max_log_w);
+            if (std::isfinite(w)) {
+                sum_exp += std::exp(w - max_log_w);
+            }
+        }
+
+        // Prevent log(0)
+        if (sum_exp <= 0.0) {
+            double uniform_log_w = -std::log(static_cast<double>(N_));
+            for (double& w : log_weights_) {
+                w = uniform_log_w;
+            }
+            return;
         }
 
         double log_sum = max_log_w + std::log(sum_exp);

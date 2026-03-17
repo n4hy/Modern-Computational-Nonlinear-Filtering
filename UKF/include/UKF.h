@@ -125,9 +125,22 @@ public:
         if (S_inv.size() > 0) {
             K = optmath::neon::neon_gemm(Eigen::MatrixXf(Pxy), S_inv);
         } else {
-            // Fallback to Eigen LDLT
+            // Fallback to Eigen LDLT with validation
             Eigen::LDLT<ObsMat> ldlt(S);
-            K = Pxy * ldlt.solve(ObsMat::Identity());
+            if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+                K = Pxy * ldlt.solve(ObsMat::Identity());
+            } else {
+                // Add regularization and retry
+                ObsMat S_reg = S + 1e-6f * ObsMat::Identity();
+                Eigen::LDLT<ObsMat> ldlt_reg(S_reg);
+                if (ldlt_reg.info() == Eigen::Success) {
+                    K = Pxy * ldlt_reg.solve(ObsMat::Identity());
+                } else {
+                    // Last resort: use pseudoinverse via SVD
+                    Eigen::JacobiSVD<ObsMat> svd(S, Eigen::ComputeFullU | Eigen::ComputeFullV);
+                    K = Pxy * svd.solve(ObsMat::Identity());
+                }
+            }
         }
 
         Observation y_diff = y_k - y_hat;
@@ -139,8 +152,15 @@ public:
         Eigen::MatrixXf KS = optmath::neon::neon_gemm(K, S);
         P_ = P_ - optmath::neon::neon_gemm(KS, K.transpose());
 
-        // Symmetrize and ensure PD
+        // Symmetrize and ensure positive definiteness
         P_ = 0.5f * (P_ + P_.transpose());
+
+        // Check for positive definiteness and regularize if needed
+        Eigen::SelfAdjointEigenSolver<StateMat> eig(P_, Eigen::EigenvaluesOnly);
+        float min_eig = eig.eigenvalues().minCoeff();
+        if (min_eig < 1e-8f) {
+            P_ += (1e-8f - min_eig) * StateMat::Identity();
+        }
     }
 
     // Getters

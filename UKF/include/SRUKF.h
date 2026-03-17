@@ -149,8 +149,9 @@ public:
 
         // 4. Compute Square Root of Predicted Covariance using QR decomposition
         StateMat Q = model_.Q(t_k);
+        StateMat S_Q = StateMat::Identity() * 1e-4f;  // Initialize with safe default
+
         Eigen::LLT<StateMat> llt_Q(Q);
-        StateMat S_Q;
         if (llt_Q.info() == Eigen::Success) {
             S_Q = llt_Q.matrixL();
         } else {
@@ -160,15 +161,18 @@ public:
             if (llt_Q_jitter.info() == Eigen::Success) {
                 S_Q = llt_Q_jitter.matrixL();
             } else {
-                // Fallback to LDLT
+                // Fallback to LDLT with safe sqrt
                 Eigen::LDLT<StateMat> ldlt_Q(Q);
-                if (ldlt_Q.info() != Eigen::Success || !ldlt_Q.isPositive()) {
-                    S_Q = StateMat::Identity() * 1e-4f;  // Last resort
-                } else {
+                if (ldlt_Q.info() == Eigen::Success && ldlt_Q.isPositive()) {
                     StateMat Q_ldlt = ldlt_Q.matrixL();
-                    Eigen::VectorXf D_sqrt = ldlt_Q.vectorD().cwiseSqrt();
-                    S_Q = Q_ldlt * D_sqrt.asDiagonal();
+                    // Safe sqrt: clamp negative values to small positive
+                    Eigen::VectorXf D_vec = ldlt_Q.vectorD();
+                    for (int i = 0; i < NX; ++i) {
+                        D_vec(i) = std::sqrt(std::max(D_vec(i), 1e-10f));
+                    }
+                    S_Q = Q_ldlt * D_vec.asDiagonal();
                 }
+                // else: keep the default S_Q = Identity * 1e-4f
             }
         }
 
@@ -407,8 +411,12 @@ public:
                     Eigen::LDLT<StateMat> ldlt(P_new);
                     if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
                         StateMat L = ldlt.matrixL();
-                        Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
-                        S_new = L * D_sqrt.asDiagonal();
+                        // Safe sqrt: clamp negative values to small positive
+                        Eigen::VectorXf D_vec = ldlt.vectorD();
+                        for (int j = 0; j < NX; ++j) {
+                            D_vec(j) = std::sqrt(std::max(D_vec(j), 1e-10f));
+                        }
+                        S_new = L * D_vec.asDiagonal();
                     } else {
                         // Last resort: keep current S with slight regularization
                         S_new = S_;

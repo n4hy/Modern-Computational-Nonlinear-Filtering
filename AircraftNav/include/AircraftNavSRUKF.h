@@ -623,22 +623,27 @@ private:
     void inflateCovariance(float dt) {
         // Inflate covariance during GPS outage to account for
         // unmodeled error growth
+        //
+        // For P = S*S^T, inflating P by factor g gives:
+        // P_new = g*P = (sqrt(g)*S) * (sqrt(g)*S)^T
+        // So S_new = sqrt(g) * S
 
-        // Growth rate per second
-        float growth = std::pow(config_.covariance_growth_rate, dt);
+        // Growth rate per second (for P, so sqrt for S)
+        float growth_P = std::pow(config_.covariance_growth_rate, dt);
+        float growth_S = std::sqrt(growth_P);
 
-        // Apply to position and velocity states
+        // Apply sqrt(growth) to position and velocity rows/cols of S
+        // For lower triangular S, scaling rows i affects the i-th state variance
         for (int i = 0; i < 6; ++i) {
-            for (int j = 0; j < 15; ++j) {
-                S_(i, j) *= growth;
+            for (int j = 0; j <= i; ++j) {  // Only lower triangular part
+                S_(i, j) *= growth_S;
             }
         }
 
-        // Ensure positive definiteness
+        // Cap maximum inflation to prevent numerical issues
+        const float max_S_diag = 1e4f;  // Corresponds to 1e8 variance
         for (int i = 0; i < 15; ++i) {
-            if (S_(i, i) < 1e-10f) {
-                S_(i, i) = 1e-10f;
-            }
+            S_(i, i) = std::clamp(S_(i, i), 1e-10f, max_S_diag);
         }
 
         // Update both filters
@@ -647,12 +652,32 @@ private:
     }
 
     static StateMat computeCholesky(const StateMat& P) {
+        // Try standard LLT
         Eigen::LLT<StateMat> llt(P);
         if (llt.info() == Eigen::Success) {
             return llt.matrixL();
         }
 
-        // Fallback: use diagonal
+        // Try with regularization
+        StateMat P_reg = P + 1e-6f * StateMat::Identity();
+        Eigen::LLT<StateMat> llt_reg(P_reg);
+        if (llt_reg.info() == Eigen::Success) {
+            return llt_reg.matrixL();
+        }
+
+        // Try LDLT decomposition (handles semi-definite)
+        Eigen::LDLT<StateMat> ldlt(P_reg);
+        if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+            StateMat L = ldlt.matrixL();
+            Eigen::Matrix<float, 15, 1> D_vec = ldlt.vectorD();
+            for (int i = 0; i < 15; ++i) {
+                D_vec(i) = std::sqrt(std::max(D_vec(i), 1e-10f));
+            }
+            return L * D_vec.asDiagonal();
+        }
+
+        // Last resort fallback: diagonal (with warning)
+        std::cerr << "[AircraftNavSRUKF] WARNING: Cholesky decomposition failed, using diagonal fallback" << std::endl;
         StateMat S = StateMat::Zero();
         for (int i = 0; i < 15; ++i) {
             S(i, i) = std::sqrt(std::max(P(i, i), 1e-10f));
