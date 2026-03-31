@@ -93,8 +93,9 @@ The benchmark suite tests filtering methods on increasingly difficult problems w
 
 ### Consistency Metrics
 - **NEES (Normalized Estimation Error Squared)**
-  - Mean NEES (should be ≈ state dimension for consistent filter)
-  - Std NEES (indicates filter consistency)
+  - Median NEES (should be ≈ state dimension for consistent filter; robust to outliers)
+  - Percentage within 95% chi-squared bounds (chi2_0.025(n) to chi2_0.975(n))
+  - Uses LDLT solve and diagonal condition number screening for robustness
 
 ### Performance Metrics
 - **Average Step Time**: Computational cost per filter step
@@ -109,9 +110,11 @@ The benchmark suite tests filtering methods on increasingly difficult problems w
 ### Build
 ```bash
 mkdir build && cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make run_benchmarks
 ```
+
+> **Note**: The benchmark target is compiled with `-fno-fast-math` and `EIGEN_FAST_MATH=0` to ensure numerically stable filter results. All linear algebra is routed through `FilterMath.h` which dispatches to SVE2 GEMM > NEON > Eigen at runtime.
 
 ### Run Benchmarks
 ```bash

@@ -64,7 +64,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 - **Smoothing**: RTS with cross-covariance tracking
 - **Best For**: Highly nonlinear systems where Jacobians are unavailable or expensive
 - **Location**: `UKF/`
-- **Optimization**: NEON-accelerated GEMM, Cholesky, inverse, SPD solve
+- **Optimization**: SVE2/NEON-accelerated GEMM, Cholesky, SPD solve via FilterMath dispatch
 
 ### 3. Square Root UKF (SRUKF)
 
@@ -165,48 +165,48 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 ## Benchmark Results
 
-Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. All benchmarks run on ARM aarch64 with NEON acceleration.
+Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. All benchmarks run on ARM aarch64 with SVE2/NEON acceleration via the FilterMath dispatch layer.
 
 ### Coupled Oscillators (10D State, 5D Observation)
 
-| Filter | RMSE | Smoothed RMSE | NEES | Avg Step Time | Divergences |
-|--------|------|---------------|------|---------------|-------------|
-| **UKF** | 1.457 | — | 10.58 ± 4.80 | 0.021 ms | 0 |
-| **SRUKF** | 1.456 | — | 10.59 ± 4.81 | 0.019 ms | 0 |
-| **UKF+Smoother** | 1.457 | **1.148** | 10.58 ± 4.80 | 0.112 ms | 0 |
-| **SRUKF+Smoother** | 1.456 | **1.148** | 10.59 ± 4.81 | 0.165 ms | 0 |
+| Filter | RMSE | Smoothed RMSE | NEES median | In 95% bounds | Avg Step Time | Divergences |
+|--------|------|---------------|-------------|---------------|---------------|-------------|
+| **UKF** | 1.457 | — | 9.89 | 94.5% | 0.025 ms | 0 |
+| **SRUKF** | 1.457 | — | 9.89 | 94.5% | 0.017 ms | 0 |
+| **UKF+Smoother** | 1.457 | **1.148** | 9.89 | 94.5% | 0.141 ms | 0 |
+| **SRUKF+Smoother** | 1.457 | **1.148** | 9.89 | 94.5% | 0.187 ms | 0 |
 
-Smoothing improves RMSE by **21%** on this 10-dimensional problem.
+Smoothing improves RMSE by **21%** on this 10-dimensional problem. NEES 94.5% in chi-squared bounds indicates excellent filter consistency.
 
 ### Van der Pol Oscillator (2D State, 1D Observation)
 
-| Filter | RMSE | Smoothed RMSE | Avg Step Time | Divergences |
-|--------|------|---------------|---------------|-------------|
-| **UKF** | 0.468 | — | 0.001 ms | 0 |
-| **SRUKF** | 0.466 | — | 0.0006 ms | 0 |
-| **SRUKF+Smoother** | 0.466 | **0.429** | 0.016 ms | 0 |
+| Filter | RMSE | Smoothed RMSE | NEES median | In 95% bounds | Avg Step Time | Divergences |
+|--------|------|---------------|-------------|---------------|---------------|-------------|
+| **UKF** | 0.468 | — | 1.14 | 95.9% | 0.001 ms | 0 |
+| **SRUKF** | 0.466 | — | 1.14 | 96.0% | 0.0005 ms | 0 |
+| **SRUKF+Smoother** | 0.466 | **0.430** | 1.14 | 96.0% | 0.022 ms | 0 |
 
-Smoothing improves RMSE by **8%**. SRUKF is slightly faster than UKF.
+Smoothing improves RMSE by **8%**. SRUKF is 2.9x faster than UKF on this 2D problem.
 
 ### Bearing-Only Tracking (4D State, 1D Observation)
 
-| Filter | RMSE | Smoothed RMSE | NEES | Divergences |
-|--------|------|---------------|------|-------------|
-| **UKF** | 42.84 | — | 1.59 ± 1.12 | 171 |
-| **SRUKF** | 43.00 | — | 1.57 ± 1.10 | 173 |
-| **SRUKF+Smoother** | 43.00 | **36.95** | 1.57 ± 1.10 | 173 |
+| Filter | RMSE | Smoothed RMSE | NEES median | In 95% bounds | Divergences |
+|--------|------|---------------|-------------|---------------|-------------|
+| **UKF** | 42.84 | — | 1.50 | 85.6% | 171 |
+| **SRUKF** | 43.15 | — | 1.51 | 85.6% | 173 |
+| **SRUKF+Smoother** | 43.15 | **37.07** | 1.51 | 85.6% | 173 |
 
 Weak observability problem (bearing-only). Smoothing improves RMSE by **14%**.
 
 ### Reentry Vehicle (6D State, 3D Observation)
 
-| Filter | RMSE | Smoothed RMSE | NEES | Divergences |
-|--------|------|---------------|------|-------------|
-| **UKF** | 369.4 m | — | 5.12 ± 2.77 | 0 |
-| **SRUKF** | 371.0 m | — | 5.14 ± 2.80 | 0 |
-| **SRUKF+Smoother** | 371.0 m | **236.6 m** | 5.14 ± 2.80 | 0 |
+| Filter | RMSE | Smoothed RMSE | NEES median | In 95% bounds | Divergences |
+|--------|------|---------------|-------------|---------------|-------------|
+| **UKF** | 369.0 m | — | 4.99 | 95.9% | 0 |
+| **SRUKF** | 369.2 m | — | 4.99 | 95.6% | 0 |
+| **SRUKF+Smoother** | 369.2 m | **236.8 m** | 4.99 | 95.6% | 0 |
 
-Realistic spacecraft reentry tracking with altitude-dependent gravity (gravitational parameter μ/r²), exponential atmosphere drag model, and radar on Earth's surface. NEES close to expected value (6) indicates good filter consistency. Smoothing improves RMSE by **36%**.
+Realistic spacecraft reentry tracking with altitude-dependent gravity (gravitational parameter μ/r²), exponential atmosphere drag model, and radar on Earth's surface. NEES median 4.99 (expected ~6) with 95.6% in bounds indicates excellent filter consistency. Smoothing improves RMSE by **36%**.
 
 ### Filter & Smoother Test Results
 
@@ -214,8 +214,8 @@ Realistic spacecraft reentry tracking with altitude-dependent gravity (gravitati
 |------|-------------|---------------|-------------|
 | EKF (Nonlinear Oscillator, 2D) | 0.060 | 0.052 | 13% |
 | UKF (Drag Ball, 4D) | 0.228 | 0.119 | 48% |
-| SRUKF (Drag Ball, 4D) | 0.355 | 0.166 | 53% |
-| PKF (Lorenz-63, 3D) | 0.806 | 0.595 | 26% |
+| SRUKF (Drag Ball, 4D) | 0.354 | 0.165 | 53% |
+| PKF (Lorenz-63, 3D) | 0.802 | 0.600 | 25% |
 
 ---
 
@@ -308,9 +308,36 @@ for (int i = 0; i < NSIG; ++i) {
 **Solution Implemented**:
 1. GPS recovery detection in `AircraftNavSRUKF::updateGPS()`: When GPS returns after outage with position error >500m, the filter reinitializes around GPS position instead of trying to correct with gated updates
 2. Disabled `-ffast-math` and `EIGEN_NO_DEBUG` for AircraftNav targets to ensure numerical stability
-3. Switched from NEON-accelerated Cholesky to Eigen's native LLT for better cross-platform consistency
+3. All Cholesky operations now route through FilterMath dispatch (NEON-accelerated with Eigen fallback)
 
 **Result**: **100% convergence** across 1000 Monte Carlo trials with median final error of 6.1m.
+
+### Issue #6: Global `-ffast-math` Breaks Filter Stability
+
+**Problem**: CMake root had `-ffast-math` and `EIGEN_FAST_MATH=1` applied globally to all Release builds. This silently caused:
+- NaN comparison guards (`isfinite()`, `allFinite()`) to be optimized away
+- Cholesky decomposition precision loss from altered floating-point associativity
+- Denormal flushing that corrupted small covariance values
+
+**Solution**: Removed global `-ffast-math` and `EIGEN_FAST_MATH=1` from root `CMakeLists.txt`. The NEON/SVE2 intrinsics in OptMathKernels already provide hardware-accelerated fast paths where needed. AircraftNav and Benchmarks targets explicitly set `-fno-fast-math` and `EIGEN_FAST_MATH=0`.
+
+### Issue #7: Unsafe Cholesky Downdate in SRUKF Prediction
+
+**Problem**: The SRUKF predict step used the legacy `cholupdate_downdate()` which silently corrupted the square root covariance when the downdate magnitude exceeded the current factor (sets `r_sq = 1e-6 * S(k,k)²` instead of failing).
+
+**Solution**: Replaced with `cholupdate_downdate_safe()` which returns false on failure, plus a full-covariance fallback that recomputes P from all sigma points and takes a fresh Cholesky.
+
+### Issue #8: RBPKF Weight Corruption and Resampling Bias
+
+**Problem**: Three related issues in the Rao-Blackwellized particle filter:
+1. `normalize_weights()` did not check `isfinite()` — a single NaN weight corrupted all particles
+2. `get_effective_sample_size()` could divide by zero when all weights collapsed
+3. Cumulative sum in resampling used naive float addition, accumulating O(N) rounding error that systematically underselected the last particles
+
+**Solution**:
+1. Added `isfinite()` guard with uniform-weight fallback for degenerate cases
+2. Added `sum_sq <= 0` guard returning `N` (forces resampling)
+3. Replaced naive cumulative sum with Kahan compensated summation in both systematic and stratified resampling
 
 ### Numerical Health Checklist
 
@@ -329,10 +356,15 @@ Before deploying any Kalman filter, verify:
 
 ### Hardware Optimization
 
-- **ARM NEON Dense Linear Algebra**: Cholesky, matrix inverse, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
-- **SVE2 Support**: Scalable Vector Extension 2 with FCMA and I8MM on supported platforms
-- **Vulkan Compute**: Particle operations parallelized on GPU
-- **Graceful Fallback**: NEON -> NEON+jitter -> Eigen LLT/LDLT for numerical robustness
+- **FilterMath Dispatch Layer** (`Common/include/FilterMath.h`): Unified API that automatically selects the best backend at runtime:
+  - **GEMM**: SVE2 cache-blocked → NEON blocked → Eigen (SVE2 tuned for A720's 12MB L3)
+  - **Cholesky / Inverse / Solve**: NEON accelerated → Eigen LDLT fallback
+  - **Kalman Gain**: SPD solve (avoids explicit matrix inverse for O(n²) vs O(n³))
+  - **Non-ARM platforms**: All paths fall through to pure Eigen — full cross-platform support
+- **ARM NEON Dense Linear Algebra**: Cholesky, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+- **ARM SVE2**: Cache-blocked GEMM with FCMA and I8MM on Cortex-A720+ (Orange Pi 5/6)
+- **Vulkan Compute**: Particle filter noise addition parallelized on GPU (Mali-G720, VideoCore VII)
+- **Graceful Fallback**: Accelerated → jitter + retry → Eigen LLT/LDLT for numerical robustness
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
 
 ### Software Quality
@@ -574,6 +606,7 @@ int main() {
 Modern-Computational-Nonlinear-Filtering/
 ├── Common/                     # Shared interfaces
 │   └── include/
+│       ├── FilterMath.h        # SVE2/NEON/Eigen dispatch layer
 │       ├── StateSpaceModel.h   # Base model for UKF/SRUKF
 │       ├── SystemModel.h       # Base model for EKF
 │       └── FileUtils.h         # File I/O utilities
@@ -727,6 +760,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 2.8.0
+**Version**: 3.0.0
 **Last Updated**: March 2026
-**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64
+**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Eigen fallback)

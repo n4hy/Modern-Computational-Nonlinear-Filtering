@@ -1,78 +1,77 @@
 # SRUKF Implementation Status
 
-## ✅ Production Ready (Option C - Current State)
+## Current State (v3.0.0, March 2026)
 
-### Fully Validated Problems:
-1. **Bearing-Only Tracking (4D state, 1D obs)**
-   - RMSE: 17.29m (vs UKF 1229m) - **98.6% improvement**
-   - Divergences: 182 (vs UKF 284)
-   - Speed: 0.0011 ms/step (vs UKF 0.022 ms/step) - **43% faster**
-   - Status: ✅ **PERFECT - matches all documented results**
+### All Benchmark Problems Working
 
-2. **Van der Pol (2D state, 1D obs)**
-   - RMSE: 3.08 (vs UKF 0.47)
-   - Divergences: 0 (vs UKF 0)
-   - Speed: 0.0006 ms/step (vs UKF 0.0017 ms/step) - **37% faster**
-   - Status: ✅ **WORKING - excellent stability**
+| Problem | SRUKF RMSE | NEES median | In 95% bounds | Status |
+|---------|-----------|-------------|---------------|--------|
+| Coupled Oscillators (10D) | 1.457 | 9.89 | 94.5% | **WORKING** |
+| Van der Pol (2D) | 0.466 | 1.14 | 96.0% | **WORKING** |
+| Bearing-Only (4D) | 43.15 | 1.51 | 85.6% | **WORKING** |
+| Reentry Vehicle (6D) | 369.2 | 4.99 | 95.6% | **WORKING** |
 
-### Known Limitation:
-3. **Coupled Oscillators (10D state, 5D obs)**
-   - Status: ⚠️ **High-dimensional numerical sensitivity**
-   - Issue: Filter goes NaN at t≈0.24s due to ill-conditioned innovation covariance
-   - Recommendation: Use standard UKF for high-dimensional (>5D) problems
-   - Future Work: Option B will address this with specialized tuning
+All 4 benchmark problems and all smoother variants pass successfully. 10D coupled oscillators previously failed with NaN — now resolved through:
+1. Dimension-adaptive parameters (alpha=1.0, kappa=3-n for NX<=5; kappa=0 for NX>5)
+2. Direct P_yy computation instead of QR for S_yy
+3. Safe Cholesky downdate with full-covariance fallback
+4. Removed global `-ffast-math` which was corrupting NaN guards
 
-## 🔧 Technical Details
+### Smoother Results
 
-### Current Implementation:
-- **Dimension-adaptive parameters**:
-  - NX ≤ 5: α=1.0, κ=3-n, β=2 (good for weak observability)
-  - NX > 5: α=1e-3, κ=0, β=2 (prevents sigma point spread issues)
-- **Direct covariance computation**: Replaced QR decomposition for S_yy with direct P_yy computation for numerical robustness
-- **Cholesky-based updates**: All covariance updates use square root form
+| Problem | SRUKF+Smoother RMSE | Improvement |
+|---------|-------------------|-------------|
+| Coupled Oscillators (10D) | 1.148 | 21% |
+| Van der Pol (2D) | 0.430 | 8% |
+| Bearing-Only (4D) | 37.07 | 14% |
+| Reentry Vehicle (6D) | 236.8 | 36% |
 
-### Why It Works for 2D/4D but Not 10D:
-- **Low dimensions**: Innovation covariance (NY×NY) is well-conditioned
-- **High dimensions**: With NY=5, P_yy becomes ill-conditioned even with direct computation
-- **Root cause**: Sigma point weights with α=1e-3 create near-singular covariance matrices
+## Technical Details
 
-## 📋 Option B - Future Enhancement Plan
+### FilterMath Dispatch Layer (v3.0.0)
+All SRUKF linear algebra now routes through `Common/include/FilterMath.h`:
+- **GEMM**: SVE2 cache-blocked → NEON → Eigen
+- **Cholesky**: NEON accelerated → Eigen LLT/LDLT fallback
+- **Kalman Gain**: SPD solve (O(n²)) instead of explicit inverse (O(n³))
+- **Cross-platform**: Non-ARM falls through to Eigen automatically
 
-### Goal: Make SRUKF work for all dimensions (including 10D)
+### Dimension-Adaptive Parameters
+```cpp
+if (NX <= 5) {
+    alpha = 1.0f;
+    kappa = 3.0f - static_cast<float>(NX);
+} else {
+    alpha = 1.0f;
+    kappa = 0.0f;
+}
+beta = 2.0f;  // Optimal for Gaussian
+```
 
-### Approach:
-1. **Adaptive alpha based on condition number**:
-   - Monitor condition number of P_yy
-   - Dynamically adjust α ∈ [1e-4, 1.0] to maintain conditioning
-   
-2. **Regularization strategies**:
-   - Add adaptive diagonal loading to P_yy based on trace
-   - Use iterative refinement for Kalman gain computation
+### Numerical Safety Chain
+1. Safe Cholesky downdate → returns false on failure
+2. Full-covariance fallback → recomputes P from all sigma points
+3. Innovation gating → Mahalanobis distance threshold (chi-squared 25)
+4. S_yy validation → `allFinite()` check + diagonal minimum enforcement
+5. Multiple Cholesky fallbacks: accelerated → jitter → LDLT → diagonal
 
-3. **Alternative square root methods**:
-   - Potter's square root filter (different update mechanism)
-   - UD factorization instead of Cholesky (more robust)
+## Code Locations
 
-4. **Dimension-specific QR approach**:
-   - For NY > 3, use modified Gram-Schmidt QR
-   - Add column pivoting for numerical stability
+- **FilterMath dispatch**: `Common/include/FilterMath.h`
+- **SRUKF core**: `UKF/include/SRUKF.h`
+- **Sigma points**: `UKF/include/SigmaPoints.h`
+- **SRUKF smoother**: `UKF/include/SRUKFFixedLagSmoother.h`
+- **Benchmarks**: `Benchmarks/src/run_benchmarks.cpp`
 
-### Expected Timeline:
-- Research & prototyping: 1-2 weeks
-- Implementation & testing: 1 week
-- Validation on coupled oscillators: 1 week
+## Future Enhancement Opportunities
 
-## 📝 Code Locations for Option B Work
+### Potter's Square Root Filter / UD Factorization
+For systems with extreme conditioning (cond(P) > 1e10), alternatives to Cholesky-based square root:
+- UD factorization: U (unit upper triangular) × D (diagonal)
+- More robust for very ill-conditioned problems
+- Better for fixed-point arithmetic
 
-- **SRUKF core**: `/UKF/include/SRUKF.h` lines 174-211 (P_yy computation)
-- **Parameter selection**: `/UKF/include/SRUKF.h` lines 43-56 (initialize())
-- **Test case**: `/Benchmarks/include/BenchmarkProblems.h` lines 12-106 (CoupledOscillators)
-
-## ✅ Current Deliverables
-
-1. **Working SRUKF for dimensions ≤ 5** ✓
-2. **Bearing-only tracking excellence** ✓
-3. **Clean codebase with no debug output** ✓
-4. **Comprehensive documentation** ✓
-5. **Path forward for high dimensions** ✓
-
+### Adaptive Regularization
+For production systems with unknown dynamics:
+- Monitor condition number of innovation covariance
+- Dynamically adjust diagonal loading based on trace
+- Iterative refinement for Kalman gain
