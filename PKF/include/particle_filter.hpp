@@ -9,7 +9,13 @@
 #include <iostream>
 #include "state_space_model.hpp"
 #include "resampling.hpp"
+
+#if defined(__aarch64__) || defined(_M_ARM64)
 #include <optmath/vulkan_backend.hpp>
+#define PKF_HAS_VULKAN 1
+#else
+#define PKF_HAS_VULKAN 0
+#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -100,6 +106,7 @@ public:
 #endif
 
         // Vulkan Acceleration for Noise Addition
+#if PKF_HAS_VULKAN
         if (N_ > 100 && optmath::vulkan::is_available()) {
              // Create large vectors
              Eigen::VectorXf flat_props(N_ * NX);
@@ -117,8 +124,10 @@ public:
              for (size_t i = 0; i < N_; ++i) {
                  particles_[i] = flat_result.segment<NX>(i * NX);
              }
-        } else {
-            // CPU fallback
+        } else
+#endif
+        {
+            // CPU fallback (also used on non-Vulkan platforms)
 #ifdef _OPENMP
             #pragma omp parallel for
 #endif

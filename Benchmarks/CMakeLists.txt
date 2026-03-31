@@ -28,7 +28,8 @@ target_link_libraries(run_benchmarks
 )
 
 # Enable optimization
-target_compile_options(run_benchmarks PRIVATE -O3 -march=native)
+target_compile_options(run_benchmarks PRIVATE -O3 -march=native -fno-fast-math)
+target_compile_definitions(run_benchmarks PRIVATE EIGEN_FAST_MATH=0)
 enable_lto_if_supported(run_benchmarks)
 
 # Installation

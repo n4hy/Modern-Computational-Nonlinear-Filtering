@@ -3,7 +3,7 @@
 
 #include <Eigen/Dense>
 #include <iostream>
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 namespace rbpf {
 
@@ -33,25 +33,17 @@ public:
 
     /**
      * @brief Predict step: x = A*x + bias, P = A*P*A^T + Q
-     *
-     * @param A State transition matrix.
-     * @param bias Deterministic input/bias term (B*u + etc).
-     * @param Q Process noise covariance.
      */
     void predict(const Eigen::Ref<const Eigen::MatrixXf>& A,
                  const Eigen::Ref<const LinearState>& bias,
                  const LinearCov& Q) {
         // x_k|k-1 = A * x_{k-1|k-1} + bias
-        // Use NEON GEMM for A*x (Matrix * Vector)
-        // A is Nlin x Nlin, x is Nlin x 1.
-        Eigen::VectorXf Ax = optmath::neon::neon_mat_vec_mul(A, Eigen::VectorXf(x));
+        Eigen::VectorXf Ax = filtermath::mat_vec_mul(A, Eigen::VectorXf(x));
         x = Ax + bias;
 
-        // P_k|k-1 = A * P_{k-1|k-1} * A^T + Q
-        // AP = A * P
-        Eigen::MatrixXf AP = optmath::neon::neon_gemm(A, P);
-        // APAt = AP * A^T
-        Eigen::MatrixXf APAt = optmath::neon::neon_gemm(AP, A.transpose());
+        // P_k|k-1 = A * P * A^T + Q
+        Eigen::MatrixXf AP = filtermath::gemm(A, P);
+        Eigen::MatrixXf APAt = filtermath::gemm(AP, A.transpose());
 
         P = APAt + Q;
 
@@ -61,53 +53,39 @@ public:
 
     /**
      * @brief Update step using Joseph form for stability.
-     *
-     * @param y Measurement vector.
-     * @param H Observation matrix.
-     * @param offset Measurement offset (y = Hx + offset + v).
-     * @param R Measurement noise covariance.
      */
     void update(const Eigen::Ref<const Observation>& y,
                 const Eigen::Ref<const Eigen::MatrixXf>& H,
                 const Eigen::Ref<const Observation>& offset,
                 const ObsCov& R) {
         // Innovation: z = y - (H*x + offset)
-        Eigen::VectorXf Hx = optmath::neon::neon_mat_vec_mul(H, Eigen::VectorXf(x));
+        Eigen::VectorXf Hx = filtermath::mat_vec_mul(H, Eigen::VectorXf(x));
         Observation z = y - (Hx + offset);
 
         // Innovation covariance: S = H*P*H^T + R
-        Eigen::MatrixXf HP = optmath::neon::neon_gemm(H, P);
-        Eigen::MatrixXf HPHt = optmath::neon::neon_gemm(HP, H.transpose());
+        Eigen::MatrixXf HP = filtermath::gemm(H, P);
+        Eigen::MatrixXf HPHt = filtermath::gemm(HP, H.transpose());
         ObsCov S = HPHt + R;
 
-        // Kalman gain: K = P * H^T * S^{-1} using NEON-accelerated inverse
-        Eigen::MatrixXf S_inv = optmath::neon::neon_inverse(S);
-        Eigen::MatrixXf PHt = optmath::neon::neon_gemm(P, H.transpose());
-        Eigen::Matrix<float, Types::Nlin, Types::Ny> K;
-        if (S_inv.size() > 0) {
-            K = optmath::neon::neon_gemm(PHt, S_inv);
-        } else {
-            // Fallback to Eigen LDLT
-            K = PHt * S.ldlt().solve(Eigen::Matrix<float, Types::Ny, Types::Ny>::Identity());
-        }
+        // Kalman gain via SPD solve (more stable than explicit inverse)
+        Eigen::MatrixXf PHt = filtermath::gemm(P, H.transpose());
+        Eigen::Matrix<float, Types::Nlin, Types::Ny> K = filtermath::kalman_gain(PHt, S);
 
         // Update state: x = x + K*z
-        Eigen::VectorXf Kz = optmath::neon::neon_mat_vec_mul(K, Eigen::VectorXf(z));
+        Eigen::VectorXf Kz = filtermath::mat_vec_mul(K, Eigen::VectorXf(z));
         x = x + Kz;
 
         // Update covariance (Joseph form): P = (I - KH)P(I - KH)^T + KRK^T
         Eigen::Matrix<float, Types::Nlin, Types::Nlin> I = Eigen::Matrix<float, Types::Nlin, Types::Nlin>::Identity();
 
-        Eigen::MatrixXf KH = optmath::neon::neon_gemm(K, H);
+        Eigen::MatrixXf KH = filtermath::gemm(K, H);
         Eigen::Matrix<float, Types::Nlin, Types::Nlin> I_KH = I - KH;
 
-        // Term 1: (I-KH) * P * (I-KH)^T
-        Eigen::MatrixXf P_I_KH_T = optmath::neon::neon_gemm(P, I_KH.transpose());
-        Eigen::MatrixXf Term1 = optmath::neon::neon_gemm(I_KH, P_I_KH_T);
+        Eigen::MatrixXf P_I_KH_T = filtermath::gemm(P, I_KH.transpose());
+        Eigen::MatrixXf Term1 = filtermath::gemm(I_KH, P_I_KH_T);
 
-        // Term 2: K * R * K^T
-        Eigen::MatrixXf RKt = optmath::neon::neon_gemm(R, K.transpose());
-        Eigen::MatrixXf Term2 = optmath::neon::neon_gemm(K, RKt);
+        Eigen::MatrixXf RKt = filtermath::gemm(R, K.transpose());
+        Eigen::MatrixXf Term2 = filtermath::gemm(K, RKt);
 
         P = Term1 + Term2;
 

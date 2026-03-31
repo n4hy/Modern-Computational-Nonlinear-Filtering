@@ -7,6 +7,7 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
+#include "FilterMath.h"
 
 namespace UKFCore {
 
@@ -57,22 +58,20 @@ public:
             }
         }
 
-        // Compute Cholesky factor of P0 using Eigen LLT
-        Eigen::LLT<StateMat> llt_P0(P0);
+        // Compute Cholesky factor of P0 using accelerated Cholesky with fallback
+        Eigen::MatrixXf L0_dyn = filtermath::cholesky(P0);
         StateMat L0;
-        if (llt_P0.info() == Eigen::Success) {
-            L0 = llt_P0.matrixL();
+        if (L0_dyn.size() > 0) {
+            L0 = L0_dyn;
         } else {
-            // Add jitter and retry
             StateMat P_jitter = P0 + 1e-6f * StateMat::Identity();
-            Eigen::LLT<StateMat> llt_jitter(P_jitter);
-            if (llt_jitter.info() == Eigen::Success) {
-                L0 = llt_jitter.matrixL();
+            L0_dyn = filtermath::cholesky(P_jitter);
+            if (L0_dyn.size() > 0) {
+                L0 = L0_dyn;
             } else {
-                // Fallback to LDLT
                 Eigen::LDLT<StateMat> ldlt(P_jitter);
                 if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
-                    L0 = StateMat::Identity();  // Last resort
+                    L0 = StateMat::Identity();
                 } else {
                     StateMat P_ldlt = ldlt.matrixL();
                     Eigen::VectorXf D_sqrt = ldlt.vectorD().cwiseSqrt();
@@ -151,28 +150,24 @@ public:
         StateMat Q = model_.Q(t_k);
         StateMat S_Q = StateMat::Identity() * 1e-4f;  // Initialize with safe default
 
-        Eigen::LLT<StateMat> llt_Q(Q);
-        if (llt_Q.info() == Eigen::Success) {
-            S_Q = llt_Q.matrixL();
+        Eigen::MatrixXf L_Q = filtermath::cholesky(Q);
+        if (L_Q.size() > 0) {
+            S_Q = L_Q;
         } else {
-            // Add jitter and retry
-            Q += 1e-8f * StateMat::Identity();
-            Eigen::LLT<StateMat> llt_Q_jitter(Q);
-            if (llt_Q_jitter.info() == Eigen::Success) {
-                S_Q = llt_Q_jitter.matrixL();
+            Q += 1e-6f * StateMat::Identity();
+            L_Q = filtermath::cholesky(Q);
+            if (L_Q.size() > 0) {
+                S_Q = L_Q;
             } else {
-                // Fallback to LDLT with safe sqrt
                 Eigen::LDLT<StateMat> ldlt_Q(Q);
                 if (ldlt_Q.info() == Eigen::Success && ldlt_Q.isPositive()) {
                     StateMat Q_ldlt = ldlt_Q.matrixL();
-                    // Safe sqrt: clamp negative values to small positive
                     Eigen::VectorXf D_vec = ldlt_Q.vectorD();
                     for (int i = 0; i < NX; ++i) {
                         D_vec(i) = std::sqrt(std::max(D_vec(i), 1e-10f));
                     }
                     S_Q = Q_ldlt * D_vec.asDiagonal();
                 }
-                // else: keep the default S_Q = Identity * 1e-4f
             }
         }
 
@@ -213,8 +208,30 @@ public:
         }
         float wc_0 = sigmas.Wc(0);
         if (wc_0 < 0) {
-            // Rank-1 downdate
-            cholupdate_downdate(S_pred, diff_0, std::sqrt(std::abs(wc_0)));
+            // Rank-1 downdate — use safe version with fallback
+            bool ok = cholupdate_downdate_safe(S_pred, diff_0, std::sqrt(std::abs(wc_0)));
+            if (!ok) {
+                // Fallback: recompute S_pred from full covariance
+                StateMat P_full = StateMat::Zero();
+                for (int i = 0; i < SigmaPts::NSIG; ++i) {
+                    State d = X_pred.col(i) - x_pred_mean;
+                    for (int j2 = 0; j2 < NX; ++j2) {
+                        if (model_.isAngularState(j2)) {
+                            while (d(j2) > M_PI) d(j2) -= 2.0f * M_PI;
+                            while (d(j2) < -M_PI) d(j2) += 2.0f * M_PI;
+                        }
+                    }
+                    P_full += sigmas.Wc(i) * (d * d.transpose());
+                }
+                P_full += Q;
+                P_full = 0.5f * (P_full + P_full.transpose());
+                P_full += 1e-8f * StateMat::Identity();
+                Eigen::MatrixXf L_fb = filtermath::cholesky(P_full);
+                if (L_fb.size() > 0) {
+                    S_pred = L_fb;
+                }
+                // else keep current S_pred as best effort
+            }
         } else {
             // Rank-1 update
             cholupdate(S_pred, diff_0, std::sqrt(wc_0));
@@ -285,31 +302,22 @@ public:
         // Ensure positive definite
         P_yy = 0.5f * (P_yy + P_yy.transpose());
 
-        // Compute square root via Eigen LLT
-        Eigen::LLT<ObsMat> llt_Pyy(P_yy);
+        // Compute square root via accelerated Cholesky
         ObsMat S_yy;
-        if (llt_Pyy.info() == Eigen::Success) {
-            S_yy = llt_Pyy.matrixL();
+        Eigen::MatrixXf L_Pyy = filtermath::cholesky(P_yy);
+        if (L_Pyy.size() > 0) {
+            S_yy = L_Pyy;
         } else {
-            // Add jitter and retry
             P_yy += 1e-6f * ObsMat::Identity();
-            Eigen::LLT<ObsMat> llt_Pyy_jitter(P_yy);
-            if (llt_Pyy_jitter.info() == Eigen::Success) {
-                S_yy = llt_Pyy_jitter.matrixL();
+            L_Pyy = filtermath::cholesky(P_yy);
+            if (L_Pyy.size() > 0) {
+                S_yy = L_Pyy;
             } else {
-                // Fallback to LDLT
                 Eigen::LDLT<ObsMat> ldlt_Pyy(P_yy);
                 if (ldlt_Pyy.info() != Eigen::Success || !ldlt_Pyy.isPositive()) {
-                    // Last resort: use Cholesky of R (measurement noise defines correct scale)
-                    Eigen::LLT<ObsMat> llt_R_fallback(R);
-                    if (llt_R_fallback.info() == Eigen::Success) {
-                        S_yy = llt_R_fallback.matrixL();
-                    } else {
-                        // R itself is diagonal, use sqrt of diagonal
-                        S_yy = ObsMat::Zero();
-                        for (int i = 0; i < NY; ++i)
-                            S_yy(i,i) = std::sqrt(R(i,i));
-                    }
+                    S_yy = ObsMat::Zero();
+                    for (int i = 0; i < NY; ++i)
+                        S_yy(i,i) = std::sqrt(R(i,i));
                 } else {
                     ObsMat Pyy_ldlt = ldlt_Pyy.matrixL();
                     Eigen::VectorXf D_sqrt = ldlt_Pyy.vectorD().cwiseSqrt();
@@ -318,10 +326,17 @@ public:
             }
         }
 
-        // Check S_yy for numerical issues — use measurement noise scale
-        for (int i = 0; i < NY; ++i) {
-            if (!std::isfinite(S_yy(i,i)) || S_yy(i,i) < 1e-10f) {
-                S_yy(i,i) = std::sqrt(R(i,i));  // Scale-adaptive fallback
+        // Check S_yy for numerical issues — full NaN/Inf check + diagonal check
+        if (!S_yy.allFinite()) {
+            // Recompute from R as last resort
+            S_yy = ObsMat::Zero();
+            for (int i = 0; i < NY; ++i)
+                S_yy(i,i) = std::sqrt(R(i,i));
+        } else {
+            for (int i = 0; i < NY; ++i) {
+                if (S_yy(i,i) < 1e-10f) {
+                    S_yy(i,i) = std::sqrt(R(i,i));
+                }
             }
         }
 
@@ -396,29 +411,26 @@ public:
             // Add small regularization
             P_new += 1e-8f * StateMat::Identity();
 
-            // Take Cholesky factor using Eigen LLT
-            Eigen::LLT<StateMat> llt_Pnew(P_new);
+            // Take Cholesky factor using accelerated Cholesky with fallback
+            Eigen::MatrixXf L_new = filtermath::cholesky(P_new);
             StateMat S_new;
-            if (llt_Pnew.info() == Eigen::Success) {
-                S_new = llt_Pnew.matrixL();
+            if (L_new.size() > 0) {
+                S_new = L_new;
             } else {
-                // Even more regularization
                 P_new += 1e-6f * StateMat::Identity();
-                Eigen::LLT<StateMat> llt_Pnew_jitter(P_new);
-                if (llt_Pnew_jitter.info() == Eigen::Success) {
-                    S_new = llt_Pnew_jitter.matrixL();
+                L_new = filtermath::cholesky(P_new);
+                if (L_new.size() > 0) {
+                    S_new = L_new;
                 } else {
                     Eigen::LDLT<StateMat> ldlt(P_new);
                     if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
                         StateMat L = ldlt.matrixL();
-                        // Safe sqrt: clamp negative values to small positive
                         Eigen::VectorXf D_vec = ldlt.vectorD();
                         for (int j = 0; j < NX; ++j) {
                             D_vec(j) = std::sqrt(std::max(D_vec(j), 1e-10f));
                         }
                         S_new = L * D_vec.asDiagonal();
                     } else {
-                        // Last resort: keep current S with slight regularization
                         S_new = S_;
                         for (int i = 0; i < NX; ++i) {
                             if (S_new(i,i) < 1e-6f) S_new(i,i) = 1e-6f;

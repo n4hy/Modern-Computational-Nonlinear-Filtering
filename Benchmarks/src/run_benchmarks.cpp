@@ -4,7 +4,7 @@
 #include <random>
 #include <chrono>
 #include <Eigen/Dense>
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 #include "BenchmarkProblems.h"
 #include "BenchmarkRunner.h"
@@ -40,13 +40,13 @@ auto generate_trajectory(Model& model,
     auto Q = model.Q(0.0f);
     auto R = model.R(0.0f);
 
-    // Cholesky factors for noise generation using NEON-accelerated decomposition
-    Eigen::MatrixXf L_Q = optmath::neon::neon_cholesky(Q);
+    // Cholesky factors for noise generation using accelerated decomposition
+    Eigen::MatrixXf L_Q = filtermath::cholesky(Q);
     if (L_Q.size() == 0) {
         Eigen::LLT<typename Model::StateMat> llt_Q(Q);
         L_Q = llt_Q.matrixL();
     }
-    Eigen::MatrixXf L_R = optmath::neon::neon_cholesky(R);
+    Eigen::MatrixXf L_R = filtermath::cholesky(R);
     if (L_R.size() == 0) {
         Eigen::LLT<typename Model::ObsMat> llt_R(R);
         L_R = llt_R.matrixL();

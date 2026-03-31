@@ -6,7 +6,7 @@
 #include <iostream>
 #include <Eigen/Dense>
 #include "SRUKF.h"
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 namespace UKFCore {
 
@@ -46,13 +46,17 @@ public:
         SRUKFHistoryEntry<NX> entry;
         entry.x_filt = x0;
 
-        // Compute square root of P0 using NEON-accelerated Cholesky
-        Eigen::MatrixXf L0 = optmath::neon::neon_cholesky(P0);
+        // Compute square root of P0 using accelerated Cholesky
+        Eigen::MatrixXf L0 = filtermath::cholesky(P0);
         if (L0.size() == 0) {
             StateMat P_jitter = P0 + 1e-6f * StateMat::Identity();
-            L0 = optmath::neon::neon_cholesky(P_jitter);
+            L0 = filtermath::cholesky(P_jitter);
         }
-        entry.S_filt = L0;
+        if (L0.size() > 0) {
+            entry.S_filt = L0;
+        } else {
+            entry.S_filt = StateMat::Identity();
+        }
 
         history_.push_back(entry);
     }
@@ -74,8 +78,7 @@ public:
         // Update
         srukf_.update(t_k, y_k);
 
-        // NaN guard: if filter state/covariance is NaN, skip history recording
-        // to prevent corruption of smoother history
+        // NaN guard
         if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) {
             return;
         }
@@ -144,47 +147,40 @@ private:
 
             const State& x_s_jp1 = smoothed_states_[j+1];
 
-            // Compute P_pred_jp1 = S_pred_jp1 * S_pred_jp1^T using NEON GEMM
-            Eigen::MatrixXf P_pred_dyn = optmath::neon::neon_gemm(
+            // Compute P_pred_jp1 = S_pred * S_pred^T via GEMM
+            Eigen::MatrixXf P_pred_dyn = filtermath::gemm(
                 Eigen::MatrixXf(S_pred_jp1), Eigen::MatrixXf(S_pred_jp1.transpose()));
             StateMat P_pred_jp1 = P_pred_dyn;
 
-            // Smoothing Gain G_j = P_cross * P_pred_{j+1}^{-1} using NEON inverse
-            Eigen::MatrixXf P_pred_inv = optmath::neon::neon_inverse(P_pred_jp1);
-            StateMat G_j;
-            if (P_pred_inv.size() > 0) {
-                G_j = optmath::neon::neon_gemm(Eigen::MatrixXf(P_cross), P_pred_inv);
-            } else {
-                // Fallback to Eigen LDLT
-                Eigen::LDLT<StateMat> ldlt(P_pred_jp1);
-                G_j = P_cross * ldlt.solve(StateMat::Identity());
-            }
+            // Smoothing Gain via SPD solve
+            StateMat G_j = filtermath::kalman_gain(
+                Eigen::MatrixXf(P_cross), Eigen::MatrixXf(P_pred_jp1));
 
-            // State smoothing using NEON GEMM
+            // State smoothing
             State diff_x = x_s_jp1 - x_pred_jp1;
-            Eigen::VectorXf update_x = optmath::neon::neon_mat_vec_mul(
+            Eigen::VectorXf update_x = filtermath::mat_vec_mul(
                 Eigen::MatrixXf(G_j), Eigen::VectorXf(diff_x));
             smoothed_states_[j] = x_f_j + State(update_x);
 
-            // Covariance smoothing using NEON GEMM
-            Eigen::MatrixXf P_f_dyn = optmath::neon::neon_gemm(
+            // Covariance smoothing
+            Eigen::MatrixXf P_f_dyn = filtermath::gemm(
                 Eigen::MatrixXf(S_f_j), Eigen::MatrixXf(S_f_j.transpose()));
-            Eigen::MatrixXf P_s_jp1_dyn = optmath::neon::neon_gemm(
+            Eigen::MatrixXf P_s_jp1_dyn = filtermath::gemm(
                 Eigen::MatrixXf(smoothed_S_[j+1]), Eigen::MatrixXf(smoothed_S_[j+1].transpose()));
 
             StateMat diff_P = StateMat(P_s_jp1_dyn) - P_pred_jp1;
-            Eigen::MatrixXf term1 = optmath::neon::neon_gemm(Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_P));
-            Eigen::MatrixXf term2 = optmath::neon::neon_gemm(term1, Eigen::MatrixXf(G_j.transpose()));
+            Eigen::MatrixXf term1 = filtermath::gemm(Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_P));
+            Eigen::MatrixXf term2 = filtermath::gemm(term1, Eigen::MatrixXf(G_j.transpose()));
             StateMat P_s_j = StateMat(P_f_dyn) + StateMat(term2);
 
             // Symmetrize
             P_s_j = 0.5f * (P_s_j + P_s_j.transpose());
 
-            // Extract square root using NEON Cholesky with Eigen fallback
-            Eigen::MatrixXf L_s = optmath::neon::neon_cholesky(P_s_j);
+            // Extract square root using accelerated Cholesky with fallback
+            Eigen::MatrixXf L_s = filtermath::cholesky(P_s_j);
             if (L_s.size() == 0) {
                 P_s_j += 1e-6f * StateMat::Identity();
-                L_s = optmath::neon::neon_cholesky(P_s_j);
+                L_s = filtermath::cholesky(P_s_j);
             }
             if (L_s.size() == 0) {
                 // Ultimate fallback to Eigen LLT

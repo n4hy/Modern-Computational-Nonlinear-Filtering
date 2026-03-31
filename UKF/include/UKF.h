@@ -5,7 +5,7 @@
 #include <iostream>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 namespace UKFCore {
 
@@ -57,10 +57,9 @@ public:
             x_pred_mean += sigmas.Wm(i) * X_pred.col(i);
         }
 
-        // 4. Compute Predicted Covariance & Cross Covariance using NEON GEMM
+        // 4. Compute Predicted Covariance & Cross Covariance via GEMM
         StateMat Q = model_.Q(t_k);
 
-        // Build weighted diff matrices for batch outer product via GEMM
         Eigen::Matrix<float, NX, SigmaPts::NSIG> Dp_w, Dp, Dx_w;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
             State diff_x_pred = X_pred.col(i) - x_pred_mean;
@@ -68,8 +67,8 @@ public:
             Dp_w.col(i) = sigmas.Wc(i) * diff_x_pred;
             Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
-        StateMat P_pred = optmath::neon::neon_gemm(Dp_w, Dp.transpose());
-        StateMat P_cross = optmath::neon::neon_gemm(Dx_w, Dp.transpose());
+        StateMat P_pred = filtermath::gemm(Dp_w, Dp.transpose());
+        StateMat P_cross = filtermath::gemm(Dx_w, Dp.transpose());
 
         P_pred += Q;
 
@@ -104,7 +103,7 @@ public:
             y_hat += sigmas.Wm(i) * Y_pred.col(i);
         }
 
-        // 4. Compute Innovation Covariance S and Cross Covariance Pxy via NEON GEMM
+        // 4. Compute Innovation Covariance S and Cross Covariance Pxy via GEMM
         ObsMat R = model_.R(t_k);
 
         Eigen::Matrix<float, NY, SigmaPts::NSIG> Dy_w, Dy;
@@ -115,51 +114,30 @@ public:
              Dy_w.col(i) = sigmas.Wc(i) * diff_y;
              Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
         }
-        ObsMat S = optmath::neon::neon_gemm(Dy_w, Dy.transpose());
-        CrossMat Pxy = optmath::neon::neon_gemm(Dx_w, Dy.transpose());
+        ObsMat S = filtermath::gemm(Dy_w, Dy.transpose());
+        CrossMat Pxy = filtermath::gemm(Dx_w, Dy.transpose());
         S += R;
 
-        // 5. Kalman Gain: K = Pxy * S^{-1} using NEON-accelerated inverse
-        Eigen::MatrixXf S_inv = optmath::neon::neon_inverse(S);
-        Eigen::Matrix<float, NX, NY> K;
-        if (S_inv.size() > 0) {
-            K = optmath::neon::neon_gemm(Eigen::MatrixXf(Pxy), S_inv);
-        } else {
-            // Fallback to Eigen LDLT with validation
-            Eigen::LDLT<ObsMat> ldlt(S);
-            if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
-                K = Pxy * ldlt.solve(ObsMat::Identity());
-            } else {
-                // Add regularization and retry
-                ObsMat S_reg = S + 1e-6f * ObsMat::Identity();
-                Eigen::LDLT<ObsMat> ldlt_reg(S_reg);
-                if (ldlt_reg.info() == Eigen::Success) {
-                    K = Pxy * ldlt_reg.solve(ObsMat::Identity());
-                } else {
-                    // Last resort: use pseudoinverse via SVD
-                    Eigen::JacobiSVD<ObsMat> svd(S, Eigen::ComputeFullU | Eigen::ComputeFullV);
-                    K = Pxy * svd.solve(ObsMat::Identity());
-                }
-            }
-        }
+        // 5. Kalman Gain via SPD solve (avoids explicit inverse)
+        Eigen::Matrix<float, NX, NY> K = filtermath::kalman_gain(
+            Eigen::MatrixXf(Pxy), Eigen::MatrixXf(S));
 
         Observation y_diff = y_k - y_hat;
 
         // State update
         x_ = x_ + K * y_diff;
 
-        // Covariance update: P = P - K*S*K^T using NEON GEMM
-        Eigen::MatrixXf KS = optmath::neon::neon_gemm(K, S);
-        P_ = P_ - optmath::neon::neon_gemm(KS, K.transpose());
+        // Covariance update: P = P - K*S*K^T
+        Eigen::MatrixXf KS = filtermath::gemm(K, S);
+        P_ = P_ - filtermath::gemm(KS, K.transpose());
 
         // Symmetrize and ensure positive definiteness
         P_ = 0.5f * (P_ + P_.transpose());
 
         // Check for positive definiteness and regularize if needed
-        Eigen::SelfAdjointEigenSolver<StateMat> eig(P_, Eigen::EigenvaluesOnly);
-        float min_eig = eig.eigenvalues().minCoeff();
-        if (min_eig < 1e-8f) {
-            P_ += (1e-8f - min_eig) * StateMat::Identity();
+        Eigen::LLT<StateMat> llt_check(P_);
+        if (llt_check.info() != Eigen::Success) {
+            P_ += 1e-6f * StateMat::Identity();
         }
     }
 

@@ -16,8 +16,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     else()
         message(STATUS "LTO/IPO not supported: ${lto_error}")
     endif()
-    add_compile_definitions(EIGEN_NO_DEBUG EIGEN_FAST_MATH=1)
-    add_compile_options(-ffast-math -march=native)
+    add_compile_definitions(EIGEN_NO_DEBUG)
+    add_compile_options(-O3 -march=native)
 endif()
 
 # Helper function to enable LTO on non-CUDA targets

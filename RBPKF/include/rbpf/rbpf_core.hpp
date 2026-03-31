@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <iostream>
 #include <numbers>
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -108,7 +108,6 @@ public:
             conditional_model_.get_dynamics(x_nl_prev, t_k, bias, A, B, Q);
 
             LinearState total_bias = bias;
-            // Handle B*u if applicable
             if (B.cols() == u_k.rows() && B.rows() == Types::Nlin) {
                 total_bias += B * u_k;
             }
@@ -117,24 +116,23 @@ public:
 
             conditional_model_.get_observation(p.x_nl, t_k, offset, H, R);
 
-            // Likelihood calculation using NEON-accelerated operations
-            // y_pred = H * x + offset
-            Eigen::VectorXf Hx = optmath::neon::neon_mat_vec_mul(H, Eigen::VectorXf(p.kf.x));
+            // Likelihood calculation using accelerated operations
+            Eigen::VectorXf Hx = filtermath::mat_vec_mul(H, Eigen::VectorXf(p.kf.x));
             Observation y_pred = Hx + offset;
             Observation innovation = y_k - y_pred;
 
-            // S = H * P * H^T + R  using NEON GEMM
-            Eigen::MatrixXf HP = optmath::neon::neon_gemm(H, p.kf.P);
-            ObsCov S = optmath::neon::neon_gemm(HP, H.transpose());
+            // S = H * P * H^T + R
+            Eigen::MatrixXf HP = filtermath::gemm(H, p.kf.P);
+            ObsCov S = filtermath::gemm(HP, H.transpose());
             S += R;
 
             // Compute log determinant with singularity protection
             float det = S.determinant();
             float log_det;
-            if (det <= 1e-30f) {
+            if (!std::isfinite(det) || det <= 1e-30f) {
                 Eigen::LDLT<ObsCov> ldlt(S);
                 if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
-                    log_det = -1e10f;  // Particle will be downweighted
+                    log_det = -1e10f;
                 } else {
                     auto D = ldlt.vectorD();
                     log_det = 0.0f;
@@ -145,12 +143,12 @@ public:
                 log_det = std::log(det);
             }
 
-            Eigen::VectorXf S_solved = optmath::neon::neon_solve_spd(S, innovation);
+            // Mahalanobis distance via SPD solve
+            Eigen::VectorXf S_solved = filtermath::solve_spd(S, innovation);
             float mahalanobis;
             if (S_solved.size() > 0) {
                 mahalanobis = innovation.transpose() * S_solved;
             } else {
-                // Fallback to Eigen LDLT
                 mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
             }
             float log_lik = -0.5f * (mahalanobis + log_det + static_cast<float>(Types::Ny) * std::log(2.0f * std::numbers::pi_v<float>));
@@ -257,12 +255,30 @@ private:
     void normalize_weights() {
         float max_log_w = -std::numeric_limits<float>::infinity();
         for (const auto& p : particles_) {
-            if (p.log_weight > max_log_w) max_log_w = p.log_weight;
+            // FIX: check isfinite to prevent NaN/Inf corruption
+            if (std::isfinite(p.log_weight) && p.log_weight > max_log_w)
+                max_log_w = p.log_weight;
         }
+
+        // Handle degenerate case: all weights non-finite
+        if (!std::isfinite(max_log_w)) {
+            float uniform = -std::log(static_cast<float>(config_.num_particles));
+            for (auto& p : particles_) p.log_weight = uniform;
+            return;
+        }
+
         float sum_exp = 0.0f;
         for (const auto& p : particles_) {
-            sum_exp += std::exp(p.log_weight - max_log_w);
+            if (std::isfinite(p.log_weight))
+                sum_exp += std::exp(p.log_weight - max_log_w);
         }
+
+        if (sum_exp <= 0.0f) {
+            float uniform = -std::log(static_cast<float>(config_.num_particles));
+            for (auto& p : particles_) p.log_weight = uniform;
+            return;
+        }
+
         float log_sum = max_log_w + std::log(sum_exp);
         for (auto& p : particles_) {
             p.log_weight -= log_sum;
@@ -274,6 +290,8 @@ private:
         for (const auto& p : particles_) {
             sum_sq += std::exp(2.0f * p.log_weight);
         }
+        // FIX: guard against division by zero
+        if (sum_sq <= 0.0f) return static_cast<float>(config_.num_particles);
         return 1.0f / sum_sq;
     }
 

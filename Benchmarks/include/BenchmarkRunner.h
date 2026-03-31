@@ -11,7 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
-#include <optmath/neon_kernels.hpp>
+#include "FilterMath.h"
 
 namespace Benchmark {
 

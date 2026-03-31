@@ -38,6 +38,7 @@ target_link_libraries(aircraft_nav_simulation
     PRIVATE
     Eigen3::Eigen
         Threads::Threads
+    OptMathKernels
 )
 
 # Disable fast-math and Eigen optimizations for numerical stability in Kalman filters
@@ -57,6 +58,7 @@ target_link_libraries(monte_carlo_analysis
     PRIVATE
     Eigen3::Eigen
         Threads::Threads
+    OptMathKernels
 )
 
 # Disable fast-math and Eigen optimizations for numerical stability in Kalman filters
@@ -111,6 +113,7 @@ target_link_libraries(test_convergence
         GTest::gtest
     GTest::gtest_main
     Threads::Threads
+    OptMathKernels
 )
 
 add_test(NAME ConvergenceTest COMMAND test_convergence)

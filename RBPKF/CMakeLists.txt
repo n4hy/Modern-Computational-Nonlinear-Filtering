@@ -8,6 +8,7 @@ add_library(rbpf_core
 target_include_directories(rbpf_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/Common/include
 )
 
 target_compile_features(rbpf_core PUBLIC cxx_std_20)
