@@ -217,6 +217,52 @@ Realistic spacecraft reentry tracking with altitude-dependent gravity (gravitati
 | SRUKF (Drag Ball, 4D) | 0.354 | 0.165 | 53% |
 | PKF (Lorenz-63, 3D) | 0.802 | 0.600 | 25% |
 
+### v3.0.0 Before/After Comparison
+
+Comparison between v2.8.0 (commit `12b8015`, direct NEON calls, `-ffast-math`) and v3.0.0 (commit `2d87c48`, FilterMath SVE2/NEON dispatch, bug fixes). Same hardware, same seeds, same trajectories.
+
+#### Efficiency — Total Benchmark Time (ms)
+
+| Filter + Problem | v2.8.0 | v3.0.0 | Change |
+|---|---:|---:|---:|
+| UKF — Coupled Osc 10D | 135.1 | **109.9** | **-18.7%** |
+| SRUKF — Coupled Osc 10D | 89.3 | 90.6 | +1.4% |
+| UKF+Smoother — Coupled Osc 10D | 574.9 | 739.1 | +28.6%† |
+| SRUKF+Smoother — Coupled Osc 10D | 821.7 | 974.7 | +18.6%† |
+| SRUKF — Van der Pol 2D | 0.94 | 1.17 | +0.23ms‡ |
+| SRUKF — Bearing-Only 4D | 0.30 | 0.36 | +0.06ms‡ |
+| SRUKF — Reentry 6D | 1.22 | 1.30 | +0.08ms‡ |
+
+> † Smoother slowdown from replacing `neon_inverse()` with numerically stable `solve_spd()` (SPD triangular solve). Correctness over speed.
+>
+> ‡ Sub-millisecond absolute differences; dominated by measurement noise.
+>
+> **Key win**: UKF 10D **18.7% faster** — SVE2 cache-blocked GEMM (tuned for A720 12MB L3) paying off on the largest matrix operations.
+
+#### Accuracy — RMSE (identical seeds)
+
+| Filter + Problem | v2.8.0 | v3.0.0 |
+|---|---:|---:|
+| UKF — Coupled Osc 10D | 1.4566 | 1.4567 |
+| SRUKF — Coupled Osc 10D | 1.4566 | 1.4567 |
+| UKF — Van der Pol 2D | 0.4681 | 0.4681 |
+| SRUKF — Bearing-Only 4D | 43.151 | 43.151 |
+| SRUKF — Reentry 6D | 369.21 | 369.18 |
+
+Accuracy preserved to floating-point precision across all problems. NEES consistency unchanged (all pass chi-squared bounds).
+
+#### Robustness — Bug Fixes
+
+| Bug Fixed | Before (silent failure mode) | After |
+|---|---|---|
+| Global `-ffast-math` | `isfinite()` guards compiled out — NaN propagates undetected | NaN guards work correctly |
+| Unsafe `cholupdate_downdate` | Covariance silently corrupted when downdate magnitude too large | Safe version + full-covariance fallback |
+| SRUKF S_yy NaN check | Only diagonal checked — off-diagonal NaN/Inf missed | `allFinite()` on entire matrix |
+| RBPKF weight NaN | One NaN particle corrupts all weights | `isfinite()` guard + uniform fallback |
+| RBPKF ESS div-by-zero | Returns Inf, breaks resampling threshold | Returns N (forces resampling) |
+| RBPKF resampling bias | O(N) float rounding — last particles underselected | Kahan compensated summation |
+| Cross-platform build | Direct `optmath::neon::*` — fails on x86 | `#if FILTERMATH_ARM64` + Eigen fallback |
+
 ---
 
 ## Numerical Stability Guide
