@@ -15,8 +15,8 @@
 
 ### Phase 2 (Mar 2026): Numerical Stability & Error Handling
 - Fixed innovation gating, Eigen expression template aliasing, Monte Carlo convergence
-- Disabled `-ffast-math` for AircraftNav targets
-- GPS recovery detection for post-jamming reacquisition
+- Disabled `-ffast-math` for numerically sensitive targets
+- Measurement outage recovery detection
 
 ### Phase 3 (Mar 31, 2026): FilterMath Dispatch & Full Optimization
 
@@ -55,7 +55,7 @@
 | Reentry (6D) | UKF | 369.0 | 4.99 | 95.9% | 0 |
 | Reentry (6D) | SRUKF | 369.2 | 4.99 | 95.6% | 0 |
 
-All 12 test executables pass (EKF, UKF, SRUKF, PKF×2, RBPF×2, Benchmarks, AircraftNav×4).
+All 8 test executables pass (EKF, UKF, SRUKF, PKF×2, RBPF×2, Benchmarks).
 
 ---
 

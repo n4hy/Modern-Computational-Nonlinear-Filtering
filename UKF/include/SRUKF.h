@@ -372,8 +372,7 @@ public:
         // 7. State Update with innovation gating
         Observation innovation = y_k - y_hat;
 
-        // Gate the innovation to prevent catastrophic updates
-        // Use larger threshold to allow GPS corrections while protecting against bad Iridium
+        // Gate the innovation to prevent catastrophic updates from outliers
         Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
         float mahal_dist_sq = temp_innov.squaredNorm();
         float gate_threshold = 25.0f;  // Chi-squared threshold (larger to allow GPS)
