@@ -37,7 +37,6 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 - **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
 - **Fixed-Lag Smoothers**: Rauch-Tung-Striebel (RTS) backward pass and ancestry-based smoothing
-- **Iridium Satellite Tracking**: UKF-based AOA/Doppler tracking for Iridium-Next satellites using two-antenna coherent receivers
 - **Comprehensive Benchmarks**: 4 challenging test problems with full metrics (10D coupled oscillators, Van der Pol, bearing-only tracking, reentry vehicle)
 - **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 
@@ -99,67 +98,6 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 - **Advantages**: Reduced variance vs standard particle filter
 - **Best For**: Systems with conditionally linear subspace (e.g., CTRV models)
 - **Location**: `RBPKF/`
-
-### 6. Iridium Satellite Tracking (UKF AOA/Doppler)
-
-**Two-antenna coherent receiver satellite tracking**
-
-- **Method**: UKF with angle-of-arrival and Doppler measurements from Iridium-Next satellites
-- **Measurements**:
-  - Azimuth/Elevation from two-antenna phase difference
-  - Doppler shift from carrier frequency offset (±35 kHz max)
-- **Features**:
-  - SGP4 simplified orbital propagator for TLE-based predictions
-  - WGS84 geodetic coordinate transformations
-  - Multi-satellite tracking for improved GDOP
-  - Iridium burst demodulator support (8.28ms TDMA bursts)
-  - Configurable Doppler accuracy modes (coarse/fine/precise: 100/10/1 Hz)
-- **Best For**: LEO satellite tracking, geolocation applications
-- **Location**: `Iridium/`, `include/optmath/`
-
-### 7. Aircraft Navigation with GPS/INS/Iridium (SRUKF)
-
-**Anti-jamming navigation with Iridium backup**
-
-- **Method**: 15-state strapdown INS mechanization with SRUKF
-- **State Vector** (15 states):
-  - Position: lat, lon, alt [rad, rad, m]
-  - Velocity: vN, vE, vD [m/s] (NED frame)
-  - Attitude: roll, pitch, yaw [rad]
-  - Gyro bias: bg_x, bg_y, bg_z [rad/s]
-  - Accel bias: ba_x, ba_y, ba_z [m/s²]
-- **Measurement Sources**:
-  - GPS: Position + velocity (6 observations) when available
-  - Iridium: AOA + Doppler (3 observations per satellite) for recovery
-  - IMU: Gyro + accelerometer for strapdown propagation
-- **Features**:
-  - Dryden turbulence model (MIL-F-8785C) for realistic flight dynamics
-  - GPS jamming detection and automatic mode switching
-  - IMU flywheel during GPS outage (INS-only propagation)
-  - Iridium-based recovery after jamming ends
-  - Monte Carlo analysis framework (1000+ trials)
-- **Monte Carlo Results** (1000 trials):
-
-| Metric | Value |
-|--------|-------|
-| Convergence Rate | **100%** |
-| GPS Phase RMSE | 4.29 m |
-| Max Error (30s outage) | ~1.8 km |
-| Recovery Time | 0.1 s to <500m |
-| Mean Final Error | 10.5 m |
-| Median Final Error | 11.4 m |
-| 95th Percentile Error | 15.3 m |
-| 99th Percentile Error | 16.6 m |
-| Max Final Error | 23.6 m |
-| Divergence Rate | **0%** |
-
-- **Performance Summary**:
-  - GPS/INS phase: 4.29m RMSE
-  - 30s GPS outage: ~1.8km max error (bounded INS drift)
-  - Recovery: Immediate GPS reacquisition with filter reinitialization
-  - **100% of trials converge** with mean final error of 10.5m
-- **Best For**: Anti-jamming navigation, GPS-denied environments
-- **Location**: `AircraftNav/`
 
 ---
 
@@ -352,11 +290,11 @@ for (int i = 0; i < NSIG; ++i) {
 2. **Compiler flags**: `EIGEN_NO_DEBUG` and `-ffast-math` caused numerical instability in edge cases
 
 **Solution Implemented**:
-1. GPS recovery detection in `AircraftNavSRUKF::updateGPS()`: When GPS returns after outage with position error >500m, the filter reinitializes around GPS position instead of trying to correct with gated updates
-2. Disabled `-ffast-math` and `EIGEN_NO_DEBUG` for AircraftNav targets to ensure numerical stability
+1. Measurement outage recovery: When measurements return after outage with large position error, reinitialize filter around measurements instead of trying to correct with gated updates
+2. Disabled `-ffast-math` and `EIGEN_NO_DEBUG` for numerically sensitive targets
 3. All Cholesky operations now route through FilterMath dispatch (NEON-accelerated with Eigen fallback)
 
-**Result**: **100% convergence** across 1000 Monte Carlo trials with median final error of 6.1m.
+**Result**: **100% convergence** across Monte Carlo trials.
 
 ### Issue #6: Global `-ffast-math` Breaks Filter Stability
 
@@ -365,7 +303,7 @@ for (int i = 0; i < NSIG; ++i) {
 - Cholesky decomposition precision loss from altered floating-point associativity
 - Denormal flushing that corrupted small covariance values
 
-**Solution**: Removed global `-ffast-math` and `EIGEN_FAST_MATH=1` from root `CMakeLists.txt`. The NEON/SVE2 intrinsics in OptMathKernels already provide hardware-accelerated fast paths where needed. AircraftNav and Benchmarks targets explicitly set `-fno-fast-math` and `EIGEN_FAST_MATH=0`.
+**Solution**: Removed global `-ffast-math` and `EIGEN_FAST_MATH=1` from root `CMakeLists.txt`. The NEON/SVE2 intrinsics in OptMathKernels already provide hardware-accelerated fast paths where needed. Numerically sensitive targets should explicitly set `-fno-fast-math` and `EIGEN_FAST_MATH=0`.
 
 ### Issue #7: Unsafe Cholesky Downdate in SRUKF Prediction
 
@@ -488,15 +426,6 @@ make -j$(nproc)
 | `RBPKF/test_rbpf_basic` | RBPF unit tests |
 | `RBPKF/example_rbpf_ctrv` | RBPF on CTRV vehicle model |
 | `Benchmarks/run_benchmarks` | Full benchmark suite (4 problems, 4 filters) |
-| `Iridium/iridium_aoa_tracking` | Basic Iridium AOA tracking simulation |
-| `Iridium/compare_aoa_doppler` | AOA vs AOA+Doppler comparison tool |
-| `Iridium/iridium_tracking_complete` | Complete multi-satellite tracking demo |
-| `AircraftNav/aircraft_nav_simulation` | GPS/INS/Iridium aircraft navigation simulation |
-| `AircraftNav/monte_carlo_analysis` | Monte Carlo analysis (1000+ trials) |
-| `AircraftNav/test_aircraft_dynamics` | Aircraft dynamics + turbulence unit tests (GTest) |
-| `AircraftNav/test_ins_error` | INS error model + antenna model unit tests (GTest) |
-| `AircraftNav/test_convergence` | Filter convergence + mode switching tests (GTest) |
-| `AircraftNav/test_monte_carlo` | Monte Carlo framework unit tests (GTest) |
 
 ---
 
@@ -604,46 +533,6 @@ public:
 };
 ```
 
-### Iridium Satellite Tracking
-
-```cpp
-#include <optmath/ukf_aoa_tracking.hpp>
-#include <optmath/ukf_aoa_doppler_tracking.hpp>
-
-using namespace optmath::tracking;
-
-int main() {
-    // Configure simulation
-    SimulationConfig cfg = SimulationConfig::default_config();
-    cfg.duration_sec = 600.0;
-    cfg.antenna.baseline = 0.1;        // 10cm antenna spacing
-    cfg.antenna.phase_noise_std = 0.1; // Phase noise [rad]
-
-    // Set observer location (Boulder, CO)
-    cfg.observer.latitude = 40.015 * constants::DEG2RAD;
-    cfg.observer.longitude = -105.27 * constants::DEG2RAD;
-    cfg.observer.altitude = 1655.0;
-
-    // Create UKF tracker with AOA + Doppler
-    UKF_AOADopplerTracker tracker;
-    DopplerConfig doppler_cfg = DopplerConfig::default_iridium(
-        DopplerConfig::AccuracyMode::FINE  // 10 Hz accuracy
-    );
-
-    // Process measurements from demodulated bursts
-    for (const auto& burst : demodulated_bursts) {
-        AOADopplerMeasurement meas;
-        meas.azimuth = burst.azimuth;
-        meas.elevation = burst.elevation;
-        meas.doppler = burst.doppler_hz;
-        meas.timestamp = burst.timestamp_jd;
-
-        tracker.update(meas);
-        auto state = tracker.get_state();
-    }
-}
-```
-
 ---
 
 ## Architecture
@@ -707,37 +596,6 @@ Modern-Computational-Nonlinear-Filtering/
 │   └── tests/
 │       └── test_rbpf_basic.cpp
 │
-├── Iridium/                    # Iridium Satellite Tracking
-│   ├── CMakeLists.txt
-│   ├── iridium_aoa_tracking.cpp       # Basic AOA tracking
-│   ├── compare_aoa_doppler.cpp        # AOA vs AOA+Doppler comparison
-│   └── iridium_tracking_complete.cpp  # Full tracking demo
-│
-├── AircraftNav/                # Aircraft Navigation Simulation
-│   ├── include/
-│   │   ├── AircraftNavSimulation.h    # Main simulation orchestrator
-│   │   ├── AircraftNavSRUKF.h         # Mode-switching SRUKF wrapper
-│   │   ├── AircraftNavStateSpaceModel.h  # 15-state strapdown INS
-│   │   ├── AircraftDynamicsModel.h    # 6-DOF aircraft dynamics
-│   │   ├── AircraftAntennaModel.h     # Dual-antenna Iridium model
-│   │   ├── DrydenTurbulenceModel.h    # MIL-F-8785C turbulence
-│   │   ├── INSErrorModel.h            # Gyro/accel bias drift
-│   │   └── MonteCarloRunner.h         # Monte Carlo framework
-│   ├── src/
-│   │   ├── aircraft_nav_simulation.cpp    # Main simulation
-│   │   └── monte_carlo_analysis.cpp       # MC analysis tool
-│   └── tests/
-│       ├── test_aircraft_dynamics.cpp
-│       ├── test_ins_error.cpp
-│       ├── test_convergence.cpp
-│       └── test_monte_carlo.cpp
-│
-├── include/optmath/            # Iridium Tracking Headers
-│   ├── ukf_aoa_tracking.hpp           # Base UKF AOA tracker
-│   ├── ukf_aoa_doppler_tracking.hpp   # AOA + Doppler tracker
-│   ├── multi_satellite_tracker.hpp    # Multi-satellite tracking
-│   └── iridium_burst_demodulator.hpp  # Burst demodulation
-│
 ├── Benchmarks/                 # Comprehensive test suite
 │   ├── include/
 │   │   ├── BenchmarkProblems.h # 4 test problems
@@ -767,7 +625,6 @@ Contributions welcome. Areas of interest:
 3. **Adaptive Methods**: Automatic parameter tuning (adaptive Q/R)
 4. **Multi-Sensor Fusion**: Asynchronous measurement handling
 5. **Extended Benchmarks**: Monte Carlo consistency analysis, filter divergence studies
-6. **Satellite Tracking Enhancements**: Additional constellations (Starlink, OneWeb), improved propagators (SGP4/SDP4)
 
 Please:
 - Follow C++20 style guidelines

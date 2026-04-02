@@ -15,3 +15,4 @@ eigen_install/
 _deps/
 nlfvenv/
 .cache/
+install/
