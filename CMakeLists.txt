@@ -1,9 +1,36 @@
 cmake_minimum_required(VERSION 3.14)
-project(NonlinearFiltering)
+project(NonlinearFiltering LANGUAGES CXX)
 
 # Set C++ Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# --- CUDA Detection and Configuration ---
+include(CheckLanguage)
+check_language(CUDA)
+
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+    # Detect CUDA architectures
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        # Support Turing (75), Ampere (80,86), Ada Lovelace (89), Hopper (90), Blackwell (100)
+        set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90 100)
+    endif()
+
+    message(STATUS "CUDA enabled - Compiler: ${CMAKE_CUDA_COMPILER}")
+    message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+
+    # Define CUDA macro for FilterMath
+    add_compile_definitions(OPTMATH_USE_CUDA)
+
+    set(NLF_HAS_CUDA TRUE)
+else()
+    message(STATUS "CUDA not found - GPU acceleration disabled")
+    set(NLF_HAS_CUDA FALSE)
+endif()
 
 # --- Compiler Optimization Flags for Release builds ---
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -64,6 +91,19 @@ endif()
 
 # --- Dependency: OptimizedKernelsForRaspberryPi5 ---
 message(STATUS "Using local OptimizedKernelsForRaspberryPi5_NvidiaCUDA...")
+
+# Configure OptimizedKernels options before FetchContent
+set(ENABLE_NEON ON CACHE BOOL "Enable ARM NEON optimizations" FORCE)
+set(ENABLE_SVE2 ON CACHE BOOL "Enable ARM SVE2 optimizations" FORCE)
+set(ENABLE_VULKAN ON CACHE BOOL "Enable Vulkan GPU compute" FORCE)
+
+if(NLF_HAS_CUDA)
+    set(ENABLE_CUDA ON CACHE BOOL "Enable NVIDIA CUDA support" FORCE)
+    set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "CUDA architectures" FORCE)
+else()
+    set(ENABLE_CUDA OFF CACHE BOOL "Enable NVIDIA CUDA support" FORCE)
+endif()
+
 FetchContent_Declare(
     OptimizedKernels
     GIT_REPOSITORY $ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
