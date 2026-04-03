@@ -16,8 +16,9 @@ if(CMAKE_CUDA_COMPILER)
 
     # Detect CUDA architectures
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        # Support Turing (75), Ampere (80,86), Ada Lovelace (89), Hopper (90), Blackwell (100)
-        set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90 100)
+        # Support Turing (75), Ampere (80,86), Ada Lovelace (89), Hopper (90)
+        # Note: Blackwell (100) requires CUDA 13+ - see DEVELOPMENT_NOTES.md
+        set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90)
     endif()
 
     message(STATUS "CUDA enabled - Compiler: ${CMAKE_CUDA_COMPILER}")
