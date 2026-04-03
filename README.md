@@ -7,7 +7,7 @@
 [![C++20](https://img.shields.io/badge/C++-20-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/Platform-ARM%20aarch64%20%2B%20x86__64-red.svg)](https://www.raspberrypi.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Optimization](https://img.shields.io/badge/Optimization-NEON%20%2B%20SVE2%20%2B%20Vulkan-orange.svg)](https://developer.arm.com/Architectures/Neon)
+[![Optimization](https://img.shields.io/badge/Optimization-NEON%20%2B%20SVE2%20%2B%20Vulkan%20%2B%20CUDA*-orange.svg)](https://developer.arm.com/Architectures/Neon)
 
 </div>
 
@@ -31,14 +31,24 @@
 
 ## Overview
 
-This repository provides nonlinear filtering implementations optimized for **ARM aarch64** (Raspberry Pi 5, Orange Pi 5/6) and **x86_64** using **ARM NEON/SVE2 intrinsics** and **Vulkan compute shaders**. All implementations use single-precision floating point (`float`) for maximum SIMD vectorization efficiency.
+This repository provides nonlinear filtering implementations optimized for **ARM aarch64** (Raspberry Pi 5, Orange Pi 5/6) and **x86_64** using **ARM NEON/SVE2 intrinsics**, **Vulkan compute shaders**, and **NVIDIA CUDA**. All implementations use single-precision floating point (`float`) for maximum SIMD vectorization efficiency.
 
 ### What's Included
 
 - **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
 - **Fixed-Lag Smoothers**: Rauch-Tung-Striebel (RTS) backward pass and ancestry-based smoothing
 - **Comprehensive Benchmarks**: 4 challenging test problems with full metrics (10D coupled oscillators, Van der Pol, bearing-only tracking, reentry vehicle)
-- **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+- **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations + CUDA GPU acceleration via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+
+### Platform Support
+
+| Platform | Acceleration | Status |
+|----------|--------------|--------|
+| ARM aarch64 (Pi 5, Orange Pi) | NEON + SVE2 + Vulkan | **Full Support** |
+| x86_64 Linux | Vulkan + OpenMP + Eigen | **Full Support** |
+| NVIDIA GPU (CUDA 13+) | cuBLAS GEMM + GPU Particle Filter | **Pending** (see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)) |
+
+> **Note**: CUDA support is implemented but disabled until Ubuntu provides CUDA 13+ in official repositories. CUDA 12.0 has incompatibilities with Blackwell architecture (SM 100) and certain compiler flags. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
 
 ---
 
@@ -103,7 +113,9 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 ## Benchmark Results
 
-Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. All benchmarks run on ARM aarch64 with SVE2/NEON acceleration via the FilterMath dispatch layer.
+Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. Benchmarks run with FilterMath dispatch layer (SVE2/NEON on ARM, Eigen on x86_64).
+
+> **Latest run**: April 3, 2026 on Ubuntu 24.04 x86_64 (Vulkan + OpenMP + Eigen)
 
 ### Coupled Oscillators (10D State, 5D Observation)
 
@@ -341,15 +353,25 @@ Before deploying any Kalman filter, verify:
 ### Hardware Optimization
 
 - **FilterMath Dispatch Layer** (`Common/include/FilterMath.h`): Unified API that automatically selects the best backend at runtime:
-  - **GEMM**: SVE2 cache-blocked → NEON blocked → Eigen (SVE2 tuned for A720's 12MB L3)
+  - **GEMM**: CUDA cuBLAS → SVE2 cache-blocked → NEON blocked → Eigen
   - **Cholesky / Inverse / Solve**: NEON accelerated → Eigen LDLT fallback
   - **Kalman Gain**: SPD solve (avoids explicit matrix inverse for O(n²) vs O(n³))
-  - **Non-ARM platforms**: All paths fall through to pure Eigen — full cross-platform support
+  - **Non-ARM platforms**: Falls through to Eigen (or CUDA if available)
+- **FilterMathGPU** (`Common/include/FilterMathGPU.h`): GPU-specific acceleration:
+  - **GPUBufferPool**: Reusable device allocations to minimize PCIe overhead
+  - **GPUSigmaContext\<NX\>**: GPU-accelerated sigma point operations for UKF/SRUKF
+- **Particle Filter GPU** (`PKF/include/particle_filter_gpu.hpp`): CUDA particle filter:
+  - **GPUParticleContext\<NX\>**: Manages particles/weights on GPU
+  - GPU log-sum-exp weight normalization
+  - GPU systematic/stratified resampling
+  - Auto-enable for N >= 256 particles
 - **ARM NEON Dense Linear Algebra**: Cholesky, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 - **ARM SVE2**: Cache-blocked GEMM with FCMA and I8MM on Cortex-A720+ (Orange Pi 5/6)
-- **Vulkan Compute**: Particle filter noise addition parallelized on GPU (Mali-G720, VideoCore VII)
-- **Graceful Fallback**: Accelerated → jitter + retry → Eigen LLT/LDLT for numerical robustness
+- **Vulkan Compute**: Particle filter noise addition parallelized on GPU (Mali-G720, VideoCore VII, discrete GPUs)
+- **Graceful Fallback**: CUDA → SVE2 → NEON → Eigen with jitter + retry for numerical robustness
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
+
+> **CUDA Status**: Code ready but disabled until CUDA 13+ available (see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md))
 
 ### Software Quality
 
@@ -373,6 +395,7 @@ Before deploying any Kalman filter, verify:
 
 - **ARM NEON/SVE2**: Automatic on ARM aarch64 platforms
 - **Vulkan SDK**: For GPU-accelerated particle filter (1.3+)
+- **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM and particle filter (13+ required, 12.x has incompatibilities)
 - **OpenMP**: For parallel particle filter
 - **Python 3 + Matplotlib**: For visualization scripts
 
@@ -399,8 +422,12 @@ cd Modern-Computational-Nonlinear-Filtering
 # Create build directory
 mkdir -p build && cd build
 
-# Configure and build
+# Configure and build (CUDA auto-detected)
 cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# Or explicitly disable CUDA (required for Ubuntu 24.04 with CUDA 12.x)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make -j$(nproc)
 
 # Run tests
@@ -412,7 +439,21 @@ make -j$(nproc)
 
 # Run benchmarks
 ./Benchmarks/run_benchmarks
+
+# Run OptimizedKernels tests (Vulkan, radar, platform)
+./_deps/optimizedkernels-build/tests/test_vulkan_vector
+./_deps/optimizedkernels-build/tests/test_vulkan_matrix
+./_deps/optimizedkernels-build/tests/test_radar_caf
+./_deps/optimizedkernels-build/tests/test_radar_cfar
 ```
+
+### Build Options
+
+| Option | Description |
+|--------|-------------|
+| `-DCMAKE_CUDA_COMPILER=""` | Disable CUDA (use for CUDA 12.x compatibility issues) |
+| `-DCMAKE_BUILD_TYPE=Release` | Optimized build with `-O3 -march=native` |
+| `-DCMAKE_BUILD_TYPE=Debug` | Debug build with symbols |
 
 ### Build Outputs
 
@@ -541,7 +582,8 @@ public:
 Modern-Computational-Nonlinear-Filtering/
 ├── Common/                     # Shared interfaces
 │   └── include/
-│       ├── FilterMath.h        # SVE2/NEON/Eigen dispatch layer
+│       ├── FilterMath.h        # CUDA/SVE2/NEON/Eigen dispatch layer
+│       ├── FilterMathGPU.h     # GPU buffer management & sigma point context
 │       ├── StateSpaceModel.h   # Base model for UKF/SRUKF
 │       ├── SystemModel.h       # Base model for EKF
 │       └── FileUtils.h         # File I/O utilities
@@ -571,6 +613,7 @@ Modern-Computational-Nonlinear-Filtering/
 ├── PKF/                        # Particle Filter
 │   ├── include/
 │   │   ├── particle_filter.hpp
+│   │   ├── particle_filter_gpu.hpp  # CUDA GPU particle context
 │   │   ├── particle_fixed_lag.hpp
 │   │   ├── resampling.hpp
 │   │   ├── state_space_model.hpp
@@ -621,15 +664,17 @@ Modern-Computational-Nonlinear-Filtering/
 Contributions welcome. Areas of interest:
 
 1. **Additional Test Problems**: More challenging benchmark scenarios
-2. **GPU Optimization**: Vulkan/CUDA shaders for UKF/SRUKF sigma point propagation
+2. **GPU Optimization**: CUDA sigma point propagation, cuSOLVER integration (requires CUDA 13+)
 3. **Adaptive Methods**: Automatic parameter tuning (adaptive Q/R)
 4. **Multi-Sensor Fusion**: Asynchronous measurement handling
 5. **Extended Benchmarks**: Monte Carlo consistency analysis, filter divergence studies
+6. **UD Factorization**: Alternative to Cholesky for extreme ill-conditioning
 
 Please:
 - Follow C++20 style guidelines
 - Add tests for new features
 - Document numerical considerations
+- See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for current restrictions
 
 ---
 
@@ -663,6 +708,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 3.0.0
-**Last Updated**: March 2026
-**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Eigen fallback)
+**Version**: 3.1.0
+**Last Updated**: April 2026
+**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Vulkan + Eigen) + NVIDIA GPU (CUDA 13+ pending)

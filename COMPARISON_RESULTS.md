@@ -2,9 +2,8 @@
 
 **Final Results After Bug Fixes and Cleanup**
 
-> **Note**: SRUKF currently validated for low-to-medium dimensional problems (NX ≤ 5).
-> High-dimensional problems (10D Coupled Oscillators) require specialized tuning (Option B - future work).
-> See SRUKF_STATUS.md for detailed implementation plan.
+> **Status (v3.1.0, April 2026)**: All benchmark problems now working, including 10D Coupled Oscillators.
+> See [SRUKF_STATUS.md](SRUKF_STATUS.md) for current implementation status and [FINAL_AUDIT_SUMMARY.md](FINAL_AUDIT_SUMMARY.md) for complete audit history.
 
 ## Test Problems Executed
 
@@ -291,10 +290,11 @@ All tests completed successfully. The test framework proved robust even during d
 
 ---
 
-**Test Date**: February 2026
-**Platform**: x86_64 (simulated NEON), Ubuntu Linux
-**Compiler**: GCC 10+ with C++20
-**Status**: ✅ **SRUKF Production Ready** (with documented tuning requirements)
+**Original Test Date**: February 2026
+**Updated**: April 2026
+**Platform**: x86_64 (Vulkan + OpenMP + Eigen), ARM aarch64 (NEON + SVE2 + Vulkan)
+**Compiler**: GCC 13+ with C++20
+**Status**: ✅ **SRUKF Production Ready** - All 4 benchmark problems passing (see [SRUKF_STATUS.md](SRUKF_STATUS.md))
 
 ---
 

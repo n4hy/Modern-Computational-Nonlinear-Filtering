@@ -111,10 +111,12 @@ The benchmark suite tests filtering methods on increasingly difficult problems w
 ```bash
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
+# Or disable CUDA for Ubuntu 24.04 (CUDA 12.x compatibility issues)
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make run_benchmarks
 ```
 
-> **Note**: The benchmark target is compiled with `-fno-fast-math` and `EIGEN_FAST_MATH=0` to ensure numerically stable filter results. All linear algebra is routed through `FilterMath.h` which dispatches to SVE2 GEMM > NEON > Eigen at runtime.
+> **Note**: The benchmark target is compiled with `-fno-fast-math` and `EIGEN_FAST_MATH=0` to ensure numerically stable filter results. All linear algebra is routed through `FilterMath.h` which dispatches to CUDA cuBLAS > SVE2 GEMM > NEON > Eigen at runtime (CUDA pending 13+, see DEVELOPMENT_NOTES.md).
 
 ### Run Benchmarks
 ```bash

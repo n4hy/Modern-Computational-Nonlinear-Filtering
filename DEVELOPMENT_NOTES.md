@@ -38,3 +38,73 @@ When CUDA 13+ is available, the following features will be activated:
 - cuBLAS GEMM for matrices >= 32x32
 - GPU particle filter context
 - Runtime CUDA enable/disable via `filtermath::config::set_cuda_enabled()`
+
+---
+
+## Build Verification (April 3, 2026)
+
+### Ubuntu 24.04.4 LTS (x86_64)
+
+**System Info**:
+- OS: Ubuntu 24.04.4 LTS (Noble Numbat)
+- Kernel: 6.17.0-20-generic
+- CUDA: 12.0.140 (disabled due to incompatibilities)
+- Vulkan: 1.3.275
+- Compiler: GCC 13.3.0
+
+**Build Command**:
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
+make -j$(nproc)
+```
+
+**Test Results** (all passing):
+| Test | Status |
+|------|--------|
+| EKF | ✓ |
+| UKF | ✓ |
+| SRUKF | ✓ |
+| PKF | ✓ |
+| RBPKF | ✓ |
+| OptimizedKernels (Vulkan) | ✓ 5/5 |
+| OptimizedKernels (Radar) | ✓ 19/19 |
+| OptimizedKernels (Platform) | ✓ 9/9 |
+| OptimizedKernels (NEON) | Skipped (x86_64) |
+
+---
+
+## Future Work
+
+### When CUDA 13+ Available
+
+1. Re-enable CUDA in CMakeLists.txt (remove `-DCMAKE_CUDA_COMPILER=""`)
+2. Add SM 100 (Blackwell) back to architecture list
+3. Verify `-expt-relaxed-constexpr` flag compatibility
+4. Test cuBLAS GEMM acceleration
+5. Test GPU particle filter with N >= 256 particles
+6. Benchmark CUDA vs Vulkan particle filter performance
+
+### cuSOLVER Integration (OptimizedKernels)
+
+When OptimizedKernels adds cuSOLVER support:
+- GPU Cholesky decomposition
+- GPU triangular solve
+- GPU matrix inverse
+
+This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
+
+---
+
+## Changelog
+
+### v3.1.0 (April 2026)
+- Added CUDA GPU acceleration (FilterMath.h, FilterMathGPU.h, particle_filter_gpu.hpp)
+- Disabled CUDA due to Ubuntu 24.04 CUDA 12.0 incompatibilities
+- Updated CMakeLists.txt to exclude SM 100 (Blackwell)
+- Created DEVELOPMENT_NOTES.md
+
+### v3.0.0 (March 2026)
+- FilterMath dispatch layer (SVE2 > NEON > Eigen)
+- All filter code using FilterMath dispatch
+- Bug fixes: -ffast-math removal, safe Cholesky downdate, RBPKF weight handling
+- Full benchmark suite passing
