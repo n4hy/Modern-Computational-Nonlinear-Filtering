@@ -11,12 +11,14 @@ import sys
 from pathlib import Path
 
 def read_csv(filename):
+    """Read a CSV file into a list of dicts (one per row) without pandas."""
     """Read CSV file and return as list of dicts"""
     with open(filename, 'r') as f:
         reader = csv.DictReader(f)
         return list(reader)
 
 def plot_performance_comparison(data, output_dir):
+    """Generate side-by-side bar charts for step time and divergence count (UKF vs SRUKF)."""
     """Create performance comparison plots"""
 
     # Filter data by filter type
@@ -81,6 +83,7 @@ def plot_performance_comparison(data, output_dir):
     plt.close()
 
 def plot_trajectory(filename, output_dir):
+    """Plot per-state trajectory comparison from a benchmark trajectory CSV."""
     """Plot trajectory comparison"""
 
     if not Path(filename).exists():
@@ -136,6 +139,7 @@ def plot_trajectory(filename, output_dir):
     plt.close()
 
 def create_summary_table(data, output_dir):
+    """Render a styled comparison table (UKF vs SRUKF) as a PNG image."""
     """Create a visual summary table"""
 
     fig, ax = plt.subplots(figsize=(16, 8))
@@ -220,6 +224,7 @@ def create_summary_table(data, output_dir):
     plt.close()
 
 def main():
+    """Load benchmark CSV, generate performance comparison, summary table, and trajectory plots."""
     if len(sys.argv) > 1:
         results_dir = sys.argv[1]
     else:

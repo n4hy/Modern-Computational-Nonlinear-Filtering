@@ -106,7 +106,8 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
 }
 
 /**
- * Reconstruct Mean from Sigma Points
+ * Reconstruct Mean from Sigma Points.
+ * Computes x_mean = sum_i Wm[i] * X[:,i].
  */
 template<int NX>
 Eigen::Matrix<float, NX, 1> compute_mean(const SigmaPoints<NX>& sigmas) {

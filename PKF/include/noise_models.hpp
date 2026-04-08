@@ -10,7 +10,7 @@ namespace PKF {
 
 namespace Noise {
 
-    // Helper for Log Gamma function if std::lgamma is not enough or for clarity
+    /** Thin wrapper around std::lgamma for readability in distribution formulas. */
     inline float log_gamma(float x) {
         return std::lgamma(x);
     }

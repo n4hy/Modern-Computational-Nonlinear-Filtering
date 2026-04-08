@@ -36,9 +36,11 @@ public:
     using Observation = typename Model::Observation;
     using StateMat = typename Model::StateMat;
 
+    /** Construct the SRUKF fixed-lag smoother with a given lag window size. */
     SRUKFFixedLagSmoother(Model& model, int lag)
         : srukf_(model), lag_(lag) {}
 
+    /** Set initial state and covariance, compute Cholesky factor, reset history. */
     void initialize(const State& x0, const StateMat& P0) {
         srukf_.initialize(x0, P0);
         history_.clear();
@@ -61,6 +63,11 @@ public:
         history_.push_back(entry);
     }
 
+    /**
+     * Advance one time step: SRUKF predict/update, store square-root
+     * covariance and cross-covariance, trim buffer, run RTS smoothing.
+     * Includes NaN guard to prevent corrupt state from propagating.
+     */
     void step(float t_k, const Observation& y_k, const Eigen::Ref<const State>& u_k) {
         if (history_.empty()) {
             return;
@@ -125,6 +132,11 @@ private:
     std::vector<State> smoothed_states_;
     std::vector<StateMat> smoothed_S_;  // Square root of smoothed covariances
 
+    /**
+     * Backward RTS smoothing using square-root covariances.
+     * Reconstructs full covariance P = S*S^T for the smoothing gain computation,
+     * then extracts the square-root of the smoothed covariance via Cholesky.
+     */
     void perform_smoothing() {
         int N = static_cast<int>(history_.size());
         if (N == 0) return;

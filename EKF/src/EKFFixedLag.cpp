@@ -2,6 +2,11 @@
 #include <iostream>
 #include "FilterMath.h"
 
+/**
+ * Construct the fixed-lag smoother with a given lag window size L.
+ * Initializes the internal EKF and seeds the history buffer with
+ * the initial state so the backward pass has a starting point.
+ */
 EKFFixedLag::EKFFixedLag(SystemModel* model, const Eigen::VectorXf& x0, const Eigen::MatrixXf& P0, int lag_L)
     : model_(model), ekf_(model, x0, P0), lag_L_(lag_L) {
 
@@ -13,6 +18,13 @@ EKFFixedLag::EKFFixedLag(SystemModel* model, const Eigen::VectorXf& x0, const Ei
     buffer_.push_back(init_state);
 }
 
+/**
+ * Advance the smoother by one time step: (1) EKF predict, (2) EKF update,
+ * (3) store predicted and updated state in the sliding window buffer,
+ * (4) run backward Rauch-Tung-Striebel (RTS) smoothing over the window.
+ * The smoothing gain G_j and smoothed state/covariance are computed using
+ * accelerated GEMM and SPD solves from the FilterMath dispatch layer.
+ */
 void EKFFixedLag::step(const Eigen::VectorXf& y_k, const Eigen::VectorXf& u_k, float t_k) {
     // 1. EKF Prediction
     Eigen::MatrixXf F_k = ekf_.predict(u_k, t_k);
@@ -73,6 +85,10 @@ void EKFFixedLag::step(const Eigen::VectorXf& y_k, const Eigen::VectorXf& u_k, f
     }
 }
 
+/**
+ * Return the filtered (not smoothed) state and covariance at the current
+ * time step k, i.e. x_{k|k} and P_{k|k} from the most recent EKF update.
+ */
 std::pair<Eigen::VectorXf, Eigen::MatrixXf> EKFFixedLag::getFilteredState() const {
     if (buffer_.empty()) {
         return {Eigen::VectorXf(), Eigen::MatrixXf()};
@@ -80,6 +96,12 @@ std::pair<Eigen::VectorXf, Eigen::MatrixXf> EKFFixedLag::getFilteredState() cons
     return {buffer_.back().x_upd, buffer_.back().P_upd};
 }
 
+/**
+ * Return the smoothed state and covariance at the requested lag.
+ * lag=0 returns the current filtered state; lag=L returns the oldest
+ * state in the window, which has been smoothed by all subsequent data.
+ * Clamps out-of-range lag values to the nearest valid index.
+ */
 std::pair<Eigen::VectorXf, Eigen::MatrixXf> EKFFixedLag::getSmoothedState(int lag) const {
     if (x_smooth_.empty() || P_smooth_.empty()) {
         return {buffer_.back().x_upd, buffer_.back().P_upd};

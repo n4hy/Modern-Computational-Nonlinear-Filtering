@@ -10,7 +10,11 @@
 using namespace UKFCore;
 using namespace UKFModel;
 
-// Helper to generate noisy data
+/**
+ * Generate a synthetic drag-ball trajectory with process and measurement noise.
+ * Populates true_states (ground truth) and measurements (noisy observations)
+ * for the given number of time steps.
+ */
 void generate_data(DragBallModel& model, int steps,
                    std::vector<DragBallModel::State>& true_states,
                    std::vector<DragBallModel::Observation>& measurements) {
@@ -44,6 +48,11 @@ void generate_data(DragBallModel& model, int steps,
     }
 }
 
+/**
+ * UKF example: simulate a 4D ballistic trajectory with drag, run the
+ * UKF fixed-lag smoother, compute position RMSE for both filtered and
+ * smoothed estimates, and export results to ukf_results.csv.
+ */
 int main() {
     // 1. Setup Model
     DragBallModel model; // defaults: dt=0.1

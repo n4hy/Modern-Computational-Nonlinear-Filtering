@@ -7,6 +7,12 @@
 
 using namespace PKF;
 
+/**
+ * Particle filter example: simulate the Lorenz-63 chaotic system with
+ * heavy-tailed (Student-t) measurement noise, run a bootstrap particle
+ * filter with fixed-lag ancestry-based smoothing, compute RMSE for
+ * filtered and smoothed estimates, and export results to pkf_results.csv.
+ */
 int main() {
     // Parameters
     const size_t NUM_PARTICLES = 2000;

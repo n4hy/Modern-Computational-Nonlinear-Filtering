@@ -37,11 +37,16 @@ public:
     float beta = 2.0f;     // Optimal for Gaussian
     float kappa = -1.0f;   // Will be set in initialize()
 
+    /** Construct SRUKF with a reference to the nonlinear state-space model. */
     SRUKF(Model& model) : model_(model) {
         x_.setZero();
         S_.setIdentity();  // Square root of covariance
     }
 
+    /**
+     * Set initial state, compute Cholesky factor S from P0, and choose
+     * dimension-adaptive sigma-point parameters (alpha, beta, kappa).
+     */
     void initialize(const State& x0, const StateMat& P0) {
         x_ = x0;
         // Dimension-adaptive parameters for SRUKF

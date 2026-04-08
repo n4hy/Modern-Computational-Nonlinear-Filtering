@@ -75,7 +75,7 @@ public:
         rng_.seed(rd());
     }
 
-    // Allow setting fixed seed
+    /** Set a fixed RNG seed for reproducible results. */
     void set_seed(uint64_t seed) {
         rng_.seed(seed);
     }
@@ -318,7 +318,11 @@ private:
     std::unique_ptr<gpu::GPUParticleContext<NX>> gpu_ctx_;
 
     /**
-     * @brief Normalize log-weights using log-sum-exp trick
+     * @brief Normalize log-weights using the log-sum-exp trick for numerical stability.
+     *
+     * After normalization, sum(exp(log_weights)) == 1. Handles degenerate cases
+     * where all weights are -inf (particle death) by resetting to uniform.
+     * Dispatches to GPU when the GPU context is active.
      */
     void normalize_weights() {
         // GPU path - normalize on GPU and sync back

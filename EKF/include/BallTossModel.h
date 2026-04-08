@@ -14,6 +14,7 @@ public:
         R_ = Eigen::MatrixXf::Identity(2, 2) * 0.1f;
     }
 
+    /** Constant-velocity state transition with gravity on vy. */
     Eigen::VectorXf f(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
         // Simple Physics: x = [px, py, vx, vy]
         Eigen::VectorXf x_next = x;
@@ -23,6 +24,7 @@ public:
         return x_next;
     }
 
+    /** Observe 2D position: y = [px, py]. */
     Eigen::VectorXf h(const Eigen::VectorXf& x, float t) const override {
         // Measure position
         Eigen::VectorXf y(2);
@@ -30,6 +32,7 @@ public:
         return y;
     }
 
+    /** State transition Jacobian: linear constant-velocity + gravity model. */
     Eigen::MatrixXf F(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
         Eigen::MatrixXf F = Eigen::MatrixXf::Identity(4, 4);
         F(0, 2) = dt_;
@@ -37,6 +40,7 @@ public:
         return F;
     }
 
+    /** Observation Jacobian: identity on position states, zero on velocities. */
     Eigen::MatrixXf H(const Eigen::VectorXf& x, float t) const override {
         Eigen::MatrixXf H = Eigen::MatrixXf::Zero(2, 4);
         H(0, 0) = 1.0f;

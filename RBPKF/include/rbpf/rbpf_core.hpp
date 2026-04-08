@@ -43,6 +43,10 @@ public:
     using LinearCov      = typename Types::LinearCov;
     using ObsCov         = typename Types::ObsCov;
 
+    /**
+     * Construct RBPF with nonlinear and conditional-linear models plus config.
+     * Pre-allocates particle array and, if fixed_lag > 0, the ancestry buffers.
+     */
     RaoBlackwellizedParticleFilter(const NonlinearModelT& nonlinear_model,
                                    const CondLinModelT& conditional_model,
                                    const RbpfConfig& config)
@@ -62,6 +66,7 @@ public:
         }
     }
 
+    /** Initialize all particles to the same nonlinear/linear state with uniform weights. */
     void initialize(const NonlinearState& x_nl0,
                     const LinearState&    x_lin0,
                     const LinearCov&      P_lin0) {
@@ -78,6 +83,14 @@ public:
         }
     }
 
+    /**
+     * Advance the RBPF by one time step:
+     *  1. Propagate nonlinear state via the proposal (with process noise).
+     *  2. Predict the linear sub-state using the conditional KF.
+     *  3. Compute observation likelihood and update log-weights.
+     *  4. Update the conditional KF with the measurement.
+     *  5. Normalize weights, resample if N_eff < threshold, store ancestry.
+     */
     void step(float t_k,
               const Observation& y_k,
               const NonlinearState& u_k) {
@@ -188,6 +201,7 @@ public:
         }
     }
 
+    /** Compute weighted mean of all particles' nonlinear and linear states. */
     void get_filtered_mean(NonlinearState& x_nl_mean,
                            LinearState&    x_lin_mean) const {
         x_nl_mean.setZero();
@@ -200,11 +214,17 @@ public:
         }
     }
 
+    /** Return true if enough history has been accumulated for the given lag. */
     bool can_smooth(int lag) const {
         if (config_.fixed_lag <= 0) return false;
         return parent_indices_cnt_ > lag;
     }
 
+    /**
+     * Compute the smoothed mean at the given lag by backtracking ancestry
+     * indices through the circular buffer to find each particle's ancestor,
+     * then weighting by current importance weights.
+     */
     void get_smoothed_mean(int lag,
                            NonlinearState& x_nl_mean,
                            LinearState&    x_lin_mean) const {
@@ -252,6 +272,7 @@ private:
     std::vector<std::vector<RbpfParticle<Types>>> particle_history_;
     long long parent_indices_cnt_ = 0;
 
+    /** Normalize particle log-weights via log-sum-exp; resets to uniform if all dead. */
     void normalize_weights() {
         float max_log_w = -std::numeric_limits<float>::infinity();
         for (const auto& p : particles_) {
@@ -285,6 +306,7 @@ private:
         }
     }
 
+    /** Compute ESS = 1 / sum(w_i^2). Guards against division by zero. */
     float get_effective_sample_size() const {
         float sum_sq = 0.0f;
         for (const auto& p : particles_) {
@@ -295,6 +317,7 @@ private:
         return 1.0f / sum_sq;
     }
 
+    /** Store current particles and parent indices into the circular ancestry buffer. */
     void store_history(long long step_idx, const std::vector<int>& parents = {}) {
         if (ancestry_buffer_size_ == 0) return;
         int buffer_idx = step_idx % ancestry_buffer_size_;

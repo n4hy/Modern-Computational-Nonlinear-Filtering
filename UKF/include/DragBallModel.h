@@ -30,6 +30,7 @@ public:
     DragBallModel(float dt_val = 0.1f, float drag = 0.001f, float grav = 9.81f, float q = 0.1f, float r = 0.5f)
         : dt(dt_val), drag_coeff(drag), g(grav), q_std(q), r_std(r) {}
 
+    /** Propagate ballistic trajectory with quadratic air drag via Euler integration. */
     State f(const State& x_prev, float t, const Eigen::Ref<const State>& u) const override {
         // x = [px, py, vx, vy]
         float px = x_prev(0);
@@ -48,6 +49,7 @@ public:
         return x_next;
     }
 
+    /** Observe 2D position [x, y] from the full 4D state. */
     Observation h(const State& x_k, float t) const override {
         // Observe position only
         Observation y;
@@ -56,6 +58,7 @@ public:
         return y;
     }
 
+    /** Process noise: small position noise, velocity noise proportional to q_std^2 * dt. */
     StateMat Q(float t) const override {
         StateMat q_mat = StateMat::Zero();
         // Noise on velocity mainly
@@ -70,6 +73,7 @@ public:
         return q_mat;
     }
 
+    /** Measurement noise: isotropic r_std^2 on both position components. */
     ObsMat R(float t) const override {
         ObsMat r_mat = ObsMat::Identity();
         r_mat *= (r_std * r_std);

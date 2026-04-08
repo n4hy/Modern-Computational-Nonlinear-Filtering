@@ -4,6 +4,11 @@
 
 namespace rbpf {
 
+/**
+ * Systematic resampling: draw N particles using a single uniform random offset
+ * and N evenly spaced points through the CDF. Uses Kahan summation to reduce
+ * floating-point accumulation error in the cumulative weight sum.
+ */
 std::vector<int> systematic_resampling(const std::vector<float>& weights, std::mt19937_64& rng) {
     size_t N = weights.size();
     if (N == 0) return std::vector<int>();
@@ -41,6 +46,11 @@ std::vector<int> systematic_resampling(const std::vector<float>& weights, std::m
     return parents;
 }
 
+/**
+ * Stratified resampling: divide [0,1] into N strata, draw one uniform sample
+ * per stratum, then map through the CDF. Lower variance than systematic.
+ * Uses Kahan summation for numerical stability of the cumulative sum.
+ */
 std::vector<int> stratified_resampling(const std::vector<float>& weights, std::mt19937_64& rng) {
     size_t N = weights.size();
     if (N == 0) return std::vector<int>();

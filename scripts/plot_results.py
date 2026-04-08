@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import os
 
 def plot_results():
+    """Load ekf_results.csv and plot position/velocity: truth vs filtered vs smoothed."""
     if not os.path.exists('ekf_results.csv'):
         print("ekf_results.csv not found. Run the C++ executable first.")
         return

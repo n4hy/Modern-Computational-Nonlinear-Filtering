@@ -31,6 +31,7 @@ public:
     float coupling = 0.5f;      // Coupling strength
     float nonlinearity = 0.3f;  // Nonlinear coupling term
 
+    /** Propagate all 5 coupled oscillators via RK4 integration over one dt step. */
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next = x;
 
@@ -47,6 +48,7 @@ public:
         return x_next;
     }
 
+    /** Nonlinear observation: y_i = pos_i + 0.1*sin(pos_i) for positions only. */
     Observation h(const State& x, float t) const override {
         Observation y;
         // Observe only positions with nonlinear measurement
@@ -73,6 +75,9 @@ public:
     }
 
 private:
+    /** Compute continuous-time derivatives for all 5 coupled nonlinear oscillators.
+     *  Each oscillator has restoring force -omega^2*sin(pos), damping, and both
+     *  linear and nonlinear (sin-based) coupling to all other oscillators. */
     State dynamics(const State& x, float t) const {
         State dx = State::Zero();
 
@@ -125,6 +130,7 @@ public:
     float dt = 0.01f;  // Integration timestep
     float F = 8.0f;    // Forcing parameter (F=8 gives chaotic behavior)
 
+    /** Propagate 40D Lorenz-96 via RK4; chaotic advection with forcing F=8. */
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next = x;
 
@@ -138,6 +144,7 @@ public:
         return x_next;
     }
 
+    /** Observe every 4th state variable (sparse observation network). */
     Observation h(const State& x, float t) const override {
         Observation y;
         // Observe every 4th variable
@@ -156,6 +163,8 @@ public:
     }
 
 private:
+    /** Lorenz-96 ODE: dx_i/dt = (x_{i+1} - x_{i-2}) * x_{i-1} - x_i + F
+     *  with periodic boundary conditions. Exhibits chaos for F=8. */
     State lorenz96_derivative(const State& x) const {
         State dx = State::Zero();
 
@@ -191,6 +200,7 @@ public:
     float dt = 0.01f;
     float mu = 5.0f;  // Nonlinearity parameter (large mu = very stiff)
 
+    /** Propagate Van der Pol oscillator via RK4 with discontinuous forcing. */
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next = x;
 
@@ -204,6 +214,7 @@ public:
         return x_next;
     }
 
+    /** Nonlinear observation: y = x + 0.2*x^2 (quadratic measurement function). */
     Observation h(const State& x, float t) const override {
         Observation y;
         // Nonlinear observation
@@ -223,6 +234,8 @@ public:
     }
 
 private:
+    /** Van der Pol ODE with discontinuous square-wave forcing.
+     *  The mu parameter controls nonlinearity strength (mu=5 is severely nonlinear). */
     State vdp_derivative(const State& x, float t) const {
         State dx;
 
@@ -267,6 +280,7 @@ public:
     // Radar position on Earth's surface (tracking station)
     Eigen::Vector3f radar_pos = Eigen::Vector3f(6371000.0f, 0.0f, 0.0f);
 
+    /** Propagate reentry vehicle via RK4 with exponential-atmosphere drag + gravity. */
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next = x;
 
@@ -280,6 +294,7 @@ public:
         return x_next;
     }
 
+    /** Radar observation: [range, azimuth, elevation] relative to ground station. */
     Observation h(const State& x, float t) const override {
         Observation y;
 
@@ -319,12 +334,14 @@ public:
         return r;
     }
 
-    // Return appropriate divergence threshold for this problem's scale
+    /** Divergence threshold scaled to reentry dynamics (~5 km position/velocity error). */
     float getDivergenceThreshold() const {
         return 5000.0f;  // 5km position or 5km/s velocity error
     }
 
 private:
+    /** 6-DOF dynamics: velocity derivatives from exponential-atmosphere drag +
+     *  altitude-dependent gravity using gravitational parameter mu. */
     State dynamics(const State& x) const {
         State dx;
 
@@ -390,13 +407,14 @@ public:
     float dt = 0.1f;
     float turn_rate = 0.1f;  // rad/s - observer platform turn rate
 
-    // Observer position (moving in a circle)
+    /** Compute observer position on a circular trajectory (radius 100 m). */
     Eigen::Vector2f get_observer_pos(float t) const {
         float radius = 100.0f;
         return Eigen::Vector2f(radius * std::cos(turn_rate * t),
                                radius * std::sin(turn_rate * t));
     }
 
+    /** Constant-velocity state transition for target motion. */
     State f(const State& x, float t, const Eigen::Ref<const State>& u) const override {
         State x_next;
         // Constant velocity model with slight acceleration noise
@@ -407,6 +425,7 @@ public:
         return x_next;
     }
 
+    /** Bearing-only measurement: atan2 of target position relative to moving observer. */
     Observation h(const State& x, float t) const override {
         Observation y;
 

@@ -4,6 +4,7 @@ import argparse
 import os
 
 def plot_results(csv_path, title, output_path):
+    """Plot true vs estimated state trajectories from a generic filter results CSV."""
     if not os.path.exists(csv_path):
         print(f"Error: {csv_path} not found.")
         return

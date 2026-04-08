@@ -45,6 +45,7 @@ struct BenchmarkMetrics {
     float convergence_time = 0.0f;  // Time to reach steady-state error
     int num_divergences = 0;         // Number of times error exceeded threshold
 
+    /** Print a formatted summary of all metrics for this filter/problem pair. */
     void print() const {
         std::cout << std::setprecision(6);
         std::cout << "\n=== " << filter_name << " on " << problem_name << " ===" << std::endl;
@@ -75,6 +76,7 @@ struct BenchmarkMetrics {
         std::cout << "Divergences: " << num_divergences << std::endl;
     }
 
+    /** Append one row of metrics to an open CSV file. */
     void save_to_csv(std::ofstream& file) const {
         file << filter_name << ","
              << problem_name << ","
@@ -94,6 +96,7 @@ struct BenchmarkMetrics {
              << num_divergences << std::endl;
     }
 
+    /** Write the CSV column header row for benchmark results. */
     static void write_csv_header(std::ofstream& file) {
         file << "Filter,Problem,RMSE_Overall,RMSE_Position,RMSE_Velocity,"
              << "RMSE_Smoothed_Overall,RMSE_Smoothed_Position,RMSE_Smoothed_Velocity,"

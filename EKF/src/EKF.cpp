@@ -2,6 +2,11 @@
 #include <iostream>
 #include "FilterMath.h"
 
+/**
+ * Construct the EKF with a system model, initial state estimate x0,
+ * and initial covariance P0. Pre-computes the identity matrix for
+ * the Joseph-form covariance update.
+ */
 EKF::EKF(SystemModel* model, const Eigen::VectorXf& x0, const Eigen::MatrixXf& P0)
     : model_(model), x_(x0), P_(P0) {
     I_ = Eigen::MatrixXf::Identity(x0.size(), x0.size());
@@ -10,6 +15,12 @@ EKF::EKF(SystemModel* model, const Eigen::VectorXf& x0, const Eigen::MatrixXf& P
     P_pred_ = P0;
 }
 
+/**
+ * EKF prediction (time update): propagate state through f() and covariance
+ * through the linearized dynamics F. Uses accelerated GEMM for the
+ * covariance propagation P = F*P*F^T + Q and returns the Jacobian F
+ * (needed by the fixed-lag smoother for the backward RTS pass).
+ */
 Eigen::MatrixXf EKF::predict(const Eigen::VectorXf& u, float t) {
     // 1. Get Jacobian F at current state x_{k-1|k-1}
     Eigen::MatrixXf F = model_->F(x_, u, t);
@@ -35,6 +46,12 @@ Eigen::MatrixXf EKF::predict(const Eigen::VectorXf& u, float t) {
     return F;
 }
 
+/**
+ * EKF measurement update: compute innovation y - h(x), innovation
+ * covariance S = H*P*H^T + R, and Kalman gain K via SPD solve.
+ * Updates state and covariance using the Joseph form
+ * P = (I-KH)*P*(I-KH)^T + K*R*K^T for numerical stability.
+ */
 void EKF::update(const Eigen::VectorXf& y, float t) {
     // 1. Get Jacobian H at predicted state
     Eigen::MatrixXf H = model_->H(x_, t);

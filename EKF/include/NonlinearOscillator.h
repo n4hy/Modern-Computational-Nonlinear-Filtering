@@ -24,7 +24,7 @@ public:
           Q_(Eigen::MatrixXf::Identity(2, 2) * 0.001f),
           R_(Eigen::MatrixXf::Identity(1, 1) * 0.1f) {}
 
-    // State: [pos, vel]
+    /** State transition via Euler integration of the damped pendulum ODE. */
     Eigen::VectorXf f(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
         Eigen::VectorXf x_next(2);
         float pos = x(0);
@@ -45,12 +45,14 @@ public:
         return x_next;
     }
 
+    /** Observe position only: y = pos. */
     Eigen::VectorXf h(const Eigen::VectorXf& x, float t) const override {
         Eigen::VectorXf y(1);
         y(0) = x(0); // Measure position
         return y;
     }
 
+    /** Jacobian of f w.r.t. state: analytic derivatives of the Euler step. */
     Eigen::MatrixXf F(const Eigen::VectorXf& x, const Eigen::VectorXf& u, float t) const override {
         Eigen::MatrixXf F(2, 2);
         float pos = x(0);
@@ -67,6 +69,7 @@ public:
         return F;
     }
 
+    /** Jacobian of h: [1, 0] since we only observe position. */
     Eigen::MatrixXf H(const Eigen::VectorXf& x, float t) const override {
         Eigen::MatrixXf H(1, 2);
         H << 1.0f, 0.0f;
