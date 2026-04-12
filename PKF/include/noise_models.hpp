@@ -39,12 +39,11 @@ namespace Noise {
         Vector diff = x - mu;
 
         // Use LLT to compute inverse and determinant
-        // If cov is diagonal, we could optimize, but this is general.
         Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        if (llt.info() != Eigen::Success)
+            return -std::numeric_limits<float>::infinity();
 
         // Mahalanobis distance squared: (x-mu)^T * Sigma^{-1} * (x-mu)
-        // We solve Sigma * y = diff, so y = Sigma^{-1} * diff.
-        // Then diff.dot(y)
         Vector y = llt.solve(diff);
         float mahalanobis_sq = diff.dot(y);
 
@@ -93,6 +92,9 @@ namespace Noise {
         // Sample z ~ N(0, Sigma)
         // z = L * standard_normal
         Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        if (llt.info() != Eigen::Success)
+            return mu;  // Fallback: return mean if decomposition fails
+
         Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
 
         std::normal_distribution<float> norm_dist(0.0f, 1.0f);
@@ -119,6 +121,9 @@ namespace Noise {
         Eigen::Matrix<float, Dim, 1> diff = x - mu;
 
         Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        if (llt.info() != Eigen::Success)
+            return -std::numeric_limits<float>::infinity();
+
         Eigen::Matrix<float, Dim, 1> y = llt.solve(diff);
         float mahalanobis_sq = diff.dot(y);
 
@@ -140,6 +145,9 @@ namespace Noise {
                                                   const Eigen::Matrix<float, Dim, Dim>& cov,
                                                   std::mt19937_64& rng) {
         Eigen::LLT<Eigen::Matrix<float, Dim, Dim>> llt(cov);
+        if (llt.info() != Eigen::Success)
+            return mu;  // Fallback: return mean if decomposition fails
+
         Eigen::Matrix<float, Dim, Dim> L = llt.matrixL();
 
         std::normal_distribution<float> norm_dist(0.0f, 1.0f);

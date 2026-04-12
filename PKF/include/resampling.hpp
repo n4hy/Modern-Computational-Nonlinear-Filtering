@@ -95,8 +95,8 @@ namespace Resampling {
         double csum = weights[0];
         size_t k = 0;
 
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
         for (size_t i = 0; i < N; ++i) {
-            std::uniform_real_distribution<double> dist(0.0, 1.0);
             double u = (static_cast<double>(i) + dist(rng)) / static_cast<double>(N);
 
             while (u > csum && k < N - 1) {
@@ -120,8 +120,8 @@ namespace Resampling {
         float csum = weights[0];
         size_t k = 0;
 
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
         for (size_t i = 0; i < N; ++i) {
-            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
             float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
 
             while (u > csum && k < N - 1) {

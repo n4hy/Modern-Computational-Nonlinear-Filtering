@@ -184,8 +184,14 @@ private:
             }
             if (L_s.size() == 0) {
                 // Ultimate fallback to Eigen LLT
+                P_s_j += 1e-8f * StateMat::Identity();
                 Eigen::LLT<StateMat> llt(P_s_j);
-                smoothed_S_[j] = llt.matrixL();
+                if (llt.info() == Eigen::Success) {
+                    smoothed_S_[j] = llt.matrixL();
+                } else {
+                    // Preserve previous square root as best effort
+                    smoothed_S_[j] = history_[j].S_filt;
+                }
             } else {
                 smoothed_S_[j] = L_s;
             }

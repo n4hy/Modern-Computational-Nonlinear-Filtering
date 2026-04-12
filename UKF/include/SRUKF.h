@@ -101,36 +101,14 @@ public:
         }
 
         // 3. Compute Predicted Mean (using circular mean for angular states)
-        // CRITICAL FIX: Force explicit evaluation by copying ALL sigma point data
-        // to plain C arrays to break any Eigen aliasing/expression template issues.
+        // Force evaluation with .eval() to break Eigen aliasing/expression templates
+        // while preserving NEON/SVE2 vectorization (unlike raw C array workaround)
+        typename SigmaPts::SigmaMat X_pred_eval = X_pred.eval();
+        typename SigmaPts::Weights Wm_eval = sigmas.Wm.eval();
 
-        // Copy X_pred to a plain 2D array
-        float X_pred_raw[NX][SigmaPts::NSIG];
+        State x_pred_mean = State::Zero();
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                X_pred_raw[j][i] = X_pred(j, i);
-            }
-        }
-
-        // Copy weights to plain array
-        float Wm_raw[SigmaPts::NSIG];
-        for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            Wm_raw[i] = sigmas.Wm(i);
-        }
-
-        // Compute mean using ONLY plain C arrays - no Eigen involved
-        float x_pred_mean_raw[NX] = {0};
-        for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            float w = Wm_raw[i];
-            for (int j = 0; j < NX; ++j) {
-                x_pred_mean_raw[j] += w * X_pred_raw[j][i];
-            }
-        }
-
-        // Copy back to Eigen vector
-        State x_pred_mean;
-        for (int j = 0; j < NX; ++j) {
-            x_pred_mean(j) = x_pred_mean_raw[j];
+            x_pred_mean.noalias() += Wm_eval(i) * X_pred_eval.col(i);
         }
 
 

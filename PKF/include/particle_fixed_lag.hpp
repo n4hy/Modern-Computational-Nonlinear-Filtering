@@ -108,23 +108,22 @@ public:
      * Uses current weights w_k and backtracks ancestry to find x_{k-L}.
      */
     State get_smoothed_mean() const {
-        if (history_particles_.size() <= lag_) {
-            // Not enough history yet, return filtered mean at that time step or best effort?
-            // If k < L, we are effectively smoothing x_0 given y_{1:k}.
-            // The history stores x_0, ..., x_k.
-            // The "smoothed mean" usually implies the oldest state in the buffer given all data.
-            // Let's return the oldest state mean computed with current weights.
-            return compute_smoothed_mean_at_index(0);
+        if (history_particles_.empty()) {
+            return State::Zero();
         }
-        return compute_smoothed_mean_at_index(0); // 0 is the oldest in the deque
+        // Index 0 is the oldest state in the deque.
+        // When history_particles_.size() <= lag_, we smooth the oldest available
+        // state (partial smoothing). Once history is full (size == lag_+1),
+        // index 0 corresponds to time k-L as intended.
+        return compute_smoothed_mean_at_index(0);
     }
 
     /**
      * @brief Get Smoothed Covariance at lag L (time k-L)
      */
     StateMat get_smoothed_covariance() const {
-        if (history_particles_.size() <= lag_) {
-             return compute_smoothed_cov_at_index(0);
+        if (history_particles_.empty()) {
+            return StateMat::Identity();
         }
         return compute_smoothed_cov_at_index(0);
     }

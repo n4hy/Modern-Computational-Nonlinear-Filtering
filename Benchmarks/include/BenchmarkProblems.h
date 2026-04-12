@@ -291,11 +291,19 @@ public:
         float range = rel_pos.norm();
         y(0) = range;
 
+        // Guard against zero range (vehicle at radar position)
+        if (range < 1e-6f) {
+            y(1) = 0.0f;
+            y(2) = 0.0f;
+            return y;
+        }
+
         // Azimuth (angle in x-y plane from x-axis)
         y(1) = std::atan2(rel_pos(1), rel_pos(0));
 
         // Elevation (angle from x-y plane)
-        y(2) = std::asin(rel_pos(2) / range);
+        // Clamp argument to [-1,1] to prevent NaN from floating-point overshoot
+        y(2) = std::asin(std::clamp(rel_pos(2) / range, -1.0f, 1.0f));
 
         return y;
     }
@@ -335,7 +343,8 @@ private:
 
         // Altitude above Earth surface
         Eigen::Vector3f pos(x(0), x(1), x(2));
-        float altitude = pos.norm() - R0;
+        float r = pos.norm();
+        float altitude = r - R0;
 
         // Atmospheric density (exponential model)
         float rho = rho0 * std::exp(-altitude / H0);
@@ -344,18 +353,18 @@ private:
         Eigen::Vector3f vel(x(3), x(4), x(5));
         float speed = vel.norm();
 
-        // Drag acceleration: -0.5 * rho * v^2 / BC * (v/|v|)
+        // Drag acceleration: -0.5 * rho * |v| / BC * v
         Eigen::Vector3f drag_acc = Eigen::Vector3f::Zero();
         if (speed > 1e-6f) {
-            drag_acc = -0.5f * rho * speed * speed / BC * (vel / speed);
+            drag_acc = -0.5f * rho * speed / BC * vel;
         }
 
         // Gravity acceleration using gravitational parameter (altitude-dependent)
         // a_g = -mu / r^2 * (r_hat)
-        float r = pos.norm();
+        // Reuse r from altitude computation above
         Eigen::Vector3f gravity_acc = Eigen::Vector3f::Zero();
         if (r > 1e-6f) {
-            gravity_acc = -mu / (r * r) * pos.normalized();
+            gravity_acc = -mu / (r * r * r) * pos;
         }
 
         // Total acceleration

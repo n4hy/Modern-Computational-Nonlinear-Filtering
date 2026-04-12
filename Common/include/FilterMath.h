@@ -111,17 +111,17 @@ inline Eigen::VectorXf solve_spd(const Eigen::MatrixXf& A, const Eigen::VectorXf
 //  Returns empty matrix on failure.
 // ========================================================================
 inline Eigen::MatrixXf solve_spd_mat(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B) {
-    // Use column-wise solve_spd for each column of B
+    // Try LDLT solve for all columns at once (most efficient path)
+    Eigen::LDLT<Eigen::MatrixXf> ldlt(A);
+    if (ldlt.info() == Eigen::Success && ldlt.isPositive())
+        return ldlt.solve(B);
+
+    // Fallback: column-wise solve_spd (uses NEON path if available)
     Eigen::MatrixXf X(B.rows(), B.cols());
     for (int j = 0; j < B.cols(); ++j) {
         Eigen::VectorXf col = solve_spd(A, B.col(j));
-        if (col.size() == 0) {
-            // Fallback: LDLT solve all at once
-            Eigen::LDLT<Eigen::MatrixXf> ldlt(A);
-            if (ldlt.info() == Eigen::Success)
-                return ldlt.solve(B);
+        if (col.size() == 0)
             return Eigen::MatrixXf();
-        }
         X.col(j) = col;
     }
     return X;

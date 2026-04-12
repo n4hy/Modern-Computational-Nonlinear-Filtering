@@ -66,6 +66,11 @@ public:
         // Update
         ukf_.update(t_k, y_k);
 
+        // NaN guard: skip this step if filter state is corrupted
+        if (!ukf_.getState().allFinite() || !ukf_.getCovariance().allFinite()) {
+            return;
+        }
+
         UKFHistoryEntry<NX> new_entry;
         new_entry.x_filt = ukf_.getState();
         new_entry.P_filt = ukf_.getCovariance();
@@ -139,7 +144,10 @@ private:
             StateMat diff_P = P_s_jp1 - P_pred_jp1;
             Eigen::MatrixXf term1 = filtermath::gemm(Eigen::MatrixXf(G_j), Eigen::MatrixXf(diff_P));
             Eigen::MatrixXf term2 = filtermath::gemm(term1, Eigen::MatrixXf(G_j.transpose()));
-            smoothed_covs_[j] = P_f_j + StateMat(term2);
+            StateMat P_s_j = P_f_j + StateMat(term2);
+
+            // Symmetrize to prevent accumulated round-off asymmetry
+            smoothed_covs_[j] = 0.5f * (P_s_j + P_s_j.transpose());
         }
     }
 };

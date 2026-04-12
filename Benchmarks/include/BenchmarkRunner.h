@@ -266,12 +266,17 @@ void compute_nees(const std::vector<State>& true_states,
         return;
     }
 
-    // Median
-    std::sort(nees_values.begin(), nees_values.end());
+    // Median via nth_element (O(n) instead of O(n log n) full sort)
     size_t mid = nees_values.size() / 2;
-    metrics.median_nees = (nees_values.size() % 2 == 0)
-        ? 0.5f * (nees_values[mid - 1] + nees_values[mid])
-        : nees_values[mid];
+    std::nth_element(nees_values.begin(), nees_values.begin() + mid, nees_values.end());
+    if (nees_values.size() % 2 == 0) {
+        float upper = nees_values[mid];
+        // Find max in lower partition for the other median element
+        float lower = *std::max_element(nees_values.begin(), nees_values.begin() + mid);
+        metrics.median_nees = 0.5f * (lower + upper);
+    } else {
+        metrics.median_nees = nees_values[mid];
+    }
 
     // Percentage within chi-squared 95% bounds
     int in_bounds = 0;

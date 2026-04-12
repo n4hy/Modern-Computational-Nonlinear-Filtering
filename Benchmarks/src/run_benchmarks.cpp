@@ -44,12 +44,25 @@ auto generate_trajectory(Model& model,
     Eigen::MatrixXf L_Q = filtermath::cholesky(Q);
     if (L_Q.size() == 0) {
         Eigen::LLT<typename Model::StateMat> llt_Q(Q);
-        L_Q = llt_Q.matrixL();
+        if (llt_Q.info() == Eigen::Success) {
+            L_Q = llt_Q.matrixL();
+        } else {
+            // Diagonal fallback: use sqrt of diagonal elements
+            L_Q = Eigen::MatrixXf::Zero(Q.rows(), Q.cols());
+            for (int i = 0; i < Q.rows(); ++i)
+                L_Q(i, i) = std::sqrt(std::max(Q(i, i), 0.0f));
+        }
     }
     Eigen::MatrixXf L_R = filtermath::cholesky(R);
     if (L_R.size() == 0) {
         Eigen::LLT<typename Model::ObsMat> llt_R(R);
-        L_R = llt_R.matrixL();
+        if (llt_R.info() == Eigen::Success) {
+            L_R = llt_R.matrixL();
+        } else {
+            L_R = Eigen::MatrixXf::Zero(R.rows(), R.cols());
+            for (int i = 0; i < R.rows(); ++i)
+                L_R(i, i) = std::sqrt(std::max(R(i, i), 0.0f));
+        }
     }
 
     constexpr int STATE_DIM = Model::STATE_DIM;
