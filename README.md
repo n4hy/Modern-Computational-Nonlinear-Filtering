@@ -130,11 +130,11 @@ Smoothing improves RMSE by **8%**. SRUKF is 2.9x faster than UKF on this 2D prob
 
 | Filter | RMSE | Smoothed RMSE | NEES median | In 95% bounds | Divergences |
 |--------|------|---------------|-------------|---------------|-------------|
-| **UKF** | 42.84 | — | 1.50 | 85.6% | 171 |
-| **SRUKF** | 43.15 | — | 1.51 | 85.6% | 173 |
-| **SRUKF+Smoother** | 43.15 | **37.07** | 1.51 | 85.6% | 173 |
+| **UKF** | 63.81 | — | 3.77 | 99.6% | 176 |
+| **SRUKF** | 64.17 | — | 3.77 | 99.6% | 175 |
+| **SRUKF+Smoother** | 64.17 | **52.03** | 3.77 | 99.6% | 175 |
 
-Weak observability problem (bearing-only). Smoothing improves RMSE by **14%**.
+Weak observability problem (bearing-only). Smoothing improves RMSE by **19%**. "Divergences" reflect inherently weak observability during early trajectory, not filter instability.
 
 ### Reentry Vehicle (6D State, 3D Observation)
 
@@ -260,22 +260,15 @@ State correction = scale * (K * innovation);
 - Debug shows X_pred values are correct, but weighted mean equals input
 - Double-precision accumulation gives correct result while float loop gives wrong result
 
-**Solution**: Copy sigma point data to plain C arrays before computing weighted mean, completely bypassing Eigen's expression template system:
+**Solution**: Force evaluation with `.eval()` to materialize the expression and break aliasing, combined with `.noalias()` for safe accumulation. This preserves NEON/SVE2 auto-vectorization (unlike the earlier raw C array workaround):
 ```cpp
-// Copy X_pred to plain C array to break Eigen aliasing
-float X_pred_raw[NX][NSIG];
-for (int i = 0; i < NSIG; ++i) {
-    for (int j = 0; j < NX; ++j) {
-        X_pred_raw[j][i] = X_pred(j, i);
-    }
-}
+// Force evaluation to break Eigen aliasing while keeping SIMD vectorization
+typename SigmaPts::SigmaMat X_pred_eval = X_pred.eval();
+typename SigmaPts::Weights Wm_eval = sigmas.Wm.eval();
 
-// Compute mean using ONLY plain C arrays - no Eigen involved
-float x_pred_mean_raw[NX] = {0};
-for (int i = 0; i < NSIG; ++i) {
-    for (int j = 0; j < NX; ++j) {
-        x_pred_mean_raw[j] += Wm_raw[i] * X_pred_raw[j][i];
-    }
+State x_pred_mean = State::Zero();
+for (int i = 0; i < SigmaPts::NSIG; ++i) {
+    x_pred_mean.noalias() += Wm_eval(i) * X_pred_eval.col(i);
 }
 ```
 
@@ -663,6 +656,6 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 3.0.0
-**Last Updated**: March 2026
+**Version**: 3.1.0
+**Last Updated**: April 2026
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Eigen fallback)

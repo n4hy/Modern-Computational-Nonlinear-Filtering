@@ -1,6 +1,6 @@
 # SRUKF Implementation Status
 
-## Current State (v3.0.0, March 2026)
+## Current State (v3.1.0, April 2026)
 
 ### All Benchmark Problems Working
 
@@ -8,7 +8,7 @@
 |---------|-----------|-------------|---------------|--------|
 | Coupled Oscillators (10D) | 1.457 | 9.89 | 94.5% | **WORKING** |
 | Van der Pol (2D) | 0.466 | 1.14 | 96.0% | **WORKING** |
-| Bearing-Only (4D) | 43.15 | 1.51 | 85.6% | **WORKING** |
+| Bearing-Only (4D) | 64.17 | 3.77 | 99.6% | **WORKING** |
 | Reentry Vehicle (6D) | 369.2 | 4.99 | 95.6% | **WORKING** |
 
 All 4 benchmark problems and all smoother variants pass successfully. 10D coupled oscillators previously failed with NaN — now resolved through:
@@ -23,7 +23,7 @@ All 4 benchmark problems and all smoother variants pass successfully. 10D couple
 |---------|-------------------|-------------|
 | Coupled Oscillators (10D) | 1.148 | 21% |
 | Van der Pol (2D) | 0.430 | 8% |
-| Bearing-Only (4D) | 37.07 | 14% |
+| Bearing-Only (4D) | 52.03 | 19% |
 | Reentry Vehicle (6D) | 236.8 | 36% |
 
 ## Technical Details
