@@ -41,6 +41,7 @@ public:
         R_ *= (OBS_NOISE_STD * OBS_NOISE_STD);
     }
 
+    /** Propagate state using RK4 integration of the Lorenz-63 ODEs over one DT step. */
     State propagate(const State& x_prev, float t_k, const Eigen::Ref<const State>& u_k) const override {
         // RK4 Integration
         (void)t_k;
@@ -65,24 +66,28 @@ public:
         return x_prev + (DT / 6.0f) * (k1 + 2.0f * k2 + 2.0f * k3 + k4);
     }
 
+    /** Direct observation of the full 3D state (identity measurement). */
     Observation observe(const State& x_k, float t_k) const override {
         (void)t_k;
         // Direct observation of full state
         return x_k;
     }
 
+    /** Sample Gaussian process noise scaled by sqrt(DT) * PROCESS_NOISE_STD. */
     State sample_process_noise(float t_k, std::mt19937_64& rng) const override {
         (void)t_k;
         // Gaussian process noise
         return Noise::gaussian_sample<3>(State::Zero(), Q_chol_ * Q_chol_.transpose(), rng);
     }
 
+    /** Sample heavy-tailed Student-t measurement noise (nu=3 degrees of freedom). */
     Observation sample_observation_noise(float t_k, std::mt19937_64& rng) const override {
         (void)t_k;
         // Student-t measurement noise
         return Noise::student_t_sample<3>(Observation::Zero(), R_, OBS_NU, rng);
     }
 
+    /** Log-likelihood of observation under the Student-t measurement model. */
     float observation_loglik(const Observation& y_k, const State& x_k, float t_k) const override {
         (void)t_k;
         Observation expected = observe(x_k, t_k);

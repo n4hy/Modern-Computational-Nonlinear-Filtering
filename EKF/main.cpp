@@ -7,13 +7,18 @@
 #include "EKFFixedLag.h"
 #include "NonlinearOscillator.h"
 
-// Helper to generate noise
+/** Generate a single sample from N(mean, stddev^2) using a fixed-seed RNG. */
 float randn(float mean, float stddev) {
     static std::mt19937 gen(42);
     std::normal_distribution<float> d(mean, stddev);
     return d(gen);
 }
 
+/**
+ * EKF example: simulate a nonlinear oscillator, run the EKF fixed-lag
+ * smoother, compute RMSE for both filtered and smoothed estimates,
+ * and export results to ekf_results.csv for visualization.
+ */
 int main() {
     // 1. Setup Simulation
     float dt = 0.05f;

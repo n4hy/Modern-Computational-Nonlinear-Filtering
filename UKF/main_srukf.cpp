@@ -10,6 +10,11 @@
 
 using namespace UKFCore;
 
+/**
+ * SRUKF example: simulate a drag-ball trajectory, run both standalone SRUKF
+ * and SRUKF with fixed-lag smoother, compare filtered vs smoothed RMSE,
+ * and export results to srukf_results.csv / srukf_smoother_results.csv.
+ */
 int main() {
     std::cout << "=== SRUKF Test: Drag Ball Model ===" << std::endl;
 

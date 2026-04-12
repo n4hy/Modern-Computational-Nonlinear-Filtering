@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 def plot_summary_comparison(df, output_dir='.'):
+    """Create grouped bar charts comparing RMSE, NEES, and timing across all filter/problem pairs."""
     """Create comparison plots for all metrics across all methods and problems"""
 
     # Extract unique problems
@@ -172,6 +173,7 @@ def plot_summary_comparison(df, output_dir='.'):
     print(f'Saved convergence comparison to {output_dir}/benchmark_convergence_comparison.png')
 
 def plot_trajectory(filename, output_dir='.'):
+    """Plot per-state-dimension trajectory comparison (true vs filtered vs smoothed)."""
     """Plot trajectory results from CSV file"""
 
     if not Path(filename).exists():
@@ -222,6 +224,7 @@ def plot_trajectory(filename, output_dir='.'):
     print(f'Saved trajectory plot to {output_file}')
 
 def main():
+    """Load benchmark_results.csv, generate comparison plots and trajectory plots."""
     if len(sys.argv) > 1:
         results_dir = sys.argv[1]
     else:

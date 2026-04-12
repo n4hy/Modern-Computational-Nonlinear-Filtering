@@ -143,7 +143,12 @@ private:
     std::deque<std::vector<size_t>> history_parents_;
 
     /**
-     * @brief Backtrack ancestry to find indices at history_index
+     * @brief Backtrack ancestry to find indices at history_index.
+     *
+     * Starting from identity indices at the current time, iterates backward
+     * through the parent-index deque to map each current particle to its
+     * ancestor at the target history layer. This is the core operation for
+     * ancestry-based fixed-lag smoothing.
      *
      * @param history_idx Index in the deque (0 = oldest)
      * @return std::vector<size_t> Indices of particles at history_idx corresponding to current particles 0..N-1
@@ -190,6 +195,8 @@ private:
         return indices;
     }
 
+    /** Compute weighted mean of ancestral particles at a given history index,
+     *  using current-time weights (importance weights propagated through ancestry). */
     State compute_smoothed_mean_at_index(size_t idx) const {
         std::vector<size_t> ancestral_indices = backtrack_indices(idx);
         const auto& target_particles = history_particles_[idx];
@@ -203,6 +210,7 @@ private:
         return mean;
     }
 
+    /** Compute weighted covariance of ancestral particles at a given history index. */
     StateMat compute_smoothed_cov_at_index(size_t idx) const {
         State mean = compute_smoothed_mean_at_index(idx);
         std::vector<size_t> ancestral_indices = backtrack_indices(idx);

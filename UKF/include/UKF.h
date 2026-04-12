@@ -25,11 +25,13 @@ public:
     float beta = 2.0f;
     float kappa = 0.0f;
 
+    /** Construct UKF with a reference to the nonlinear state-space model. */
     UKF(Model& model) : model_(model) {
         x_.setZero();
         P_.setIdentity();
     }
 
+    /** Set initial state estimate and covariance. */
     void initialize(const State& x0, const StateMat& P0) {
         x_ = x0;
         P_ = P0;

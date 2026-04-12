@@ -16,7 +16,9 @@
 using namespace Benchmark;
 
 /**
- * Generate ground truth trajectory and measurements
+ * Generate a ground truth trajectory by propagating the model with process
+ * noise, and produce noisy measurements at each step. Uses accelerated
+ * Cholesky from FilterMath for noise covariance factorization.
  */
 template<typename Model>
 auto generate_trajectory(Model& model,
@@ -348,6 +350,12 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
     return metrics;
 }
 
+/**
+ * Main benchmark driver: runs UKF, SRUKF, and their smoother variants on
+ * four challenging problems (Coupled Oscillators, Van der Pol, Bearing-Only,
+ * Reentry Vehicle). Collects RMSE, NEES, timing, and divergence metrics
+ * and exports to benchmark_results.csv plus per-problem trajectory CSVs.
+ */
 int main() {
     std::cout << "=== Modern Computational Nonlinear Filtering Benchmarks ===" << std::endl;
     std::cout << "Testing UKF, SRUKF, and smoothers on challenging problems" << std::endl;

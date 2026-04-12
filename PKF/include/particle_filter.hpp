@@ -7,8 +7,10 @@
 #include <numeric>
 #include <algorithm>
 #include <iostream>
+#include <memory>
 #include "state_space_model.hpp"
 #include "resampling.hpp"
+#include "particle_filter_gpu.hpp"
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 #include <optmath/vulkan_backend.hpp>
@@ -44,10 +46,14 @@ public:
      * @param model Pointer to the state space model
      * @param num_particles Number of particles
      * @param resampling_threshold Threshold for resampling (fraction of N)
+     * @param enable_gpu Enable GPU acceleration if available (default: true)
      */
-    ParticleFilter(const Model* model, size_t num_particles, float resampling_threshold = 0.5f)
-        : model_(model), N_(num_particles), resampling_threshold_(resampling_threshold * static_cast<float>(num_particles)) {
-
+    ParticleFilter(const Model* model, size_t num_particles,
+                   float resampling_threshold = 0.5f, bool enable_gpu = true)
+        : model_(model), N_(num_particles),
+          resampling_threshold_(resampling_threshold * static_cast<float>(num_particles)),
+          use_gpu_(enable_gpu && gpu::should_use_gpu_particles(num_particles))
+    {
         particles_.resize(N_);
         log_weights_.resize(N_, -std::log(static_cast<float>(N_))); // Initialize with uniform weights
 
@@ -55,12 +61,21 @@ public:
         props_.resize(N_);
         noises_.resize(N_);
 
+        // Initialize GPU context if enabled
+        if (use_gpu_) {
+            gpu_ctx_ = std::make_unique<gpu::GPUParticleContext<NX>>(N_);
+            if (!gpu_ctx_->is_active()) {
+                use_gpu_ = false;
+                gpu_ctx_.reset();
+            }
+        }
+
         // Seed RNG
         std::random_device rd;
         rng_.seed(rd());
     }
 
-    // Allow setting fixed seed
+    /** Set a fixed RNG seed for reproducible results. */
     void set_seed(uint64_t seed) {
         rng_.seed(seed);
     }
@@ -181,6 +196,15 @@ public:
         float ess = get_effective_sample_size();
 
         if (ess < resampling_threshold_) {
+            // GPU resampling path
+            if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
+                sync_to_gpu();
+                std::vector<size_t> parents = gpu_ctx_->resample_stratified_gpu(rng_);
+                sync_from_gpu();  // Get resampled particles back
+                return parents;
+            }
+
+            // CPU path
             // Convert log weights to linear weights for resampling
             std::vector<double> weights(N_);
             for (size_t i = 0; i < N_; ++i) {
@@ -213,6 +237,14 @@ public:
      * @brief Get filtered mean estimate
      */
     State get_mean() const {
+        // GPU path
+        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
+            // Const cast needed for GPU upload (doesn't modify)
+            const_cast<ParticleFilter*>(this)->sync_to_gpu();
+            return const_cast<gpu::GPUParticleContext<NX>*>(gpu_ctx_.get())->compute_mean_gpu();
+        }
+
+        // CPU path
         State mean = State::Zero();
         for (size_t i = 0; i < N_; ++i) {
             mean += std::exp(log_weights_[i]) * particles_[i];
@@ -225,12 +257,44 @@ public:
      */
     StateMat get_covariance() const {
         State mean = get_mean();
+
+        // GPU path
+        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
+            return const_cast<gpu::GPUParticleContext<NX>*>(gpu_ctx_.get())->compute_covariance_gpu(mean);
+        }
+
+        // CPU path
         StateMat cov = StateMat::Zero();
         for (size_t i = 0; i < N_; ++i) {
             State diff = particles_[i] - mean;
             cov += std::exp(log_weights_[i]) * (diff * diff.transpose());
         }
         return cov;
+    }
+
+    /**
+     * @brief Check if GPU acceleration is active.
+     */
+    bool is_gpu_active() const { return use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active(); }
+
+    /**
+     * @brief Sync particles to GPU (call before GPU operations).
+     */
+    void sync_to_gpu() {
+        if (gpu_ctx_ && gpu_ctx_->is_active()) {
+            gpu_ctx_->upload_particles(particles_);
+            gpu_ctx_->upload_log_weights(log_weights_);
+        }
+    }
+
+    /**
+     * @brief Sync particles from GPU (call after GPU operations).
+     */
+    void sync_from_gpu() {
+        if (gpu_ctx_ && gpu_ctx_->is_active()) {
+            gpu_ctx_->download_particles(particles_);
+            gpu_ctx_->download_log_weights(log_weights_);
+        }
     }
 
     // Accessors
@@ -249,10 +313,27 @@ private:
     std::vector<State> props_;
     std::vector<State> noises_;
 
+    // GPU acceleration
+    bool use_gpu_ = false;
+    std::unique_ptr<gpu::GPUParticleContext<NX>> gpu_ctx_;
+
     /**
-     * @brief Normalize log-weights using log-sum-exp trick
+     * @brief Normalize log-weights using the log-sum-exp trick for numerical stability.
+     *
+     * After normalization, sum(exp(log_weights)) == 1. Handles degenerate cases
+     * where all weights are -inf (particle death) by resetting to uniform.
+     * Dispatches to GPU when the GPU context is active.
      */
     void normalize_weights() {
+        // GPU path - normalize on GPU and sync back
+        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
+            gpu_ctx_->upload_log_weights(log_weights_);
+            gpu_ctx_->normalize_weights_gpu();
+            gpu_ctx_->download_log_weights(log_weights_);
+            return;
+        }
+
+        // CPU path
         double max_log_w = -std::numeric_limits<double>::infinity();
         for (double w : log_weights_) {
             if (std::isfinite(w) && w > max_log_w) max_log_w = w;

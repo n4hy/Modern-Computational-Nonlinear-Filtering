@@ -10,6 +10,12 @@
 
 using namespace Eigen;
 
+/**
+ * Export filter results (truth, filtered, smoothed trajectories and covariances)
+ * to a CSV file. Each row corresponds to one time step; columns include state
+ * components for true, filtered, and smoothed estimates plus diagonal covariance
+ * entries. Used by the EKF example to produce data for plotting scripts.
+ */
 void save_to_csv(const std::string& filename,
                  double dt,
                  const std::vector<VectorXd>& true_hist,

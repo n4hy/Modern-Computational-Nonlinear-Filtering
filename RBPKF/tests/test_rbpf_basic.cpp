@@ -36,6 +36,8 @@ public:
     }
 };
 
+/** Minimal smoke test: instantiate the RBPF template, initialize, step once,
+ *  and retrieve filtered mean to verify compilation and basic functionality. */
 int main() {
     rbpf::RbpfConfig config;
     config.num_particles = 10;

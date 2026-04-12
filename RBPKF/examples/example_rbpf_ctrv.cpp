@@ -9,6 +9,10 @@ constexpr int N_Y = 2;
 
 using AppTypes = rbpf::RbpfTypes<N_NL, N_LIN, N_Y>;
 
+/**
+ * Nonlinear sub-model for CTRV: propagates turn-rate omega as a random walk.
+ * The turn rate is the single nonlinear state dimension tracked by particles.
+ */
 class CtrvNonlinearModel : public rbpf::NonlinearModel<AppTypes> {
 public:
     float dt;
@@ -17,6 +21,7 @@ public:
     CtrvNonlinearModel(float dt_val, float std_omega_val)
         : dt(dt_val), std_omega(std_omega_val) {}
 
+    /** Propagate turn rate as a random walk: omega_k = omega_{k-1} + noise. */
     NonlinearState propagate(const NonlinearState& x_nl_prev,
                              float,
                              const NonlinearState&,
@@ -27,6 +32,7 @@ public:
         return x_nl_new;
     }
 
+    /** Log-density of the random-walk proposal for importance weight correction. */
     float log_proposal_density(const NonlinearState& x_nl_curr,
                                 const NonlinearState& x_nl_prev,
                                 float,
@@ -37,6 +43,12 @@ public:
     }
 };
 
+/**
+ * Conditional linear-Gaussian model for CTRV: given the turn rate omega from
+ * the nonlinear sub-model, the 4D linear state [x, y, vx, vy] evolves
+ * according to the constant turn-rate rotation matrix (or linear CV when
+ * omega ~ 0). Observation is direct 2D position with Gaussian noise.
+ */
 class CtrvConditionalModel : public rbpf::ConditionalLinearGaussianModel<AppTypes> {
 public:
     float dt;
@@ -47,6 +59,8 @@ public:
     CtrvConditionalModel(float dt_val, float std_a, float std_r, float std_b)
         : dt(dt_val), std_acc(std_a), std_range(std_r), std_bearing(std_b) {}
 
+    /** Build the CTRV rotation matrix A conditioned on the current turn rate omega.
+     *  Falls back to linear CV model when |omega| < 1e-5. */
     void get_dynamics(const NonlinearState& x_nl_prev,
                       float,
                       Eigen::Ref<LinearState> bias,
@@ -83,6 +97,7 @@ public:
         Q(3, 3) = var_a * dt;
     }
 
+    /** Direct 2D position observation: y = [x, y] with Gaussian noise. */
     void get_observation(const NonlinearState&,
                          float,
                          Eigen::Ref<Observation> offset,
@@ -98,6 +113,11 @@ public:
     }
 };
 
+/**
+ * RBPF example: simulate a vehicle performing a constant turn-rate maneuver,
+ * run the Rao-Blackwellized particle filter (1D nonlinear omega + 4D linear
+ * position/velocity), and print per-step position RMSE.
+ */
 int main() {
     rbpf::RbpfConfig config;
     config.num_particles = 1000;

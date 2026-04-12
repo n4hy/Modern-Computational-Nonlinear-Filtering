@@ -36,9 +36,11 @@ public:
     using Observation = typename Model::Observation;
     using StateMat = typename Model::StateMat;
 
+    /** Construct the UKF fixed-lag smoother with a given lag window size. */
     UnscentedFixedLagSmoother(Model& model, int lag)
         : ukf_(model), lag_(lag) {}
 
+    /** Set initial state and covariance, reset history buffer. */
     void initialize(const State& x0, const StateMat& P0) {
         ukf_.initialize(x0, P0);
         history_.clear();
@@ -49,6 +51,11 @@ public:
         history_.push_back(entry);
     }
 
+    /**
+     * Advance one time step: UKF predict/update, store cross-covariance
+     * in the history deque, trim to lag+2 entries, then run backward
+     * RTS smoothing over the entire window.
+     */
     void step(float t_k, const Observation& y_k, const Eigen::Ref<const State>& u_k) {
         if (history_.empty()) {
             return;
@@ -84,15 +91,19 @@ public:
     }
 
     // Accessors
+    /** Current filtered state x_{k|k}. */
     State get_filtered_state() const { return ukf_.getState(); }
+    /** Current filtered covariance P_{k|k}. */
     StateMat get_filtered_covariance() const { return ukf_.getCovariance(); }
 
+    /** Return the smoothed state at the given lag (0 = current, L = oldest in window). */
     State get_smoothed_state(int lag) const {
         if (lag < 0 || lag >= static_cast<int>(history_.size())) return State::Zero();
         int idx = static_cast<int>(history_.size()) - 1 - lag;
         return smoothed_states_[idx];
     }
 
+    /** Return the smoothed covariance at the given lag. */
     StateMat get_smoothed_covariance(int lag) const {
          if (lag < 0 || lag >= static_cast<int>(history_.size())) return StateMat::Identity();
          int idx = static_cast<int>(history_.size()) - 1 - lag;
@@ -107,6 +118,11 @@ private:
     std::vector<State> smoothed_states_;
     std::vector<StateMat> smoothed_covs_;
 
+    /**
+     * Backward RTS smoothing pass over the history buffer.
+     * Uses cross-covariance P_{x_k, x_{k+1}} to compute smoothing gain G_j,
+     * then propagates smoothed state and covariance from newest to oldest.
+     */
     void perform_smoothing() {
         int N = static_cast<int>(history_.size());
         if (N == 0) return;

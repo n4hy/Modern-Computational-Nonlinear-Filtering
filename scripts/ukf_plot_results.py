@@ -4,6 +4,7 @@ import os
 import sys
 
 def plot_ukf_results():
+    """Load UKF results CSV and generate 4-panel plot: trajectory, X/Y position, error."""
     filename = 'ukf_results.csv'
     if len(sys.argv) > 1:
         filename = sys.argv[1]

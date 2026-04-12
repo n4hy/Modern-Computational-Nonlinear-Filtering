@@ -4,6 +4,7 @@ import sys
 import os
 
 def plot_results(csv_path):
+    """Plot Lorenz-63 particle filter results: 3 state components with truth, measurements, filtered, smoothed."""
     if not os.path.exists(csv_path):
         print(f"Error: File {csv_path} not found.")
         return
