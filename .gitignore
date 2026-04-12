@@ -14,5 +14,6 @@ eigen_install/
 .DS_Store
 _deps/
 nlfvenv/
+.nlfvenv/
 .cache/
 install/

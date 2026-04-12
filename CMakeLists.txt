@@ -63,6 +63,39 @@ else()
     message(STATUS "OpenMP not found, particle filter will run single-threaded")
 endif()
 
+# --- Python Virtual Environment (Required) ---
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+message(STATUS "Python3 found: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+
+set(NLF_VENV_DIR "${CMAKE_SOURCE_DIR}/.nlfvenv")
+set(NLF_VENV_PYTHON "${NLF_VENV_DIR}/bin/python3")
+set(NLF_VENV_PIP "${NLF_VENV_DIR}/bin/pip3")
+set(NLF_REQUIREMENTS "${CMAKE_SOURCE_DIR}/requirements.txt")
+
+# Create venv if it doesn't exist
+add_custom_command(
+    OUTPUT "${NLF_VENV_DIR}/pyvenv.cfg"
+    COMMAND ${Python3_EXECUTABLE} -m venv --system-site-packages "${NLF_VENV_DIR}"
+    COMMENT "Creating Python virtual environment at ${NLF_VENV_DIR}"
+)
+
+# Install requirements when venv or requirements.txt changes
+add_custom_command(
+    OUTPUT "${NLF_VENV_DIR}/.requirements_installed"
+    DEPENDS "${NLF_VENV_DIR}/pyvenv.cfg" "${NLF_REQUIREMENTS}"
+    COMMAND "${NLF_VENV_PIP}" install --quiet --upgrade pip
+    COMMAND "${NLF_VENV_PIP}" install --quiet -r "${NLF_REQUIREMENTS}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${NLF_VENV_DIR}/.requirements_installed"
+    COMMENT "Installing Python requirements into virtual environment"
+)
+
+add_custom_target(python_venv ALL
+    DEPENDS "${NLF_VENV_DIR}/.requirements_installed"
+)
+
+message(STATUS "Python venv: ${NLF_VENV_DIR}")
+message(STATUS "  Activate with: source ${NLF_VENV_DIR}/bin/activate")
+
 include(FetchContent)
 
 # Module path
@@ -126,3 +159,15 @@ add_subdirectory(UKF)
 add_subdirectory(PKF)
 add_subdirectory(RBPKF)
 add_subdirectory(Benchmarks)
+
+# --- CTest Integration ---
+enable_testing()
+
+add_test(NAME EKF_Test COMMAND ekf_test)
+add_test(NAME UKF_Test COMMAND ukf_test)
+add_test(NAME SRUKF_Test COMMAND srukf_test)
+add_test(NAME PKF_Test COMMAND pkf_test)
+add_test(NAME PKF_Example COMMAND pkf_example)
+add_test(NAME RBPF_Basic COMMAND test_rbpf_basic)
+add_test(NAME RBPF_CTRV COMMAND example_rbpf_ctrv)
+add_test(NAME Benchmarks COMMAND run_benchmarks)

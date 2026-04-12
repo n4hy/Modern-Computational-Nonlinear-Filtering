@@ -382,6 +382,7 @@ Before deploying any Kalman filter, verify:
 - **C++20 Compiler**: GCC 10+, Clang 11+
 - **Eigen3**: Linear algebra (3.4+, fetched automatically if not found)
 - **CMake**: Build system (3.14+)
+- **Python 3**: (3.10+) For visualization scripts; a virtual environment is created automatically during the build
 - **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/SVE2/Vulkan acceleration (cloned to `$HOME`, fetched via FetchContent)
 
 ### Optional
@@ -390,13 +391,12 @@ Before deploying any Kalman filter, verify:
 - **Vulkan SDK**: For GPU-accelerated particle filter (1.3+)
 - **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM and particle filter (13+ required, 12.x has incompatibilities)
 - **OpenMP**: For parallel particle filter
-- **Python 3 + Matplotlib**: For visualization scripts
 
 ### Installation (Ubuntu/Debian)
 
 ```bash
 sudo apt install build-essential cmake libeigen3-dev
-sudo apt install python3 python3-matplotlib  # Optional: for plots
+sudo apt install python3 python3-pip python3-venv
 
 # Clone the OptimizedKernels dependency
 cd ~
@@ -416,6 +416,7 @@ cd Modern-Computational-Nonlinear-Filtering
 mkdir -p build && cd build
 
 # Configure and build (CUDA auto-detected)
+# CMake will automatically create a Python venv at .nlfvenv/ and install dependencies
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 
@@ -423,7 +424,10 @@ make -j$(nproc)
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make -j$(nproc)
 
-# Run tests
+# Run all tests via CTest
+ctest --output-on-failure
+
+# Or run individual tests
 ./EKF/ekf_test
 ./UKF/ukf_test
 ./UKF/srukf_test
@@ -432,6 +436,10 @@ make -j$(nproc)
 
 # Run benchmarks
 ./Benchmarks/run_benchmarks
+
+# Use the Python venv for visualization scripts
+source ../.nlfvenv/bin/activate
+python3 ../scripts/plot_benchmarks.py .
 
 # Run OptimizedKernels tests (Vulkan, radar, platform)
 ./_deps/optimizedkernels-build/tests/test_vulkan_vector
