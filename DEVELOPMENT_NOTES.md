@@ -1,36 +1,27 @@
 # Development Notes
 
-## CUDA Development Restrictions
+## CUDA Development Status
 
-**Date**: 2026-04-03
+**Date**: 2026-04-13
 
-**Restriction**: CUDA support disabled until Ubuntu provides CUDA 13+ in official repositories.
+**Status**: CUDA 12.x active for SM 75–90. Blackwell (SM 100) blocked until CUDA 13+.
 
-### Issues with CUDA 12.0.140 (Ubuntu)
-
-1. **SM 100 (Blackwell) unsupported**: `nvcc fatal: Unsupported gpu architecture 'compute_100'`
-2. **Compiler flag incompatibility**: `ptxas fatal: Unknown option '-expt-relaxed-constexpr'`
-
-### Architecture Targets (when CUDA 13+ available)
+### Supported Architecture Targets (CUDA 12.x)
 
 - SM 75: Turing (RTX 2080/2070/2060)
-- SM 80/86: Ampere (RTX 3090/3080/3070)
+- SM 80/86: Ampere (RTX 3090/3080/3070, A100)
 - SM 89: Ada Lovelace (RTX 4090/4080/4070)
 - SM 90: Hopper (H100)
-- SM 100: Blackwell (RTX 5090/5080) - **requires CUDA 13+**
-
-### Current Build Configuration
-
-Building with: `-DCMAKE_CUDA_COMPILER=""` (CUDA disabled)
-
-Active acceleration: Vulkan compute shaders + OpenMP
 
 ### Blocked Until CUDA 13+
 
-- All CUDA GPU acceleration (cuBLAS GEMM, GPU particle filter)
+- SM 100: Blackwell (RTX 5090/5080) — `nvcc fatal: Unsupported gpu architecture 'compute_100'`
 - cuSOLVER functions (cholesky, solve, inverse) in OptimizedKernels
-- New GPU-accelerated algorithms
-- Blackwell architecture support
+- New GPU-accelerated algorithms targeting Blackwell
+
+### Current Build Configuration
+
+CUDA auto-detected and enabled. Active acceleration: CUDA + Vulkan compute shaders + OpenMP.
 
 ### CUDA Code Ready (commit 397b2d9)
 
@@ -41,35 +32,49 @@ When CUDA 13+ is available, the following features will be activated:
 
 ---
 
-## Build Verification (April 3, 2026)
+## Build Verification (April 13, 2026)
 
-### Ubuntu 24.04.4 LTS (x86_64)
+### Ubuntu 24.04 LTS (x86_64)
 
 **System Info**:
-- OS: Ubuntu 24.04.4 LTS (Noble Numbat)
-- Kernel: 6.17.0-20-generic
-- CUDA: 12.0.140 (disabled due to incompatibilities)
+- OS: Ubuntu 24.04 LTS (Noble Numbat)
+- Kernel: 6.8.0-107-generic
+- CUDA: 12.0.140 (enabled, SM 75–90)
 - Vulkan: 1.3.275
 - Compiler: GCC 13.3.0
+- Shader compiler: glslangValidator (glslang-tools)
 
 **Build Command**:
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-**Test Results** (all passing):
-| Test | Status |
-|------|--------|
-| EKF | ✓ |
-| UKF | ✓ |
-| SRUKF | ✓ |
-| PKF | ✓ |
-| RBPKF | ✓ |
-| OptimizedKernels (Vulkan) | ✓ 5/5 |
-| OptimizedKernels (Radar) | ✓ 19/19 |
-| OptimizedKernels (Platform) | ✓ 9/9 |
-| OptimizedKernels (NEON) | Skipped (x86_64) |
+**Prerequisites**:
+```bash
+sudo apt install build-essential cmake libeigen3-dev
+sudo apt install python3 python3-pip python3-venv
+sudo apt install glslang-tools          # Required for Vulkan shader compilation
+sudo apt install vulkan-tools libvulkan-dev  # Optional: Vulkan runtime
+```
+
+**Test Results** (24/24 passing):
+| Test | Status | Time |
+|------|--------|------|
+| EKF_Test | ✓ | 0.11s |
+| UKF_Test | ✓ | 0.15s |
+| SRUKF_Test | ✓ | 1.58s |
+| PKF_Test | ✓ | 1.68s |
+| PKF_Example | ✓ | 0.28s |
+| RBPF_Basic | ✓ | 0.04s |
+| RBPF_CTRV | ✓ | 1.57s |
+| Benchmarks | ✓ | 1.33s |
+| OptimizedKernels (basic) | ✓ | 0.00s |
+| OptimizedKernels (Vulkan) | ✓ 4/4 | ~0.9s each |
+| OptimizedKernels (Radar) | ✓ 2/2 | 0.05s |
+| OptimizedKernels (NEON) | Skipped (x86_64) | — |
+| OptimizedKernels (Platform) | ✓ | 0.00s |
+| OptimizedKernels (CUDA) | ✓ | 6.90s |
 
 ---
 
@@ -77,12 +82,10 @@ make -j$(nproc)
 
 ### When CUDA 13+ Available
 
-1. Re-enable CUDA in CMakeLists.txt (remove `-DCMAKE_CUDA_COMPILER=""`)
-2. Add SM 100 (Blackwell) back to architecture list
-3. Verify `-expt-relaxed-constexpr` flag compatibility
-4. Test cuBLAS GEMM acceleration
-5. Test GPU particle filter with N >= 256 particles
-6. Benchmark CUDA vs Vulkan particle filter performance
+1. Add SM 100 (Blackwell) back to architecture list in CMakeLists.txt
+2. Verify `-expt-relaxed-constexpr` flag compatibility
+3. Benchmark Blackwell vs Ampere/Ada Lovelace performance
+4. Benchmark CUDA vs Vulkan particle filter performance
 
 ### cuSOLVER Integration (OptimizedKernels)
 

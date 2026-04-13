@@ -35,7 +35,7 @@ All SRUKF linear algebra now routes through `Common/include/FilterMath.h`:
 - **Kalman Gain**: SPD solve (O(n²)) instead of explicit inverse (O(n³))
 - **Cross-platform**: Non-ARM falls through to Eigen (or CUDA if available)
 
-> **Note**: CUDA backend pending CUDA 13+ availability. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
+> **Note**: CUDA backend active for SM 75–90 (CUDA 12.x). Blackwell SM 100 pending CUDA 13+. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
 
 ### Dimension-Adaptive Parameters
 ```cpp

@@ -2,7 +2,7 @@
 ## Modern Computational Nonlinear Filtering
 
 **Date**: April 12, 2026
-**Status**: Production-ready with SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. CUDA support implemented but pending CUDA 13+.
+**Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. CUDA active for SM 75–90; Blackwell SM 100 pending CUDA 13+.
 
 ---
 
@@ -62,17 +62,12 @@
 - SM 90: Hopper (H100)
 - SM 100: Blackwell (RTX 5090/5080) — **requires CUDA 13+**
 
-### Phase 5 (Apr 3, 2026): CUDA Compatibility Restrictions
+### Phase 5 (Apr 3–13, 2026): CUDA Compatibility & Activation
 
 **Identified CUDA 12.0.140 (Ubuntu 24.04) incompatibilities**:
-1. `nvcc fatal: Unsupported gpu architecture 'compute_100'` — Blackwell not supported
-2. `ptxas fatal: Unknown option '-expt-relaxed-constexpr'` — OptimizedKernels flag issue
+1. `nvcc fatal: Unsupported gpu architecture 'compute_100'` — Blackwell not supported in CUDA 12.x
 
-**Resolution**: CUDA disabled until Ubuntu provides CUDA 13+ in official repositories
-- Build with: `-DCMAKE_CUDA_COMPILER=""` to explicitly disable
-- CMakeLists.txt updated to exclude SM 100 from architecture list
-- DEVELOPMENT_NOTES.md created documenting all restrictions
-- All CUDA code remains in place, ready for activation when CUDA 13+ available
+**Resolution**: CMakeLists.txt updated to exclude SM 100 from architecture list. CUDA 12.x active for SM 75–90 (Turing through Hopper). Blackwell (SM 100) pending CUDA 13+.
 
 ### Phase 6 (Apr 12, 2026): Correctness Audit & ARM Optimization
 
@@ -122,7 +117,7 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 | Reentry (6D) | UKF | 369.1 | -- | 5.00 | 95.9% | 0 |
 | Reentry (6D) | SRUKF | 369.2 | 236.8 | 4.99 | 95.6% | 0 |
 
-All 8 test executables pass (EKF, UKF, SRUKF, PKF x2, RBPF x2, Benchmarks).
+All 24 CTest targets pass (8 filter tests/demos + 16 OptimizedKernels tests including CUDA and Vulkan).
 
 ---
 
@@ -137,7 +132,7 @@ All 8 test executables pass (EKF, UKF, SRUKF, PKF x2, RBPF x2, Benchmarks).
               ┌─────────────▼──┐  ┌───▼────┐  ┌──▼─────────────┐
               │  CUDA (cuBLAS) │  │ SVE2   │  │  Eigen         │
               │  (GEMM ≥32x32) │  │ (GEMM) │  │  (fallback)    │
-              │  [PENDING 13+] │  └───┬────┘  └────────────────┘
+              │  [SM 75-90]    │  └───┬────┘  └────────────────┘
               └────────────────┘      │
                                  ┌────▼──────────┐
                                  │  NEON          │
@@ -147,7 +142,7 @@ All 8 test executables pass (EKF, UKF, SRUKF, PKF x2, RBPF x2, Benchmarks).
                                          │
     ┌──────────┬──────────┬──────────┬───┴──────┬──────────────────┐
     │ EKF      │ UKF      │ SRUKF    │ RBPKF    │ PKF              │
-    │ +Smoother│ +Smoother│ +Smoother│          │ +GPU [PENDING]   │
+    │ +Smoother│ +Smoother│ +Smoother│          │ +GPU (CUDA)      │
     │          │          │          │          │ +Vulkan          │
     └──────────┴──────────┴──────────┴──────────┴──────────────────┘
 ```
@@ -161,12 +156,12 @@ All 8 test executables pass (EKF, UKF, SRUKF, PKF x2, RBPF x2, Benchmarks).
 - Bearing-Only tracking shows "divergences" due to inherently weak observability in
   early trajectory — filter eventually converges, not a code bug
 - All filters are float32-only; no double-precision template support in FilterMath
-- CUDA GPU acceleration implemented but pending CUDA 13+ (see Phase 5)
+- CUDA Blackwell (SM 100) requires CUDA 13+ (see Phase 5)
 
 ## Status: PRODUCTION READY
 
 All critical issues resolved. Production-ready across all filter types and dimensions.
 
-**Active acceleration**: Vulkan + OpenMP + Eigen (x86_64), NEON + SVE2 + Vulkan (ARM)
+**Active acceleration**: CUDA (SM 75–90) + Vulkan + OpenMP + Eigen (x86_64), NEON + SVE2 + Vulkan (ARM)
 
-**Pending**: CUDA GPU acceleration (requires Ubuntu CUDA 13+)
+**Pending**: Blackwell (SM 100) CUDA support (requires CUDA 13+)

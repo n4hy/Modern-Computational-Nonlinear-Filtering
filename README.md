@@ -46,9 +46,9 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 |----------|--------------|--------|
 | ARM aarch64 (Pi 5, Orange Pi) | NEON + SVE2 + Vulkan | **Full Support** |
 | x86_64 Linux | Vulkan + OpenMP + Eigen | **Full Support** |
-| NVIDIA GPU (CUDA 13+) | cuBLAS GEMM + GPU Particle Filter | **Pending** (see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md)) |
+| NVIDIA GPU (CUDA 12.x+) | cuBLAS GEMM + GPU Particle Filter | **Full Support** (SM 75–90) |
 
-> **Note**: CUDA support is implemented but disabled until Ubuntu provides CUDA 13+ in official repositories. CUDA 12.0 has incompatibilities with Blackwell architecture (SM 100) and certain compiler flags. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
+> **Note**: CUDA 12.x supports Turing through Hopper (SM 75–90). Blackwell (SM 100) requires CUDA 13+ which is not yet in Ubuntu official repositories. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
 
 ---
 
@@ -364,7 +364,7 @@ Before deploying any Kalman filter, verify:
 - **Graceful Fallback**: CUDA → SVE2 → NEON → Eigen with jitter + retry for numerical robustness
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
 
-> **CUDA Status**: Code ready but disabled until CUDA 13+ available (see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md))
+> **CUDA Status**: Active for SM 75–90 (CUDA 12.x). Blackwell SM 100 requires CUDA 13+ (see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md))
 
 ### Software Quality
 
@@ -388,8 +388,8 @@ Before deploying any Kalman filter, verify:
 ### Optional
 
 - **ARM NEON/SVE2**: Automatic on ARM aarch64 platforms
-- **Vulkan SDK**: For GPU-accelerated particle filter (1.3+)
-- **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM and particle filter (13+ required, 12.x has incompatibilities)
+- **Vulkan SDK + glslang-tools**: For GPU-accelerated particle filter (Vulkan 1.3+); `glslang-tools` provides `glslangValidator` to compile GLSL shaders to SPIR-V
+- **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM and particle filter (12.x supports SM 75–90; 13+ needed for Blackwell SM 100)
 - **OpenMP**: For parallel particle filter
 
 ### Installation (Ubuntu/Debian)
@@ -397,6 +397,12 @@ Before deploying any Kalman filter, verify:
 ```bash
 sudo apt install build-essential cmake libeigen3-dev
 sudo apt install python3 python3-pip python3-venv
+
+# Vulkan shader compiler (required for Vulkan GPU tests)
+sudo apt install glslang-tools
+
+# Optional: Vulkan runtime (if not already installed)
+sudo apt install vulkan-tools libvulkan-dev
 
 # Clone the OptimizedKernels dependency
 cd ~
@@ -420,7 +426,7 @@ mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 
-# Or explicitly disable CUDA (required for Ubuntu 24.04 with CUDA 12.x)
+# Or explicitly disable CUDA if needed
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make -j$(nproc)
 
@@ -452,7 +458,7 @@ python3 ../scripts/plot_benchmarks.py .
 
 | Option | Description |
 |--------|-------------|
-| `-DCMAKE_CUDA_COMPILER=""` | Disable CUDA (use for CUDA 12.x compatibility issues) |
+| `-DCMAKE_CUDA_COMPILER=""` | Disable CUDA (e.g., if toolkit is not installed or causes issues) |
 | `-DCMAKE_BUILD_TYPE=Release` | Optimized build with `-O3 -march=native` |
 | `-DCMAKE_BUILD_TYPE=Debug` | Debug build with symbols |
 
@@ -711,4 +717,4 @@ MIT License - see LICENSE file for details.
 
 **Version**: 3.1.0
 **Last Updated**: April 2026
-**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Vulkan + Eigen) + NVIDIA GPU (CUDA 13+ pending)
+**Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Vulkan + CUDA + Eigen) + NVIDIA GPU (SM 75–90 via CUDA 12.x)
