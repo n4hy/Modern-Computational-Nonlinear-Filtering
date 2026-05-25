@@ -140,8 +140,22 @@ if(NOT Eigen3_FOUND)
     endif()
 endif()
 
-# --- Dependency: OptimizedKernelsForRaspberryPi5 ---
-message(STATUS "Using local OptimizedKernelsForRaspberryPi5_NvidiaCUDA...")
+# --- Dependency: OptimizedKernelsForRaspberryPi5_NvidiaCUDA (OptMathKernels) ---
+#
+# OptMathKernels provides the NEON / SVE2 / Vulkan / CUDA compute backends that
+# FilterMath dispatches to. The upstream project publishes semantic-version
+# release tags (v0.5.x); we PIN to a specific tag rather than tracking a moving
+# branch so that builds are reproducible and a kernel update is a deliberate,
+# audited bump of OPTMATH_RELEASE_TAG below (see DEVELOPMENT_NOTES.md ->
+# "OptMathKernels Dependency - Release Audit & Pinning Policy"). To adopt a
+# newer kernel release: audit the upstream diff,
+# update this tag, rebuild, retest, rebenchmark, then commit.
+#
+# Pinned: v0.5.15 — "Complete source documentation coverage"
+#   (v0.5.14 added discrete-GPU preference to Vulkan device selection;
+#    v0.5.15 completed per-source documentation. No public API change vs v0.5.13.)
+set(OPTMATH_RELEASE_TAG "v0.5.15" CACHE STRING "Pinned OptMathKernels release tag")
+message(STATUS "Using OptimizedKernelsForRaspberryPi5_NvidiaCUDA @ ${OPTMATH_RELEASE_TAG}")
 
 # Configure OptimizedKernels options before FetchContent
 set(ENABLE_NEON ON CACHE BOOL "Enable ARM NEON optimizations" FORCE)
@@ -155,10 +169,13 @@ else()
     set(ENABLE_CUDA OFF CACHE BOOL "Enable NVIDIA CUDA support" FORCE)
 endif()
 
+# GIT_TAG follows the pinned release tag. The repository is the local clone in
+# $HOME (kept in sync with github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA);
+# FetchContent checks out OPTMATH_RELEASE_TAG into _deps/optimizedkernels-src.
 FetchContent_Declare(
     OptimizedKernels
     GIT_REPOSITORY $ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
-    GIT_TAG main
+    GIT_TAG ${OPTMATH_RELEASE_TAG}
 )
 FetchContent_MakeAvailable(OptimizedKernels)
 

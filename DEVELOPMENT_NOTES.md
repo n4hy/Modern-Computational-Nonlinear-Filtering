@@ -1,34 +1,116 @@
 # Development Notes
 
+## OptMathKernels Dependency — Release Audit & Pinning Policy
+
+**Date**: 2026-05-25
+
+The compute backends (NEON / SVE2 / Vulkan / CUDA) live in the external
+[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+(OptMathKernels) project, consumed via CMake `FetchContent` and dispatched to
+through `Common/include/FilterMath.h` / `FilterMathGPU.h`.
+
+### Pinning policy (the "tag/release format going forward")
+
+OptMathKernels now publishes semantic-version release tags (`v0.5.0` … `v0.5.15`).
+This project **pins to a specific tag** rather than tracking the moving `main`
+branch. The pin lives in one place — `CMakeLists.txt`:
+
+```cmake
+set(OPTMATH_RELEASE_TAG "v0.5.15" CACHE STRING "Pinned OptMathKernels release tag")
+FetchContent_Declare(OptimizedKernels ... GIT_TAG ${OPTMATH_RELEASE_TAG})
+```
+
+Adopting a newer kernel release is a deliberate, audited step:
+
+1. `git -C $HOME/OptimizedKernelsForRaspberryPi5_NvidiaCUDA fetch --tags`
+2. Audit the upstream diff `git diff <old-tag>..<new-tag>` — pay attention to
+   anything under `include/` (public API) and the backend `src/` the filters use.
+3. Bump `OPTMATH_RELEASE_TAG`, reconfigure, rebuild.
+4. `ctest --output-on-failure` (expect 24/24) and run the benchmark suite.
+5. Update README/this file, then commit and tag the parent release.
+
+### Audit: v0.5.13 → v0.5.15 (adopted 2026-05-25)
+
+Previous pin tracked `main` (built at `v0.5.13`). Reviewed every commit and the
+full `git diff v0.5.13..v0.5.15`:
+
+| Change | File | Impact on this project |
+|--------|------|------------------------|
+| **Discrete-GPU preference in Vulkan device selection** | `src/vulkan/vulkan_backend.cpp` | Behavioral, positive. `VulkanContext::init()` now scores physical devices (discrete > integrated > virtual > CPU) and requires a compute queue, instead of blindly taking `devices[0]`. On this dual-GPU x86_64 box it now logs and selects the RTX 5070 Ti for Vulkan compute. No API change. |
+| Per-source documentation coverage | `src/vulkan/vulkan_backend.cpp`, `src/platform/platform.cpp` | None — comments only. |
+| x86_64 dual-GPU benchmark docs + release notes | `README.md` | None — upstream docs. |
+| Version bump 0.5.13 → 0.5.15 | `CMakeLists.txt` | None. |
+
+**Public API (`include/optmath/*.hpp`): zero changes** across v0.5.13..v0.5.15,
+so every `optmath::` call site in `FilterMath.h`, `FilterMathGPU.h`, and
+`particle_filter_gpu.hpp` is unaffected.
+
+**Verification (2026-05-25):** reconfigured at `v0.5.15`, full rebuild, **24/24
+CTest pass**, Vulkan tests confirm `[Vulkan] Selected GPU: NVIDIA GeForce RTX
+5070 Ti Laptop GPU`, and the benchmark RMSE/NEES figures are numerically
+identical to the prior run (the changed kernel path is not on the UKF/SRUKF
+CUDA/Eigen benchmark path). Safe to adopt.
+
+---
+
 ## CUDA Development Status
 
-**Date**: 2026-04-13
+**Date**: 2026-05-25
 
-**Status**: CUDA 12.x active for SM 75–90. Blackwell (SM 100) blocked until CUDA 13+.
+**Status**: CUDA 13.x active for SM 75–120 including Blackwell (verified on
+RTX 5070 Ti / SM 120, CUDA 13.1). CUDA 12.x remains supported for SM 75–90.
 
-### Supported Architecture Targets (CUDA 12.x)
+> Historical note: earlier revisions of this file capped support at SM 90 and
+> listed Blackwell (SM 100/SM 120) as "blocked until CUDA 13+". That blocker is
+> resolved — see the verification block below and the README CUDA section.
 
-- SM 75: Turing (RTX 2080/2070/2060)
-- SM 80/86: Ampere (RTX 3090/3080/3070, A100)
-- SM 89: Ada Lovelace (RTX 4090/4080/4070)
-- SM 90: Hopper (H100)
+### Supported Architecture Targets
 
-### Blocked Until CUDA 13+
+- SM 75: Turing (RTX 2080/2070/2060) — CUDA 12.x / 13.x
+- SM 80/86: Ampere (RTX 3090/3080/3070, A100) — CUDA 12.x / 13.x
+- SM 89: Ada Lovelace (RTX 4090/4080/4070) — CUDA 12.x / 13.x
+- SM 90: Hopper (H100) — CUDA 12.x / 13.x
+- **SM 100 / SM 120: Blackwell (RTX 5090/5080/5070) — CUDA 13.x only**
 
-- SM 100: Blackwell (RTX 5090/5080) — `nvcc fatal: Unsupported gpu architecture 'compute_100'`
-- cuSOLVER functions (cholesky, solve, inverse) in OptimizedKernels
-- New GPU-accelerated algorithms targeting Blackwell
+For Blackwell, configure with `-DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON`
+(SM 120 is not in the default multi-arch list). On CUDA 12.x, `nvcc` rejects
+`compute_100`/`compute_120` with `Unsupported gpu architecture`.
 
 ### Current Build Configuration
 
-CUDA auto-detected and enabled. Active acceleration: CUDA + Vulkan compute shaders + OpenMP.
+CUDA auto-detected and enabled. Active acceleration: CUDA (cuBLAS GEMM, GPU
+particle filter) + Vulkan compute shaders + OpenMP. OptMathKernels cuSOLVER
+Cholesky is available as of upstream v0.5.10 (verified on CUDA 13).
 
-### CUDA Code Ready (commit 397b2d9)
+### CUDA Code (commit 397b2d9, active)
 
-When CUDA 13+ is available, the following features will be activated:
 - cuBLAS GEMM for matrices >= 32x32
 - GPU particle filter context
 - Runtime CUDA enable/disable via `filtermath::config::set_cuda_enabled()`
+
+---
+
+## Build Verification (May 25, 2026)
+
+### Ubuntu 26.04 (x86_64) — OptMathKernels v0.5.15
+
+**System Info**:
+- OS: Ubuntu 26.04 (x86_64)
+- GPU: NVIDIA GeForce RTX 5070 Ti Laptop GPU (Blackwell, SM 120), driver 595.71.05
+- CUDA: 13.1.115 (enabled, SM native / 120)
+- Vulkan: 1.4.341 (discrete GPU auto-selected — RTX 5070 Ti)
+- Eigen: 3.4.0
+- OptMathKernels: pinned **v0.5.15** via `OPTMATH_RELEASE_TAG`
+
+**Build Command**:
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON
+make -j$(nproc)
+```
+
+**Test Results: 24/24 passing** (8 filter/benchmark + 16 OptMathKernels GPU/SIMD,
+incl. `test_cuda_kernels` on the Blackwell GPU and the 4 Vulkan suites selecting
+the discrete GPU). Total CTest time ≈ 5.9 s.
 
 ---
 
@@ -99,6 +181,15 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 ---
 
 ## Changelog
+
+### v3.2.0 (May 2026)
+- Audited OptMathKernels major updates v0.5.13 → v0.5.15 (see "Release Audit" above)
+- Adopted tag/release pinning: `OPTMATH_RELEASE_TAG` pins FetchContent to a
+  release tag (now `v0.5.15`) instead of tracking `main`
+- Picked up upstream Vulkan discrete-GPU preference (RTX 5070 Ti now selected for
+  Vulkan compute on this dual-GPU host)
+- Refreshed CUDA status to CUDA 13.x / Blackwell SM 120 (resolved former blocker)
+- Rebuilt, 24/24 CTest pass, benchmarks rerun (RMSE/NEES unchanged), plots regenerated
 
 ### v3.1.0 (April 2026)
 - Added CUDA GPU acceleration (FilterMath.h, FilterMathGPU.h, particle_filter_gpu.hpp)

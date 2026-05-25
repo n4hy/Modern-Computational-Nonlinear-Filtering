@@ -38,7 +38,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 - **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
 - **Fixed-Lag Smoothers**: Rauch-Tung-Striebel (RTS) backward pass and ancestry-based smoothing
 - **Comprehensive Benchmarks**: 4 challenging test problems with full metrics (10D coupled oscillators, Van der Pol, bearing-only tracking, reentry vehicle)
-- **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations + CUDA GPU acceleration via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
+- **Hardware Acceleration**: NEON dense linear algebra + Vulkan particle operations + CUDA GPU acceleration via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) (OptMathKernels), pinned to release tag **[v0.5.15](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA/releases/tag/v0.5.15)**
 
 ### Platform Support
 
@@ -115,7 +115,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. Benchmarks run through the FilterMath dispatch layer (CUDA cuBLAS / SVE2 / NEON / Eigen, selected at runtime by platform).
 
-> **Latest run**: May 2026 on **Ubuntu 26.04 x86_64**, **NVIDIA GeForce RTX 5070 Ti (Blackwell, SM 120)** with **CUDA 13.1**, Eigen 3.4, Vulkan 1.4, GCC 15.2. All **24/24** CTest cases pass (8 filter tests + 16 OptimizedKernels GPU/SIMD tests, including the CUDA kernel suite on the Blackwell GPU).
+> **Latest run**: 25 May 2026 on **Ubuntu 26.04 x86_64**, **NVIDIA GeForce RTX 5070 Ti (Blackwell, SM 120)** with **CUDA 13.1**, Eigen 3.4, Vulkan 1.4, against **OptMathKernels v0.5.15** (pinned release tag). All **24/24** CTest cases pass (8 filter tests + 16 OptimizedKernels GPU/SIMD tests, including the CUDA kernel suite on the Blackwell GPU and the Vulkan suites, which now auto-select the discrete RTX 5070 Ti).
 
 Reproduce everything below with:
 
@@ -144,8 +144,8 @@ Consolidated metrics from the latest run (`benchmark_results.csv`):
 
 | Problem | Filter | RMSE | Smoothed RMSE | NEES median | In 95% | Avg step | Total | Div |
 |---------|--------|-----:|--------------:|------------:|-------:|---------:|------:|----:|
-| Coupled Osc 10D | UKF | 1.457 | — | 9.89 | 94.5% | 0.0076 ms | 38.1 ms | 0 |
-| Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0082 ms | 41.7 ms | 0 |
+| Coupled Osc 10D | UKF | 1.457 | — | 9.89 | 94.5% | 0.0081 ms | 41.1 ms | 0 |
+| Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0081 ms | 41.3 ms | 0 |
 | Coupled Osc 10D | UKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0275 ms | 138.0 ms | 0 |
 | Coupled Osc 10D | SRUKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0400 ms | 201.1 ms | 0 |
 | Van der Pol 2D | UKF | 0.468 | — | 1.14 | 95.9% | 0.00039 ms | 0.81 ms | 0 |
@@ -386,7 +386,7 @@ Before deploying any Kalman filter, verify:
   - Auto-enable for N >= 256 particles
 - **ARM NEON Dense Linear Algebra**: Cholesky, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 - **ARM SVE2**: Cache-blocked GEMM with FCMA and I8MM on Cortex-A720+ (Orange Pi 5/6)
-- **Vulkan Compute**: Particle filter noise addition parallelized on GPU (Mali-G720, VideoCore VII, discrete GPUs)
+- **Vulkan Compute**: Particle filter noise addition parallelized on GPU (Mali-G720, VideoCore VII, discrete GPUs). As of OptMathKernels v0.5.14, device selection prefers a **discrete GPU with a compute queue** over integrated/CPU fallbacks — on multi-GPU hosts the discrete card (e.g. RTX 5070 Ti) is chosen and logged at init.
 - **Graceful Fallback**: CUDA → SVE2 → NEON → Eigen with jitter + retry for numerical robustness
 - **Single Precision**: Consistent use of `float` for SIMD vectorization
 
@@ -409,7 +409,7 @@ Before deploying any Kalman filter, verify:
 - **Eigen3**: Linear algebra (3.4+, fetched automatically if not found)
 - **CMake**: Build system (3.14+)
 - **Python 3**: (3.10+) For visualization scripts; a virtual environment is created automatically during the build
-- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)**: NEON/SVE2/Vulkan acceleration (cloned to `$HOME`, fetched via FetchContent)
+- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)** (OptMathKernels): NEON/SVE2/Vulkan/CUDA acceleration (cloned to `$HOME`, fetched via FetchContent). **Pinned to a release tag** for reproducible builds — see `OPTMATH_RELEASE_TAG` in the root `CMakeLists.txt` (currently **v0.5.15**). Bumping it is a deliberate, audited step; see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) → *OptMathKernels Release Audit & Pinning Policy*.
 
 ### Optional
 
@@ -513,6 +513,7 @@ python3 ../scripts/plot_benchmarks.py .
 | `-DCMAKE_CUDA_COMPILER=""` | Disable CUDA (e.g., if toolkit is not installed or causes issues) |
 | `-DCMAKE_CUDA_ARCHITECTURES=native` | Build CUDA code for the detected GPU only (required for Blackwell SM 120 on CUDA 13.x) |
 | `-DOPTMATH_CUDA_NATIVE=ON` | Make the OptimizedKernels dependency honor `native` instead of its default multi-arch list |
+| `-DOPTMATH_RELEASE_TAG=v0.5.15` | OptMathKernels release tag to fetch/pin (default `v0.5.15`). Bump only after auditing the upstream diff — see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) |
 | `-DCMAKE_BUILD_TYPE=Release` | Optimized build with `-O3 -march=native` (forwarded to nvcc's host compiler via `-Xcompiler` for ABI consistency) |
 | `-DCMAKE_BUILD_TYPE=Debug` | Debug build with symbols |
 
@@ -769,6 +770,7 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 3.1.0
-**Last Updated**: May 2026
+**Version**: 3.2.0
+**Last Updated**: 25 May 2026
+**OptMathKernels**: pinned to release tag [v0.5.15](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA/releases/tag/v0.5.15)
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Vulkan + CUDA + Eigen) + NVIDIA GPU (SM 75–120 via CUDA 12.x/13.x; Blackwell RTX 50-series verified on SM 120 / CUDA 13.1)
