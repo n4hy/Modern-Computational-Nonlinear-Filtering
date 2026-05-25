@@ -32,7 +32,7 @@ def plot_summary_comparison(df, output_dir='.'):
     metrics_to_plot = [
         ('RMSE_Overall', 'Overall RMSE'),
         ('RMSE_Smoothed_Overall', 'Smoothed RMSE'),
-        ('Mean_NEES', 'Mean NEES')
+        ('Median_NEES', 'Median NEES')
     ]
 
     for idx, (metric, title) in enumerate(metrics_to_plot):
@@ -260,7 +260,10 @@ def main():
         'vanderpol_srukf_smooth.csv',
         'bearing_ukf.csv',
         'bearing_srukf.csv',
-        'bearing_srukf_smooth.csv'
+        'bearing_srukf_smooth.csv',
+        'reentry_ukf.csv',
+        'reentry_srukf.csv',
+        'reentry_srukf_smooth.csv'
     ]
 
     for traj_file in trajectory_files:
