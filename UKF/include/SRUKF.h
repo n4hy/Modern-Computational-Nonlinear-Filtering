@@ -328,6 +328,15 @@ public:
         Eigen::Matrix<float, NY, NSIG> Dy;
         for (int i = 0; i < NSIG; ++i) {
             Dy.col(i) = Y_pred.col(i) - y_hat;
+            // Wrap angular OBSERVATION deviations to [-π, π] (R32): for an
+            // angular observable a raw (Y - y_hat) can straddle the ±π branch
+            // cut.  Mirrors the angular state-difference wrap just below.
+            for (int j = 0; j < NY; ++j) {
+                if (model_.isAngularObservation(j)) {
+                    while (Dy(j, i) >  M_PI) Dy(j, i) -= 2.0f * M_PI;
+                    while (Dy(j, i) < -M_PI) Dy(j, i) += 2.0f * M_PI;
+                }
+            }
             State diff_x = sigmas.X.col(i) - x_;
             // Wrap angular state differences to [-π, π]
             for (int j = 0; j < NX; ++j) {
@@ -354,16 +363,34 @@ public:
 
         // 7. State Update with innovation gating
         Observation innovation = y_k - y_hat;
+        // Wrap angular OBSERVATION innovations to [-π, π] (R32): for an angular
+        // observable (e.g. an interferometer cone angle) a raw (y_k - y_hat)
+        // straddling the ±π branch cut would read ~2π instead of ~0 and inject
+        // a catastrophic correction.  No-op for non-angular observations.
+        for (int j = 0; j < NY; ++j) {
+            if (model_.isAngularObservation(j)) {
+                while (innovation(j) >  M_PI) innovation(j) -= 2.0f * M_PI;
+                while (innovation(j) < -M_PI) innovation(j) += 2.0f * M_PI;
+            }
+        }
 
-        // Gate the innovation to prevent catastrophic updates from outliers
+        // Gate the innovation to prevent catastrophic updates from outliers.
+        // mahal_dist_sq = innovᵀ (S_yy S_yyᵀ)⁻¹ innov is the normalized innovation
+        // squared (NIS) -- the rigorous consistency statistic (NOT an R-only
+        // approximation) -- stored in last_nis_ for monitoring (R33).
         Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
         float mahal_dist_sq = temp_innov.squaredNorm();
+        last_nis_ = mahal_dist_sq;
         float gate_threshold = 25.0f;  // Chi-squared threshold (larger to allow GPS)
 
         float scale = 1.0f;
         if (mahal_dist_sq > gate_threshold) {
-            // Scale down large corrections
-            scale = std::sqrt(gate_threshold / mahal_dist_sq);
+            ++gated_count_;
+            // R33: optionally REJECT the outlier (zero correction) instead of
+            // down-scaling it; default (reject_outliers_ = false) preserves the
+            // original down-scaling behaviour.
+            scale = reject_outliers_ ? 0.0f
+                                     : std::sqrt(gate_threshold / mahal_dist_sq);
         }
 
         State correction = scale * (K * innovation);
@@ -435,10 +462,23 @@ public:
     void setState(const State& x) { x_ = x; }
     void setSqrtCovariance(const StateMat& S) { S_ = S; }
 
+    // --- Consistency monitoring & outlier policy (R33) ---
+    // last_nis_ is the normalized innovation squared (NIS) from the most recent
+    // update() -- the rigorous chi-squared statistic, not an R-only proxy.
+    float getLastNIS() const { return last_nis_; }
+    // Count of updates whose NIS exceeded the gate (scaled or rejected).
+    unsigned getGatedCount() const { return gated_count_; }
+    // When true, a gated outlier is REJECTED (zero correction) rather than
+    // down-scaled.  Default false preserves the original behaviour.
+    void setRejectOutliers(bool reject) { reject_outliers_ = reject; }
+
 private:
     Model& model_;
     State x_;
     StateMat S_;  // Square root of covariance (Cholesky factor)
+    float last_nis_ = 0.0f;         // NIS from the most recent update (R33)
+    unsigned gated_count_ = 0;      // count of gated/rejected updates (R33)
+    bool reject_outliers_ = false;  // reject (vs down-scale) gated outliers (R33)
 
     /**
      * Rank-1 Cholesky update: S_new such that
