@@ -48,7 +48,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 | x86_64 Linux | Vulkan + OpenMP + Eigen | **Full Support** |
 | NVIDIA GPU (CUDA 12.x / 13.x) | cuBLAS GEMM + GPU Particle Filter | **Full Support** (SM 75–120) |
 
-> **Note**: CUDA 12.x covers Turing through Hopper (SM 75–90). CUDA 13.x adds Blackwell — including consumer RTX 50-series (**SM 120**, e.g. RTX 5070/5080/5090). Verified on an RTX 5070 Ti (SM 120) with CUDA 13.1. To build for your exact GPU, configure with `-DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON`. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
+> **Note**: CUDA 12.x covers Turing through Hopper (SM 75–90). CUDA 13.x adds Blackwell — including consumer RTX 50-series (**SM 120**, e.g. RTX 5070/5080/5090). Verified on an RTX 5070 Ti (SM 120) with CUDA 13.1; also rebuilt cleanly with CUDA 13.0.88 on Linux 6.17 NVIDIA kernel (multi-arch default). To build for your exact GPU, configure with `-DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON`. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
 
 ---
 
@@ -481,6 +481,11 @@ make -j$(nproc)
 # Or explicitly disable CUDA if needed
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make -j$(nproc)
+
+# (Optional) system install — headers, libs, and Vulkan .spv shaders
+# go under CMAKE_INSTALL_PREFIX (default /usr/local; override with
+# -DCMAKE_INSTALL_PREFIX=/path when configuring).
+sudo make install
 
 # Run all tests via CTest
 ctest --output-on-failure

@@ -20,3 +20,4 @@ nlfvenv/
 .nlfvenv/
 .cache/
 install/
+cuda-keyring*.deb
