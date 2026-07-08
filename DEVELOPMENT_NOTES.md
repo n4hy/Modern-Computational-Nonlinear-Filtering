@@ -11,12 +11,12 @@ through `Common/include/FilterMath.h` / `FilterMathGPU.h`.
 
 ### Pinning policy (the "tag/release format going forward")
 
-OptMathKernels now publishes semantic-version release tags (`v0.5.0` … `v0.5.15`).
+OptMathKernels now publishes semantic-version release tags (`v0.5.0` … `v0.5.17`).
 This project **pins to a specific tag** rather than tracking the moving `main`
 branch. The pin lives in one place — `CMakeLists.txt`:
 
 ```cmake
-set(OPTMATH_RELEASE_TAG "v0.5.15" CACHE STRING "Pinned OptMathKernels release tag")
+set(OPTMATH_RELEASE_TAG "v0.5.17" CACHE STRING "Pinned OptMathKernels release tag")
 FetchContent_Declare(OptimizedKernels ... GIT_TAG ${OPTMATH_RELEASE_TAG})
 ```
 
@@ -50,6 +50,33 @@ CTest pass**, Vulkan tests confirm `[Vulkan] Selected GPU: NVIDIA GeForce RTX
 5070 Ti Laptop GPU`, and the benchmark RMSE/NEES figures are numerically
 identical to the prior run (the changed kernel path is not on the UKF/SRUKF
 CUDA/Eigen benchmark path). Safe to adopt.
+
+### Audit: v0.5.15 → v0.5.17 (adopted 2026-07-08)
+
+Fetched tags and reviewed the full `git diff v0.5.15..v0.5.17` (two upstream
+releases). The entire diff touches only 5 files — `CMakeLists.txt`, `README.md`,
+`requirements.txt`, `.gitignore`, and `tests/test_neon_linalg.cpp`:
+
+| Change | File | Impact on this project |
+|--------|------|------------------------|
+| x86_64 desktop RTX 5090 benchmark numbers | `README.md` | None — upstream docs. |
+| **NEON `TrsvLower64x64` unit-test tolerance `1e-3 → 5e-3`** | `tests/test_neon_linalg.cpp` | None functional. float32 forward-substitution over 64 rows accumulates ~O(1e-3) round-off; the twin `TrsvUpper64x64` test already used `5e-3`. Removes a latent flaky-test edge; the `neon_trsv_lower` **kernel is unchanged**. |
+| Documented apt/build deps (`glslang-tools`/`glslc` for Vulkan SPIR-V shaders) | `requirements.txt` | None — build-doc only; already installed on this host (Vulkan suites compile & pass). |
+| Ignore `optenv/` venv and `*.spv` artifacts | `.gitignore` | None. |
+| Version bump 0.5.15 → 0.5.17 | `CMakeLists.txt` | None. |
+
+**Public API (`include/`) and compute backends (`src/`): zero changes** across
+v0.5.15..v0.5.17 (`git diff --name-only v0.5.15..v0.5.17 -- include/ src/` is
+empty). No `optmath::` call site in `FilterMath.h`, `FilterMathGPU.h`, or
+`particle_filter_gpu.hpp` is affected. **Note:** the upstream releases contain no
+MPI/OpenMPI — the parallelism story here remains OpenMP (CPU) + CUDA/Vulkan (GPU).
+
+**Verification (2026-07-08):** cleared `_deps/optimizedkernels-*`, reconfigured
+at `v0.5.17` (dep HEAD `cb4b9ef` = tag `v0.5.17`), full rebuild, **24/24 CTest
+pass** (≈ 5.8 s), benchmarks rerun and plots regenerated — RMSE/NEES figures
+numerically consistent with the prior run (the changed test path is not on the
+UKF/SRUKF CUDA/Eigen benchmark path; only 3 of 15 committed PNGs changed at the
+byte level, all cosmetic). Safe to adopt.
 
 ---
 
@@ -90,17 +117,17 @@ Cholesky is available as of upstream v0.5.10 (verified on CUDA 13).
 
 ---
 
-## Build Verification (May 25, 2026)
+## Build Verification (July 8, 2026)
 
-### Ubuntu 26.04 (x86_64) — OptMathKernels v0.5.15
+### Ubuntu 26.04 LTS (x86_64) — OptMathKernels v0.5.17
 
 **System Info**:
-- OS: Ubuntu 26.04 (x86_64)
+- OS: Ubuntu 26.04 LTS (x86_64)
 - GPU: NVIDIA GeForce RTX 5070 Ti Laptop GPU (Blackwell, SM 120), driver 595.71.05
 - CUDA: 13.1.115 (enabled, SM native / 120)
 - Vulkan: 1.4.341 (discrete GPU auto-selected — RTX 5070 Ti)
 - Eigen: 3.4.0
-- OptMathKernels: pinned **v0.5.15** via `OPTMATH_RELEASE_TAG`
+- OptMathKernels: pinned **v0.5.17** via `OPTMATH_RELEASE_TAG`
 
 **Build Command**:
 ```bash
@@ -181,6 +208,15 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 ---
 
 ## Changelog
+
+### v3.2.1 (July 2026)
+- Audited OptMathKernels bump v0.5.15 → v0.5.17 (see "Release Audit" above);
+  upstream diff is docs + a NEON unit-test tolerance fix only — no public API,
+  compute-backend, or MPI/OpenMPI change
+- Bumped `OPTMATH_RELEASE_TAG` to `v0.5.17`, cleared `_deps` to force re-checkout,
+  full rebuild, **24/24 CTest pass**
+- Benchmarks rerun and plots regenerated (RMSE/NEES consistent; 3/15 committed
+  PNGs changed cosmetically)
 
 ### v3.2.0 (May 2026)
 - Audited OptMathKernels major updates v0.5.13 → v0.5.15 (see "Release Audit" above)

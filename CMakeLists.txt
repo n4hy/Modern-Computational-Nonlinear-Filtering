@@ -154,10 +154,13 @@ endif()
 # newer kernel release: audit the upstream diff,
 # update this tag, rebuild, retest, rebenchmark, then commit.
 #
-# Pinned: v0.5.15 — "Complete source documentation coverage"
-#   (v0.5.14 added discrete-GPU preference to Vulkan device selection;
-#    v0.5.15 completed per-source documentation. No public API change vs v0.5.13.)
-set(OPTMATH_RELEASE_TAG "v0.5.15" CACHE STRING "Pinned OptMathKernels release tag")
+# Pinned: v0.5.17 — "fix TrsvLower64x64 test tolerance; document build deps"
+#   (v0.5.16 added x86_64 desktop RTX 5090 benchmark numbers — docs only;
+#    v0.5.17 relaxed the NEON TrsvLower64x64 unit-test tolerance to 5e-3 to match
+#    its TrsvUpper twin, and documented apt/build deps — glslang-tools/glslc for
+#    Vulkan SPIR-V shaders — in requirements.txt. No public API (include/) or
+#    compute-backend (src/) change vs v0.5.15.)
+set(OPTMATH_RELEASE_TAG "v0.5.17" CACHE STRING "Pinned OptMathKernels release tag")
 message(STATUS "Using OptimizedKernelsForRaspberryPi5_NvidiaCUDA @ ${OPTMATH_RELEASE_TAG}")
 
 # Configure OptimizedKernels options before FetchContent
