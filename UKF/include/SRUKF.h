@@ -399,7 +399,17 @@ public:
         // 8. Covariance Update using square root form
         // P = P - K*S_yy*S_yy^T*K^T = S*S^T - K*S_yy*S_yy^T*K^T
         // Use QR to compute: [S^T, (K*S_yy)^T]^T and extract updated S
-        Eigen::Matrix<float, NX, NY> U = K * S_yy;
+        //
+        // The downdate MUST carry the same `scale` as the state correction
+        // (R33). The effective gain applied to the state is `scale*K`, so the
+        // covariance must shrink by (scale*K)*P_yy*(scale*K)^T = scale^2 *
+        // K*P_yy*K^T. Scaling each downdate column by `scale` yields exactly
+        // that scale^2 reduction (a downdate subtracts u*u^T). When an outlier
+        // is rejected (scale == 0) U becomes zero → no downdate, so a discarded
+        // measurement no longer shrinks the covariance into false certainty;
+        // for 0 < scale < 1 the covariance stays consistent with the partial
+        // state correction instead of collapsing as if fully fused.
+        Eigen::Matrix<float, NX, NY> U = scale * (K * S_yy);
 
         // Try rank-1 downdates, but detect if they fail
         StateMat S_updated = S_;
@@ -412,7 +422,7 @@ public:
             // Fallback: compute P directly and take Cholesky
             // P_new = P - K * P_yy * K^T = S*S^T - K*S_yy*S_yy^T*K^T
             StateMat P_curr = S_ * S_.transpose();
-            StateMat KPyyKT = U * U.transpose();  // U = K*S_yy, so U*U^T = K*S_yy*S_yy^T*K^T
+            StateMat KPyyKT = U * U.transpose();  // U = scale*K*S_yy, so U*U^T = scale^2 * K*S_yy*S_yy^T*K^T (consistent with the state scaling)
             StateMat P_new = P_curr - KPyyKT;
 
             // Ensure positive definiteness

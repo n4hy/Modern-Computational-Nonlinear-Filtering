@@ -95,20 +95,27 @@ public:
               const Observation& y_k,
               const NonlinearState& u_k) {
 
-        Eigen::MatrixXf A(Types::Nlin, Types::Nlin);
-        Eigen::MatrixXf B(Types::Nlin, Types::Nlin);
-        LinearState bias;
-        LinearCov Q;
-
-        Eigen::MatrixXf H(Types::Ny, Types::Nlin);
-        Observation offset;
-        ObsCov R;
-
 #ifdef _OPENMP
         #pragma omp parallel for
 #endif
         for (int i = 0; i < config_.num_particles; ++i) {
             auto& p = particles_[i];
+
+            // Per-particle dynamics / observation work matrices. These MUST be
+            // declared inside the loop body: under `#pragma omp parallel for`
+            // any variable declared outside the region is shared across threads,
+            // so hoisting them would let thread B's get_dynamics()/get_observation()
+            // clobber A/B/Q/H/R while thread A is still mid predict()/update() —
+            // a data race yielding nondeterministic (wrong) per-particle KFs and,
+            // via concurrent Eigen reallocation, potential crashes.
+            Eigen::MatrixXf A(Types::Nlin, Types::Nlin);
+            Eigen::MatrixXf B(Types::Nlin, Types::Nlin);
+            LinearState bias;
+            LinearCov Q;
+
+            Eigen::MatrixXf H(Types::Ny, Types::Nlin);
+            Observation offset;
+            ObsCov R;
 
             NonlinearState x_nl_prev = p.x_nl;
 #ifdef _OPENMP

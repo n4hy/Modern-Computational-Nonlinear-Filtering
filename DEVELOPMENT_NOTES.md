@@ -209,6 +209,23 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 
 ## Changelog
 
+### v3.2.2 (July 2026) — audit fixes
+- **RBPF OpenMP data race (correctness).** `rbpf_core.hpp::step()` declared the
+  per-particle work matrices `A,B,bias,Q,H,offset,R` outside the
+  `#pragma omp parallel for`, so they were shared across threads and clobbered
+  mid-`predict`/`update` — nondeterministic wrong results (and possible crash via
+  concurrent Eigen realloc). Moved the declarations inside the loop body.
+- **SRUKF gated-covariance consistency (correctness).** `SRUKF::update()` applied
+  the innovation-gate `scale` only to the state correction while downdating the
+  covariance by the full `K·S_yy·S_yyᵀ·Kᵀ`. A rejected outlier (`scale==0`) thus
+  shrank the covariance with no state change → false certainty / divergence.
+  Downdate now uses `U = scale·(K·S_yy)` (scale² reduction; no-op when rejected).
+  Default down-scaling path is numerically unchanged (`scale==1`).
+- **Benchmark divergence metric (harness).** Bearing-Only used the default
+  `divergence_threshold = 10.0f` against a ~64 m error scale, mislabelling ~65% of
+  steps as "divergences" (NEES showed the filter was consistent). Gave it a
+  problem-scaled 500 m threshold (analogous to reentry's 5 km); count now 0.
+
 ### v3.2.1 (July 2026)
 - Audited OptMathKernels bump v0.5.15 → v0.5.17 (see "Release Audit" above);
   upstream diff is docs + a NEON unit-test tolerance fix only — no public API,

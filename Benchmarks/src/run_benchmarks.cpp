@@ -500,12 +500,20 @@ int main() {
 
         auto data = generate_trajectory(model, x0, 30.0f, 0.1f, 44);
 
+        // Divergence threshold scaled to this problem. The target starts at
+        // (200,0) and travels ~300 m over 30 s, giving a steady-state tracking
+        // RMSE ~= 64 m. The default 10.0 threshold is far below that scale, so
+        // it flagged ~65% of steps as "divergences" even though NEES shows the
+        // filter is perfectly consistent. 500 m marks genuine loss-of-track
+        // (well above steady-state error), analogous to reentry's 5 km gate.
+        float bearing_div_thresh = 500.0f;
+
         // UKF
         {
             auto data_copy = data;
             data_copy.filtered_states.clear();
             data_copy.filtered_covs.clear();
-            auto metrics = run_ukf_benchmark(model, data_copy, x0, P0, "BearingOnly4D");
+            auto metrics = run_ukf_benchmark(model, data_copy, x0, P0, "BearingOnly4D", bearing_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
@@ -517,7 +525,7 @@ int main() {
             auto data_copy = data;
             data_copy.filtered_states.clear();
             data_copy.filtered_covs.clear();
-            auto metrics = run_srukf_benchmark(model, data_copy, x0, P0, "BearingOnly4D");
+            auto metrics = run_srukf_benchmark(model, data_copy, x0, P0, "BearingOnly4D", bearing_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
@@ -532,7 +540,7 @@ int main() {
             data_copy.smoothed_states.clear();
             data_copy.smoothed_covs.clear();
             auto metrics = run_srukf_smoother_benchmark(model, data_copy, x0, P0,
-                                                         "BearingOnly4D", 30);
+                                                         "BearingOnly4D", 30, bearing_div_thresh);
             metrics.print();
             metrics.save_to_csv(summary_file);
             all_metrics.push_back(metrics);
