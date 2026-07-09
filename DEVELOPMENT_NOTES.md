@@ -141,6 +141,80 @@ the discrete GPU). Total CTest time ≈ 5.9 s.
 
 ---
 
+## Before/After Validation Record (July 8, 2026)
+
+Side-by-side validation of the v3.2.1 → v3.2.3 work (kernel bump + the three
+audit fixes + optimization #1). **Before** = commit `7609df4` (session start,
+OptMathKernels v0.5.15); **After** = commit `2c7dccf` (v0.5.17 + fixes + opt).
+The "before" tree was built from a detached `git worktree` at that commit so the
+two builds are truly independent. Same host as the Build Verification above.
+
+### Tests — unchanged pass
+
+| | Before | After |
+|---|---|---|
+| `ctest` (24) | 24/24 | 24/24 |
+| under `OMP_NUM_THREADS=24` | 24/24 | 24/24 |
+
+### Benchmark accuracy — unchanged; only the false metric corrected
+
+| Problem / filter | RMSE before → after | NEES% | **Divergences before → after** |
+|---|---|---|---|
+| CoupledOsc 10D (UKF/SRUKF) | 1.4566 → 1.4566 | 94.5 | 0 → 0 |
+| VanDerPol 2D | 0.4681 / 0.4663 → same | 95.9 / 96.0 | 0 → 0 |
+| **Bearing-Only 4D (UKF)** | 63.8081 → 63.8084 | 99.6 | **176 → 0** |
+| **Bearing-Only 4D (SRUKF)** | 64.1728 → 64.1728 | 99.6 | **175 → 0** |
+| Reentry 6D (UKF) | 369.01 → 369.115 | 95.9 | 0 → 0 |
+| Reentry 6D (SRUKF) | 369.185 → 369.182 | 95.6 | 0 → 0 |
+
+RMSE/NEES identical to ~4 sig figs. The sub-0.03% wiggles are float
+reassociation from the fixed-size `gemm` path (UKF cases) and fix #2 acting on
+genuinely-gated Reentry-SRUKF steps — expected, not behavioral. The only real
+metric change is Bearing-Only divergences (fix #3): **176/175 → 0**.
+
+### Fix #1 (RBPF OpenMP race) — ThreadSanitizer, definitive
+
+The RBPF test was compiled `-fsanitize=thread -fopenmp` (header-only path, no
+CUDA) against both header versions and run at `OMP_NUM_THREADS=8`:
+
+| | Worker-vs-worker races (genuine) | Site |
+|---|---|---|
+| Before | **~24 reports**, thread-pairs `T3/T4`, `T6/T4`, `T5/T3`, `T6/T3`, `T6/T7`… | `Eigen …/AssignmentFunctors.h:24` — writing the **shared `A/B/Q/H/R`** in `get_dynamics`/`get_observation` |
+| After | **0** | — |
+
+The residual After warnings are all *main-thread* post-loop reads: the known
+GCC-libgomp barrier false positive (TSan cannot see the `omp parallel for`
+barrier), present in any OpenMP+TSan program and unrelated to the fix.
+
+### Fix #2 (SRUKF gated covariance) — deterministic reject-mode harness
+
+Constant-position model, `reject_outliers_ = true`, one gross outlier
+(NIS ≈ 8.1e5 ≫ 25 gate) at step 5; no RNG, so the only difference between the
+two builds is the header. Covariance trace across the rejected step:
+
+| Version | trace(P): pre-step → post-step | Interpretation |
+|---|---|---|
+| Before | 5.2547 → **5.2367** (shrinks) | covariance tightened on a *discarded* measurement → false certainty |
+| After | 5.2547 → **5.2747** (+0.02 = process noise) | correct: a rejected measurement adds no information |
+
+The before-build stays ~0.006–0.008 over-tight every subsequent step — the
+compounding overconfidence the fix removes.
+
+### Optimization #1 (fixed-size dispatch) — min of 5 runs
+
+| Case | Before | After | Δ |
+|---|---:|---:|---|
+| UKF CoupledOsc 10D | 38.27 ms | 36.91 ms | −3.6% |
+| SRUKF 10D | 41.78 ms | 41.64 ms | ~0 (direct Eigen, no `gemm`) |
+| RMSE | 1.4566 | 1.4566 | identical |
+
+**Conclusion:** two real defects eliminated with hard evidence (RBPF race: 24
+TSan worker-races → 0; SRUKF rejected-outlier covariance shrink: quantified
+trace divergence), neither visible in the pass/fail suite beforehand; filter
+accuracy unchanged to 4 sig figs; UKF ~3.6% faster and numerically identical.
+
+---
+
 ## Build Verification (April 13, 2026)
 
 ### Ubuntu 24.04 LTS (x86_64)

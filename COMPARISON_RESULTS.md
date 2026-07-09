@@ -11,9 +11,18 @@
 >
 > **For current, authoritative numbers** see [README.md](README.md) (Benchmark
 > Results), [SRUKF_STATUS.md](SRUKF_STATUS.md), and
-> [FINAL_AUDIT_SUMMARY.md](FINAL_AUDIT_SUMMARY.md). As of **v3.2.0 (May 2026)**:
-> all 4 problems pass with zero unexpected divergences, and compute kernels come
-> from OptMathKernels pinned at **v0.5.15** (CUDA 13.x / Blackwell SM 120).
+> [FINAL_AUDIT_SUMMARY.md](FINAL_AUDIT_SUMMARY.md). As of **v3.2.3 (July 2026)**:
+> all 4 problems pass with **zero divergences**, and compute kernels come
+> from OptMathKernels pinned at **v0.5.17** (CUDA 13.x / Blackwell SM 120).
+>
+> ⚠️ **Superseded root-cause note:** the large Bearing-Only "divergence" counts
+> quoted throughout this document (175 / 182 / 284, attributed to "weak
+> observability" / "inherent difficulty") were later found to be a **benchmark
+> metric artifact** — `count_divergences()` used a fixed 10.0 error threshold
+> against this problem's ~64 m error scale. With a problem-scaled 500 m threshold
+> (v3.2.2) the count is **0**; the filter was statistically consistent the whole
+> time (NEES 99.6% in-bounds). Bearing-only *is* weakly observable, but that shows
+> up as a large range RMSE, not as divergences.
 
 ## Test Problems Executed
 
@@ -87,7 +96,11 @@ After fixing **5 critical numerical bugs** and implementing **dimension-adaptive
 | Bearing-Only (4D) | 284 | **182** | **36%** |
 | **TOTAL** | **301** | **183** | **39% reduction** |
 
-**Key Insight**: The bearing-only problem is extremely challenging. Even with a working SRUKF, 182 divergences occur due to weak observability. However, SRUKF **recovers** from these divergences, while UKF does not.
+**Key Insight**: The bearing-only problem is weakly observable (angle-only), so
+the range estimate carries a large steady-state RMSE. ~~182 divergences occur due
+to weak observability~~ **[superseded — see the correction banner at the top: those
+"divergence" counts were a `count_divergences()` threshold artifact, not filter
+divergence; the corrected count is 0 and NEES stayed 99.6% in-bounds throughout.]**
 
 ---
 

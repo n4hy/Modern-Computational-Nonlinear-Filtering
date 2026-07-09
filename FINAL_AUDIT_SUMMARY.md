@@ -1,8 +1,8 @@
 # Final Comprehensive Audit Summary
 ## Modern Computational Nonlinear Filtering
 
-**Date**: May 25, 2026
-**Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. CUDA active for SM 75–120 including Blackwell RTX 50-series (verified on RTX 5070 Ti / SM 120, CUDA 13.1). Compute kernels from OptMathKernels pinned at release tag **v0.5.15**.
+**Date**: July 8, 2026 (v3.2.3)
+**Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. Verified on Ubuntu 26.04 LTS x86_64, RTX 5070 Ti Laptop GPU (Blackwell, SM 120), CUDA 13.1.115, Vulkan 1.4.341, Eigen 3.4.0. CUDA active for SM 75–120 including Blackwell RTX 50-series. Compute kernels from OptMathKernels pinned at release tag **v0.5.17**.
 
 ---
 
@@ -116,9 +116,34 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 - Created the repository's first annotated release tag (`v3.2.0`).
 - Rebuilt, **24/24 CTest pass**, benchmarks rerun (RMSE/NEES unchanged), plots regenerated.
 
+### Phase 8 (July 8, 2026): Kernel bump v0.5.17, audit fixes & dispatch fast-path
+
+- **Adopted OptMathKernels v0.5.15 → v0.5.17** (audited per the pinning policy).
+  Upstream diff is docs + a NEON unit-test-tolerance fix only — no public-API,
+  compute-backend, or MPI change. Tagged parent `v3.2.1`. See DEVELOPMENT_NOTES.md
+  → "Audit: v0.5.15 → v0.5.17".
+- **Fix — `count_divergences()` harness bug (v3.2.2):** Bearing-Only used the
+  default 10.0 error threshold against a ~64 m error scale, mis-reporting ~176/175
+  "divergences" for a filter that was actually consistent (NEES 99.6% in-bounds).
+  Gave it a problem-scaled 500 m threshold (analogous to reentry's 5 km); count is
+  now **0** for every problem.
+- **Fix — RBPF OpenMP data race (v3.2.2):** the per-particle dynamics/observation
+  matrices `A,B,Q,H,R` were declared outside the `#pragma omp parallel for` and
+  shared across threads. Moved inside the loop. ThreadSanitizer: ~24 worker-vs-worker
+  races → 0.
+- **Fix — SRUKF innovation-gate consistency (v3.2.2):** a gated/rejected outlier
+  previously downdated the covariance by the full `K·S_yy·S_yyᵀ·Kᵀ` (scale applied
+  only to the state) → false certainty. Downdate now uses `U = scale·(K·S_yy)`
+  (scale² reduction; no-op when rejected).
+- **Optimization (v3.2.3):** fixed-size Eigen fast-path for `filtermath::gemm` /
+  `mat_vec_mul` (no heap temporaries / dispatch branch for small compile-time-sized
+  operands). UKF 10D ~3.6% faster; RMSE/NEES bit-identical.
+- Rebuilt, **24/24 CTest pass** (also under `OMP_NUM_THREADS=24`), benchmarks rerun
+  (RMSE/NEES unchanged), plots regenerated. Tagged parent `v3.2.3`.
+
 ---
 
-## Current Benchmark Results (May 25, 2026 — OptMathKernels v0.5.15)
+## Current Benchmark Results (July 8, 2026 — OptMathKernels v0.5.17)
 
 | Problem | Filter | RMSE | Smoother RMSE | NEES median | In 95% bounds | Divergences |
 |---------|--------|------|---------------|-------------|---------------|-------------|
@@ -126,7 +151,8 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 | Coupled Osc (10D) | SRUKF | 1.457 | 1.148 | 9.89 | 94.5% | 0 |
 | Van der Pol (2D) | UKF | 0.468 | -- | 1.14 | 95.9% | 0 |
 | Van der Pol (2D) | SRUKF | 0.466 | 0.430 | 1.14 | 96.0% | 0 |
-| Bearing-Only (4D) | SRUKF | 64.17 | 52.03 | 3.77 | 99.6% | 175 |
+| Bearing-Only (4D) | UKF | 63.81 | -- | 3.77 | 99.6% | 0 |
+| Bearing-Only (4D) | SRUKF | 64.17 | 52.03 | 3.77 | 99.6% | 0 |
 | Reentry (6D) | UKF | 369.1 | -- | 5.00 | 95.9% | 0 |
 | Reentry (6D) | SRUKF | 369.2 | 236.8 | 4.99 | 95.6% | 0 |
 
@@ -169,8 +195,14 @@ All 24 CTest targets pass (8 filter tests/demos + 16 OptimizedKernels tests incl
   `cuda_solve`, but these are intentionally unused on the filter hot paths —
   covariances are small (≤~10×10), so a PCIe round-trip costs more than the
   factorization. Reserved for a future large-matrix dispatch.
-- Bearing-Only tracking shows "divergences" due to inherently weak observability in
-  early trajectory — filter eventually converges, not a code bug
+- Bearing-Only is genuinely weakly observable (angle-only), so the **range**
+  estimate carries a large steady-state RMSE (~64 m) — this is a physics/observability
+  limit, not filter instability (NEES stays 99.6% in-bounds). Note: earlier summaries
+  called this "divergences"; that count was a `count_divergences()` harness bug
+  (threshold 10.0 vs ~64 m error scale), fixed in v3.2.2 — the count is now 0.
+- **Reproducibility under OpenMP**: the RBPF/PKF `thread_local` RNG is seeded from
+  `std::random_device`, so multithreaded runs are not reproducible w.r.t. a configured
+  seed (estimates remain statistically valid; only exact bit-reproducibility is lost).
 - All filters are float32-only; no double-precision template support in FilterMath
 - CUDA Blackwell requires CUDA 13.x and a `native`/SM 120 build (default arch list
   stops at SM 90) — see Phase 7 and DEVELOPMENT_NOTES.md
@@ -181,4 +213,4 @@ All critical issues resolved. Production-ready across all filter types and dimen
 
 **Active acceleration**: CUDA (SM 75–120, incl. Blackwell) + Vulkan + OpenMP + Eigen (x86_64), NEON + SVE2 + Vulkan (ARM)
 
-**Compute kernels**: OptMathKernels pinned at release tag **v0.5.15**
+**Compute kernels**: OptMathKernels pinned at release tag **v0.5.17**

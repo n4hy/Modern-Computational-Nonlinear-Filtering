@@ -174,7 +174,7 @@ Classic relaxation oscillator: slow drift in `x0` with sharp limit-cycle transit
 
 ![Bearing-only trajectories](docs/images/bearing_srukf_smooth_plot.png)
 
-Weak-observability problem: angle-only measurements barely constrain range, so estimates track well for ~15 s then drift (visible divergence in all four states). Smoothing improves RMSE by **19%** (64.17 → 52.03) but cannot fully recover the lost range. The high "divergence" count (~175) reflects inherent observability limits during the early trajectory, not filter instability — NEES stays at 99.6% in-bounds throughout.
+Weak-observability problem: angle-only measurements barely constrain range, so the range estimate drifts (large steady-state RMSE ~64) even though the filter stays statistically consistent — NEES holds at **99.6% in-bounds** throughout. Smoothing improves RMSE by **19%** (64.17 → 52.03) but cannot fully recover the lost range. (Earlier runs reported a spurious ~175 "divergence" count here; that was a benchmark-metric bug — a fixed 10 m error threshold measured against this problem's ~64 m error scale — corrected in v3.2.2 with a problem-scaled 500 m threshold, so the divergence count is now **0**. The filter never actually diverged; NEES was in-bounds the whole time.)
 
 ### Reentry Vehicle (6D State, 3D Observation)
 
@@ -770,7 +770,7 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Version**: 3.2.1
-**Last Updated**: 25 May 2026
+**Version**: 3.2.3
+**Last Updated**: 8 July 2026
 **OptMathKernels**: pinned to release tag [v0.5.17](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA/releases/tag/v0.5.17)
 **Platform**: ARM aarch64 (Raspberry Pi 5, Orange Pi 5/6) + x86_64 (Vulkan + CUDA + Eigen) + NVIDIA GPU (SM 75–120 via CUDA 12.x/13.x; Blackwell RTX 50-series verified on SM 120 / CUDA 13.1)

@@ -1,6 +1,12 @@
 # SRUKF Implementation Status
 
-## Current State (v3.2.0, May 2026)
+## Current State (v3.2.3, July 2026)
+
+> Branch `feature/srukf-angular-wrap-and-nis`. SRUKF now (R32) wraps angular
+> **observation** innovations to [−π, π], and (R33) exposes the normalized
+> innovation squared (NIS) via `getLastNIS()` plus an innovation gate with an
+> optional reject-outliers policy (`setRejectOutliers()`). See the Numerical
+> Safety Chain below.
 
 ### All Benchmark Problems Working
 
@@ -36,8 +42,8 @@ All SRUKF linear algebra now routes through `Common/include/FilterMath.h`:
 - **Cross-platform**: Non-ARM falls through to Eigen (or CUDA if available)
 
 > **Note**: CUDA backend active for SM 75–120, including Blackwell RTX 50-series
-> (verified on RTX 5070 Ti / SM 120, CUDA 13.1). Compute kernels come from
-> OptMathKernels, pinned at release tag **v0.5.15**. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
+> (verified on RTX 5070 Ti Laptop GPU / SM 120, CUDA 13.1.115). Compute kernels come
+> from OptMathKernels, pinned at release tag **v0.5.17**. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
 
 ### Dimension-Adaptive Parameters
 ```cpp
@@ -54,9 +60,21 @@ beta = 2.0f;  // Optimal for Gaussian
 ### Numerical Safety Chain
 1. Safe Cholesky downdate → returns false on failure
 2. Full-covariance fallback → recomputes P from all sigma points
-3. Innovation gating → Mahalanobis distance threshold (chi-squared 25)
-4. S_yy validation → `allFinite()` check + diagonal minimum enforcement
-5. Multiple Cholesky fallbacks: accelerated → jitter → LDLT → diagonal
+3. **Angular-observation innovation wrap (R32)** → for observables flagged
+   `isAngularObservation(j)`, `y_k − ŷ` is wrapped to [−π, π] so an innovation
+   straddling the ±π branch cut cannot inject a catastrophic ~2π correction.
+4. **Innovation gating + NIS (R33)** → the normalized innovation squared
+   NIS = innovᵀ (S_yy S_yyᵀ)⁻¹ innov is compared to a χ² gate (25). NIS is stored
+   and exposed via `getLastNIS()`. On a gate trip the correction is scaled by
+   `scale`: down-scaled by `√(gate/NIS)` by default, or **rejected** (`scale = 0`)
+   when `setRejectOutliers(true)`.
+   - **Consistency (fixed v3.2.2):** the covariance downdate carries the same
+     `scale` — `U = scale·(K·S_yy)`, a scale² reduction — so a rejected/gated
+     outlier no longer shrinks the covariance into false certainty (zero downdate
+     when rejected). Previously only the state was scaled while the covariance was
+     downdated in full.
+5. S_yy validation → `allFinite()` check + diagonal minimum enforcement
+6. Multiple Cholesky fallbacks: accelerated → jitter → LDLT → diagonal
 
 ## Code Locations
 
