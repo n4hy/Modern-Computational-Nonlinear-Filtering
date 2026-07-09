@@ -209,6 +209,23 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 
 ## Changelog
 
+### v3.2.3 (July 2026) — perf: fixed-size dispatch fast path
+- **`filtermath::gemm` / `mat_vec_mul` fixed-size overloads.** On x86 every
+  filter matrix is small (2..10) and below the CUDA threshold, so these calls
+  always fell to Eigen — but the dynamic `MatrixXf` signature forced heap-backed
+  temporaries and runtime dispatch branches around each product. Added SFINAE
+  overloads (in `Common/include/FilterMath.h`) that bind to compile-time-sized
+  operands and compute directly into stack-allocated fixed-size results, with no
+  dispatch branch. Genuinely dynamic operands (EKF, the RBPF model dynamics /
+  observation matrices) still bind to the `MatrixXf` overloads, so the
+  large-matrix CUDA/SVE2/NEON dispatch is fully preserved.
+- Tightened one UKF update intermediate (`KS`) to fixed-size so both covariance
+  gemms take the fast path.
+- Measured: UKF 10D benchmark ~3.6% faster (38.3 → 36.9 ms, min of 5 runs);
+  RMSE/NEES bit-identical. SRUKF unchanged (it uses direct Eigen, not gemm).
+  Note: EKF and the RBPF per-particle KF use dynamic `MatrixXf` by design and do
+  not auto-benefit — converting them is a larger interface refactor (follow-up).
+
 ### v3.2.2 (July 2026) — audit fixes
 - **RBPF OpenMP data race (correctness).** `rbpf_core.hpp::step()` declared the
   per-particle work matrices `A,B,bias,Q,H,offset,R` outside the

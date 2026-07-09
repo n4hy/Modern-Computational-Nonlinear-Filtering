@@ -129,8 +129,10 @@ public:
         // State update
         x_ = x_ + K * y_diff;
 
-        // Covariance update: P = P - K*S*K^T
-        Eigen::MatrixXf KS = filtermath::gemm(K, S);
+        // Covariance update: P = P - K*S*K^T. Keep KS fixed-size (NX x NY) so
+        // both gemms take the compile-time fixed-size fast path in FilterMath.h
+        // (no MatrixXf heap temporaries around a 10x10-scale product).
+        Eigen::Matrix<float, NX, NY> KS = filtermath::gemm(K, S);
         P_ = P_ - filtermath::gemm(KS, K.transpose());
 
         // Symmetrize and ensure positive definiteness

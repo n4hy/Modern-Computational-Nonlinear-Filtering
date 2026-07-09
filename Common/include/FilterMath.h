@@ -18,7 +18,8 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
-#include <algorithm>  // std::min, std::max
+#include <algorithm>   // std::min, std::max
+#include <type_traits> // std::enable_if_t (fixed-size fast-path SFINAE)
 
 // ---------- platform detection ----------
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -88,6 +89,38 @@ inline Eigen::MatrixXf gemm(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B) 
     return A * B;
 }
 
+// ------------------------------------------------------------------------
+//  GEMM fixed-size fast path (compile-time dimensions)
+// ------------------------------------------------------------------------
+// The filters (UKF/SRUKF sigma-point covariance, RBPF conditional KF) operate
+// on small Eigen matrices whose dimensions are known at compile time (2..10 per
+// side, never the >= 32 that would justify a GPU round-trip). Routing those
+// through the dynamic `MatrixXf` overload above is pure overhead: each call
+// materialises the operands into heap-backed MatrixXf temporaries, runs the
+// runtime size/backend-availability branches, and heap-allocates the result —
+// wrapped around what the compiler could otherwise emit as a fully-unrolled,
+// vectorised, stack-allocated product.
+//
+// This overload is selected by ordinary overload resolution *only* when both
+// operands have compile-time-known extents (identity binding beats the
+// user-defined fixed->dynamic conversion the MatrixXf overload would need).
+// Genuinely dynamic operands (EKF, the RBPF model dynamics/observation matrices)
+// still bind to the MatrixXf overload, so the large-matrix CUDA/SVE2/NEON
+// dispatch is fully preserved. Accepting MatrixBase<Derived> also lets Eigen
+// expressions (e.g. `B.transpose()`) bind without an intermediate temporary.
+template<typename DerivedA, typename DerivedB,
+         typename = std::enable_if_t<
+             DerivedA::RowsAtCompileTime != Eigen::Dynamic &&
+             DerivedA::ColsAtCompileTime != Eigen::Dynamic &&
+             DerivedB::RowsAtCompileTime != Eigen::Dynamic &&
+             DerivedB::ColsAtCompileTime != Eigen::Dynamic>>
+inline Eigen::Matrix<float, DerivedA::RowsAtCompileTime, DerivedB::ColsAtCompileTime>
+gemm(const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedB>& B) {
+    Eigen::Matrix<float, DerivedA::RowsAtCompileTime, DerivedB::ColsAtCompileTime> C;
+    C.noalias() = A * B;  // C is a fresh local, distinct from A/B — noalias is safe
+    return C;
+}
+
 // ========================================================================
 //  Matrix-vector multiply  —  CUDA > NEON > Eigen
 // ========================================================================
@@ -112,6 +145,26 @@ inline Eigen::VectorXf mat_vec_mul(const Eigen::MatrixXf& A, const Eigen::Vector
         return optmath::neon::neon_mat_vec_mul(A, v);
 #endif
     return A * v;
+}
+
+// ------------------------------------------------------------------------
+//  Matrix-vector fixed-size fast path (compile-time dimensions)
+// ------------------------------------------------------------------------
+// Same rationale as the fixed-size gemm overload above: for small compile-time
+// operands this avoids the MatrixXf materialisation, the runtime dispatch
+// branches, and the heap-allocated result vector. Dynamic operands keep the
+// MatrixXf overload (and its CUDA gemv path). Enabled only when the matrix has
+// compile-time extents and the RHS has a compile-time row count.
+template<typename DerivedA, typename DerivedV,
+         typename = std::enable_if_t<
+             DerivedA::RowsAtCompileTime != Eigen::Dynamic &&
+             DerivedA::ColsAtCompileTime != Eigen::Dynamic &&
+             DerivedV::RowsAtCompileTime != Eigen::Dynamic>>
+inline Eigen::Matrix<float, DerivedA::RowsAtCompileTime, 1>
+mat_vec_mul(const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedV>& v) {
+    Eigen::Matrix<float, DerivedA::RowsAtCompileTime, 1> y;
+    y.noalias() = A * v;
+    return y;
 }
 
 // ========================================================================
