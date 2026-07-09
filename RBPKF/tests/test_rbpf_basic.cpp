@@ -1,8 +1,20 @@
 #include <iostream>
-#include <cassert>
+#include <cstdlib>
+#include <cmath>
 #include "rbpf/types.hpp"
 #include "rbpf/rbpf_config.hpp"
 #include "rbpf/rbpf_core.hpp"
+
+// Live in Release too (assert() would be stripped under NDEBUG). Exits non-zero
+// so a real failure fails CTest instead of silently printing "Test passed!".
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::cerr << "CHECK FAILED: " #cond " at " << __FILE__ << ":"      \
+                      << __LINE__ << std::endl;                                \
+            std::exit(1);                                                      \
+        }                                                                      \
+    } while (0)
 
 // Minimal instantiation test
 
@@ -61,6 +73,36 @@ int main() {
     TestTypes::NonlinearState est_nl;
     TestTypes::LinearState est_lin;
     filter.get_filtered_mean(est_nl, est_lin);
+
+    // With this dummy model (NL state fixed at 0, y = 0, H = [1 0]) both the
+    // nonlinear and linear filtered means must remain finite and near zero.
+    CHECK(std::isfinite(est_nl(0)));
+    CHECK(std::abs(est_nl(0)) < 1e-3f);
+    for (int i = 0; i < TestTypes::Nlin; ++i) {
+        CHECK(std::isfinite(est_lin(i)));
+        CHECK(std::abs(est_lin(i)) < 1e-1f);
+    }
+
+    // Exercise the fixed-lag smoother ancestry path (covers the initialize/step
+    // counter fix): with fixed_lag > 0 and several steps, smoothing at the max
+    // lag must succeed and return finite estimates that reach the initial state.
+    {
+        rbpf::RbpfConfig cfg2;
+        cfg2.num_particles = 20;
+        cfg2.fixed_lag = 3;
+        cfg2.seed = 7;
+        rbpf::RaoBlackwellizedParticleFilter<TestTypes, DummyNL, DummyLin> f2(nl, lin, cfg2);
+        f2.initialize(xnl, xlin, Plin);
+        for (int k = 0; k < 5; ++k) f2.step(static_cast<float>(k), y, u);
+
+        CHECK(f2.can_smooth(cfg2.fixed_lag));  // enough history accumulated
+        TestTypes::NonlinearState s_nl;
+        TestTypes::LinearState s_lin;
+        f2.get_smoothed_mean(cfg2.fixed_lag, s_nl, s_lin);
+        CHECK(std::isfinite(s_nl(0)));
+        CHECK(std::abs(s_nl(0)) < 1e-3f);
+        for (int i = 0; i < TestTypes::Nlin; ++i) CHECK(std::isfinite(s_lin(i)));
+    }
 
     std::cout << "Test passed!" << std::endl;
     return 0;

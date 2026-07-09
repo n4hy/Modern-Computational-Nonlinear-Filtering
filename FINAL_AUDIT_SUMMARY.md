@@ -145,7 +145,7 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 - **Optimization (v3.2.3):** fixed-size Eigen fast-path for `filtermath::gemm` /
   `mat_vec_mul` (no heap temporaries / dispatch branch for small compile-time-sized
   operands). UKF 10D ~3.6% faster; RMSE/NEES bit-identical.
-- Rebuilt, **24/24 CTest pass** (also under `OMP_NUM_THREADS=24`), benchmarks rerun
+- Rebuilt, **25/25 CTest pass** (also under `OMP_NUM_THREADS=24`), benchmarks rerun
   (RMSE/NEES unchanged), plots regenerated.
 - **SRUKF downdate aligned with `main`:** the gate downdate now uses the Joseph
   partial-update `√(2s − s²)` form (was `scale`), matching `main`'s more-correct fix
@@ -168,7 +168,7 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 | Reentry (6D) | UKF | 369.1 | -- | 5.00 | 95.9% | 0 |
 | Reentry (6D) | SRUKF | 369.2 | 236.8 | 4.99 | 95.6% | 0 |
 
-All 24 CTest targets pass (8 filter tests/demos + 16 OptimizedKernels tests including CUDA and Vulkan).
+All 25 CTest targets pass (9 filter tests/demos + 16 OptimizedKernels tests including CUDA and Vulkan).
 
 ---
 
@@ -212,9 +212,6 @@ All 24 CTest targets pass (8 filter tests/demos + 16 OptimizedKernels tests incl
   limit, not filter instability (NEES stays 99.6% in-bounds). Note: earlier summaries
   called this "divergences"; that count was a `count_divergences()` harness bug
   (threshold 10.0 vs ~64 m error scale), fixed in v3.2.2 — the count is now 0.
-- **Reproducibility under OpenMP**: the RBPF/PKF `thread_local` RNG is seeded from
-  `std::random_device`, so multithreaded runs are not reproducible w.r.t. a configured
-  seed (estimates remain statistically valid; only exact bit-reproducibility is lost).
 - All filters are float32-only; no double-precision template support in FilterMath
 - CUDA Blackwell requires CUDA 13.x and a `native`/SM 120 build (default arch list
   stops at SM 90) — see Phase 7 and DEVELOPMENT_NOTES.md

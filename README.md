@@ -48,7 +48,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 | x86_64 Linux | Vulkan + OpenMP + Eigen | **Full Support** |
 | NVIDIA GPU (CUDA 12.x / 13.x) | cuBLAS GEMM + GPU Particle Filter | **Full Support** (SM 75–120) |
 
-> **Note**: CUDA 12.x covers Turing through Hopper (SM 75–90). CUDA 13.x adds Blackwell — including consumer RTX 50-series (**SM 120**, e.g. RTX 5070/5080/5090). Verified on an RTX 5070 Ti (SM 120) with CUDA 13.1. To build for your exact GPU, configure with `-DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON`. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
+> **Note**: CUDA 12.x covers Turing through Hopper (SM 75–90). CUDA 13.x adds Blackwell — including consumer RTX 50-series (**SM 120**, e.g. RTX 5070/5080/5090). Verified on an RTX 5070 Ti (SM 120) with CUDA 13.1; also rebuilt cleanly with CUDA 13.0.88 on Linux 6.17 NVIDIA kernel (multi-arch default). To build for your exact GPU, configure with `-DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON`. See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for details.
 
 ---
 
@@ -115,7 +115,15 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. Benchmarks run through the FilterMath dispatch layer (CUDA cuBLAS / SVE2 / NEON / Eigen, selected at runtime by platform).
 
-> **Latest run**: 8 July 2026 on **Ubuntu 26.04 LTS x86_64**, **NVIDIA GeForce RTX 5070 Ti Laptop GPU (Blackwell, SM 120)** with **CUDA 13.1**, Eigen 3.4, Vulkan 1.4, against **OptMathKernels v0.5.17** (pinned release tag). All **24/24** CTest cases pass (8 filter tests + 16 OptimizedKernels GPU/SIMD tests, including the CUDA kernel suite on the Blackwell GPU and the Vulkan suites, which now auto-select the discrete RTX 5070 Ti).
+> **Latest run**: 8 July 2026 on **Ubuntu 26.04 LTS x86_64**, **NVIDIA GeForce RTX 5070 Ti Laptop GPU (Blackwell, SM 120)** with **CUDA 13.1**, Eigen 3.4, Vulkan 1.4, against **OptMathKernels v0.5.17** (pinned release tag). All **25/25** CTest cases pass (9 filter tests + 16 OptimizedKernels GPU/SIMD tests, including the CUDA kernel suite on the Blackwell GPU and the Vulkan suites, which now auto-select the discrete RTX 5070 Ti).
+
+> **Host note**: the **RMSE / NEES / divergence** figures are backend-independent
+> and reproduce on any platform (the FilterMath dispatch selects CUDA / SVE2 /
+> NEON / Eigen but computes the same result). The **25/25** count and the wall-clock
+> **timings** are specific to that x86_64 + CUDA reference host: a CPU-only or ARM
+> host runs the Eigen/NEON path (no CUDA suite; the count and per-step times differ)
+> and still reproduces the accuracy numbers. Build and CTest are exercised on ARM
+> (aarch64) as well as the x86_64 reference host.
 
 Reproduce everything below with:
 
@@ -154,7 +162,7 @@ Consolidated metrics from the latest run (`benchmark_results.csv`):
 | Bearing-Only 4D | UKF | 63.81 | — | 3.77 | 99.6% | 0.00052 ms | 0.16 ms | 176 |
 | Bearing-Only 4D | SRUKF | 64.17 | — | 3.77 | 99.6% | 0.00046 ms | 0.15 ms | 175 |
 | Bearing-Only 4D | SRUKF+Smoother | 64.17 | **52.03** | 3.77 | 99.6% | 0.0108 ms | 3.25 ms | 175 |
-| Reentry 6D | UKF | 369.0 | — | 5.00 | 95.9% | 0.0024 ms | 0.72 ms | 0 |
+| Reentry 6D | UKF | 369.1 | — | 5.00 | 95.9% | 0.0024 ms | 0.72 ms | 0 |
 | Reentry 6D | SRUKF | 369.2 | — | 4.99 | 95.6% | 0.0024 ms | 0.73 ms | 0 |
 | Reentry 6D | SRUKF+Smoother | 369.2 | **236.8** | 4.99 | 95.6% | 0.0176 ms | 5.30 ms | 0 |
 
@@ -225,7 +233,14 @@ Comparison between v2.8.0 (commit `12b8015`, direct NEON calls, `-ffast-math`) a
 | SRUKF — Bearing-Only 4D | 43.151 | 43.151 |
 | SRUKF — Reentry 6D | 369.21 | 369.18 |
 
-Accuracy preserved to floating-point precision across all problems. NEES consistency unchanged (all pass chi-squared bounds).
+This is a **historical v2.8.0 → v3.0.0 regression snapshot**: it shows that the
+v3.0 dispatch-layer refactor preserved accuracy to floating-point precision for
+the problem configurations *as they were then*. The Bearing-Only scenario has
+since changed, so its figure here (43.151) does not match the current **64.17**
+in the main results table above — that main table is the authoritative current
+result; this row is retained only as a historical refactor-regression check and
+is not directly comparable to the current Bearing-Only run. NEES consistency
+unchanged (all pass chi-squared bounds).
 
 #### Robustness — Bug Fixes
 
@@ -289,16 +304,16 @@ State correction = scale * (K * innovation);
 
 ### Issue #4: Eigen Expression Template Aliasing in SRUKF Mean Computation
 
-**Problem**: SRUKF predict step returned INPUT state instead of PROPAGATED state, causing INS flywheel to fail during GPS outage. Position error grew to 3km in 30 seconds instead of expected ~1km.
+**Problem**: The SRUKF predict step's weighted-mean loop returned the INPUT state instead of the PROPAGATED state, so `predict()` appeared to leave the state unchanged.
 
 **Root Cause**: Eigen's expression templates caused aliasing between `X_pred` (propagated sigma points) and `sigmas.X` (input sigma points) during weighted mean computation. The operation `x_pred_mean += Wm(i) * X_pred.col(i)` was reading from `sigmas.X` memory instead of `X_pred`, even though they were separate stack-allocated matrices.
 
 **Symptoms**:
-- State appears unchanged after predict() during measurement outage
-- Debug shows X_pred values are correct, but weighted mean equals input
-- Double-precision accumulation gives correct result while float loop gives wrong result
+- State appears unchanged after `predict()`
+- Debug shows `X_pred` values are correct, but the weighted mean equals the input
+- Double-precision accumulation gives the correct result while the float loop gives the wrong one
 
-**Solution**: Force evaluation with `.eval()` to materialize the expression and break aliasing, combined with `.noalias()` for safe accumulation. This preserves NEON/SVE2 auto-vectorization (unlike the earlier raw C array workaround):
+**Solution**: Force evaluation with `.eval()` to materialize the expression and break aliasing, combined with `.noalias()` for safe accumulation. This preserves NEON/SVE2 auto-vectorization (unlike the earlier raw C array workaround). The fix lives in `UKF/include/SRUKF.h` (see the `X_pred_eval` / `Wm_eval` block):
 ```cpp
 // Force evaluation to break Eigen aliasing while keeping SIMD vectorization
 typename SigmaPts::SigmaMat X_pred_eval = X_pred.eval();
@@ -310,24 +325,9 @@ for (int i = 0; i < SigmaPts::NSIG; ++i) {
 }
 ```
 
-**Result**: Max error during 30s GPS outage reduced from 3097m to ~1080m.
+**Result**: `predict()` now propagates the state correctly; the coupled-oscillator and reentry benchmarks pass with zero divergences.
 
-### Issue #5: Monte Carlo Trial Divergence - RESOLVED
-
-**Problem**: After GPS outage, innovation gating in SRUKF prevented GPS reacquisition.
-
-**Root Causes Identified**:
-1. **Innovation gating too aggressive**: After 30s GPS outage, INS drifted ~3km. When GPS returned, the Mahalanobis distance was huge, causing updates to be scaled down to ~0.7% effectiveness
-2. **Compiler flags**: `EIGEN_NO_DEBUG` and `-ffast-math` caused numerical instability in edge cases
-
-**Solution Implemented**:
-1. Measurement outage recovery: When measurements return after outage with large position error, reinitialize filter around measurements instead of trying to correct with gated updates
-2. Disabled `-ffast-math` and `EIGEN_NO_DEBUG` for numerically sensitive targets
-3. All Cholesky operations now route through FilterMath dispatch (NEON-accelerated with Eigen fallback)
-
-**Result**: **100% convergence** across Monte Carlo trials.
-
-### Issue #6: Global `-ffast-math` Breaks Filter Stability
+### Issue #5: Global `-ffast-math` Breaks Filter Stability
 
 **Problem**: CMake root had `-ffast-math` and `EIGEN_FAST_MATH=1` applied globally to all Release builds. This silently caused:
 - NaN comparison guards (`isfinite()`, `allFinite()`) to be optimized away
@@ -336,13 +336,13 @@ for (int i = 0; i < SigmaPts::NSIG; ++i) {
 
 **Solution**: Removed global `-ffast-math` and `EIGEN_FAST_MATH=1` from root `CMakeLists.txt`. The NEON/SVE2 intrinsics in OptMathKernels already provide hardware-accelerated fast paths where needed. Numerically sensitive targets should explicitly set `-fno-fast-math` and `EIGEN_FAST_MATH=0`.
 
-### Issue #7: Unsafe Cholesky Downdate in SRUKF Prediction
+### Issue #6: Unsafe Cholesky Downdate in SRUKF Prediction
 
 **Problem**: The SRUKF predict step used the legacy `cholupdate_downdate()` which silently corrupted the square root covariance when the downdate magnitude exceeded the current factor (sets `r_sq = 1e-6 * S(k,k)²` instead of failing).
 
 **Solution**: Replaced with `cholupdate_downdate_safe()` which returns false on failure, plus a full-covariance fallback that recomputes P from all sigma points and takes a fresh Cholesky.
 
-### Issue #8: RBPKF Weight Corruption and Resampling Bias
+### Issue #7: RBPKF Weight Corruption and Resampling Bias
 
 **Problem**: Three related issues in the Rao-Blackwellized particle filter:
 1. `normalize_weights()` did not check `isfinite()` — a single NaN weight corrupted all particles
@@ -409,7 +409,7 @@ Before deploying any Kalman filter, verify:
 - **Eigen3**: Linear algebra (3.4+, fetched automatically if not found)
 - **CMake**: Build system (3.14+)
 - **Python 3**: (3.10+) For visualization scripts; a virtual environment is created automatically during the build
-- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)** (OptMathKernels): NEON/SVE2/Vulkan/CUDA acceleration (cloned to `$HOME`, fetched via FetchContent). **Pinned to a release tag** for reproducible builds — see `OPTMATH_RELEASE_TAG` in the root `CMakeLists.txt` (currently **v0.5.17**). Bumping it is a deliberate, audited step; see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) → *OptMathKernels Release Audit & Pinning Policy*.
+- **[OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)** (OptMathKernels): NEON/SVE2/Vulkan/CUDA acceleration, fetched automatically via FetchContent from the public GitHub URL (override with `-DOPTMATH_REPO=<local-path>` for offline builds). **Pinned to a release tag** for reproducible builds — see `OPTMATH_RELEASE_TAG` in the root `CMakeLists.txt` (currently **v0.5.17**). Bumping it is a deliberate, audited step; see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) → *OptMathKernels Release Audit & Pinning Policy*.
 
 ### Optional
 
@@ -430,7 +430,11 @@ sudo apt install glslang-tools
 # Optional: Vulkan runtime (if not already installed)
 sudo apt install vulkan-tools libvulkan-dev
 
-# Clone the OptimizedKernels dependency
+# (Optional) Pre-clone the OptimizedKernels dependency for OFFLINE builds.
+# By default the build fetches it automatically from the public GitHub URL via
+# FetchContent (no manual step needed). Only pre-clone if you want to build
+# offline or against a local working copy, then point the build at it with
+# -DOPTMATH_REPO=$HOME/OptimizedKernelsForRaspberryPi5_NvidiaCUDA (see Build Options).
 cd ~
 git clone https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA.git
 ```
@@ -472,15 +476,26 @@ mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 
-# Recommended when CUDA is enabled: build for your exact GPU.
-# Required for Blackwell / RTX 50-series (SM 120) on CUDA 13.x, whose SM is not in
-# the default architecture list.
+# Optional: build CUDA code for your exact GPU only (faster nvcc, smaller binary).
+# On CUDA 13.x the default arch list already includes Blackwell SM 100/120, so this
+# is no longer required for RTX 50-series — it's just an optimization.
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON
 make -j$(nproc)
 
 # Or explicitly disable CUDA if needed
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=""
 make -j$(nproc)
+
+# Offline / CI build: skip the plotting Python venv (no PyPI access needed) and
+# use a locally-cloned dependency.
+cmake .. -DCMAKE_BUILD_TYPE=Release -DNLF_BUILD_PYTHON_VENV=OFF \
+         -DOPTMATH_REPO=$HOME/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
+make -j$(nproc)
+
+# (Optional) system install — installs the reusable filter headers under
+# <prefix>/include/nlf/ (plus run_benchmarks) to CMAKE_INSTALL_PREFIX
+# (default /usr/local; override with -DCMAKE_INSTALL_PREFIX=/path when configuring).
+sudo make install
 
 # Run all tests via CTest
 ctest --output-on-failure
@@ -511,8 +526,10 @@ python3 ../scripts/plot_benchmarks.py .
 | Option | Description |
 |--------|-------------|
 | `-DCMAKE_CUDA_COMPILER=""` | Disable CUDA (e.g., if toolkit is not installed or causes issues) |
-| `-DCMAKE_CUDA_ARCHITECTURES=native` | Build CUDA code for the detected GPU only (required for Blackwell SM 120 on CUDA 13.x) |
+| `-DCMAKE_CUDA_ARCHITECTURES=native` | Build CUDA code for the detected GPU only. Optional on CUDA 13.x (default list already includes Blackwell SM 100/120); useful to shrink build time |
 | `-DOPTMATH_CUDA_NATIVE=ON` | Make the OptimizedKernels dependency honor `native` instead of its default multi-arch list |
+| `-DOPTMATH_REPO=<url-or-path>` | OptMathKernels source (default: public GitHub URL). Set to a local clone path for offline builds |
+| `-DNLF_BUILD_PYTHON_VENV=OFF` | Skip creating the plotting Python venv (the C++ build then needs no Python/PyPI — for offline/CI) |
 | `-DOPTMATH_RELEASE_TAG=v0.5.17` | OptMathKernels release tag to fetch/pin (default `v0.5.17`). Bump only after auditing the upstream diff — see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) |
 | `-DCMAKE_BUILD_TYPE=Release` | Optimized build with `-O3 -march=native` (forwarded to nvcc's host compiler via `-Xcompiler` for ABI consistency) |
 | `-DCMAKE_BUILD_TYPE=Debug` | Debug build with symbols |

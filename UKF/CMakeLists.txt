@@ -27,6 +27,11 @@ add_executable(srukf_test main_srukf.cpp)
 target_link_libraries(srukf_test Eigen3::Eigen OptMathKernels)
 enable_lto_if_supported(srukf_test)
 
+# SRUKF angular-observation innovation wrap (R32) + NIS exposure (R33) regression test
+add_executable(srukf_angular_wrap_test tests/test_srukf_angular_wrap.cpp)
+target_link_libraries(srukf_angular_wrap_test Eigen3::Eigen OptMathKernels)
+enable_lto_if_supported(srukf_angular_wrap_test)
+
 # UKF vs SRUKF Comparison (disabled - source files not present)
 # add_executable(compare_ukf_srukf compare_ukf_srukf.cpp)
 # add_executable(simple_comparison simple_comparison.cpp)

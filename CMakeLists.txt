@@ -16,12 +16,18 @@ if(CMAKE_CUDA_COMPILER)
 
     # Detect CUDA architectures
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        # Default multi-arch list: Turing (75), Ampere (80,86), Ada Lovelace (89),
+        # Base multi-arch list: Turing (75), Ampere (80,86), Ada Lovelace (89),
         # Hopper (90). Blackwell (datacenter SM 100, consumer RTX 50-series SM 120)
-        # needs CUDA 13.x and is NOT in this list — build for it explicitly with
-        # -DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_CUDA_NATIVE=ON. See
-        # DEVELOPMENT_NOTES.md (verified on RTX 5070 Ti / SM 120, CUDA 13.1).
+        # is ONLY added when nvcc is CUDA 13.x+, because CUDA 12.x rejects
+        # compute_100/compute_120 ("Unsupported gpu architecture"). This makes the
+        # documented Blackwell host (RTX 5070 Ti / SM 120, CUDA 13.1) build by
+        # default; on CUDA 12.x it silently stays at 75–90. Override any time with
+        # -DCMAKE_CUDA_ARCHITECTURES=native. See DEVELOPMENT_NOTES.md.
         set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90)
+        if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+            list(APPEND CMAKE_CUDA_ARCHITECTURES 100 120)
+            message(STATUS "CUDA ${CMAKE_CUDA_COMPILER_VERSION} >= 13: adding Blackwell SM 100/120")
+        endif()
     endif()
 
     message(STATUS "CUDA enabled - Compiler: ${CMAKE_CUDA_COMPILER}")
@@ -83,7 +89,13 @@ else()
     message(STATUS "OpenMP not found, particle filter will run single-threaded")
 endif()
 
-# --- Python Virtual Environment (Required) ---
+# --- Python Virtual Environment (for plotting scripts) ---
+# Opt-out so the C++ build does not require Python3 + live PyPI access. The venv
+# is only needed to run the scripts/*.py plotting helpers; turn it off for
+# offline / CI / air-gapped builds with -DNLF_BUILD_PYTHON_VENV=OFF.
+option(NLF_BUILD_PYTHON_VENV "Create the Python venv for plotting scripts as part of the build" ON)
+
+if(NLF_BUILD_PYTHON_VENV)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 message(STATUS "Python3 found: ${Python3_EXECUTABLE} (${Python3_VERSION})")
 
@@ -115,6 +127,9 @@ add_custom_target(python_venv ALL
 
 message(STATUS "Python venv: ${NLF_VENV_DIR}")
 message(STATUS "  Activate with: source ${NLF_VENV_DIR}/bin/activate")
+else()
+    message(STATUS "Python venv disabled (NLF_BUILD_PYTHON_VENV=OFF); plotting scripts skipped")
+endif()
 
 include(FetchContent)
 
@@ -175,12 +190,18 @@ else()
     set(ENABLE_CUDA OFF CACHE BOOL "Enable NVIDIA CUDA support" FORCE)
 endif()
 
-# GIT_TAG follows the pinned release tag. The repository is the local clone in
-# $HOME (kept in sync with github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA);
-# FetchContent checks out OPTMATH_RELEASE_TAG into _deps/optimizedkernels-src.
+# Dependency source. Defaults to the PUBLIC GitHub URL so a fresh `git clone` of
+# this repo configures and builds on any machine (reproducibility). For offline
+# or local development against a working clone, override with
+#   -DOPTMATH_REPO=$ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
+# GIT_TAG follows the pinned release tag; FetchContent checks OPTMATH_RELEASE_TAG
+# out into _deps/optimizedkernels-src.
+set(OPTMATH_REPO "https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA.git"
+    CACHE STRING "OptMathKernels source (public URL by default; may be a local clone path)")
+message(STATUS "OptMathKernels source: ${OPTMATH_REPO}")
 FetchContent_Declare(
     OptimizedKernels
-    GIT_REPOSITORY $ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA
+    GIT_REPOSITORY ${OPTMATH_REPO}
     GIT_TAG ${OPTMATH_RELEASE_TAG}
 )
 FetchContent_MakeAvailable(OptimizedKernels)
@@ -200,12 +221,28 @@ add_subdirectory(PKF)
 add_subdirectory(RBPKF)
 add_subdirectory(Benchmarks)
 
+# --- Install rules ---
+# This project is primarily a header library (the filters are header-only
+# templates); the reusable artifact is the set of public headers. Install them
+# into a single include/ root, mirroring the multiple -I roots used at build
+# time, so `#include "UKF.h"`, `#include "rbpf/rbpf_core.hpp"`, etc. resolve for
+# downstream consumers. (`run_benchmarks` also installs to bin via Benchmarks/.)
+install(DIRECTORY
+        Common/include/
+        EKF/include/
+        UKF/include/
+        PKF/include/
+        RBPKF/include/
+        DESTINATION include/nlf
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp")
+
 # --- CTest Integration ---
 enable_testing()
 
 add_test(NAME EKF_Test COMMAND ekf_test)
 add_test(NAME UKF_Test COMMAND ukf_test)
 add_test(NAME SRUKF_Test COMMAND srukf_test)
+add_test(NAME SRUKF_AngularWrap COMMAND srukf_angular_wrap_test)
 add_test(NAME PKF_Test COMMAND pkf_test)
 add_test(NAME PKF_Example COMMAND pkf_example)
 add_test(NAME RBPF_Basic COMMAND test_rbpf_basic)

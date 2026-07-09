@@ -1,11 +1,23 @@
 #include <iostream>
 #include <vector>
-#include <cassert>
+#include <cstdlib>
 #include <cmath>
 #include <numeric>
 #include "particle_filter.hpp"
 #include "resampling.hpp"
 #include "noise_models.hpp"
+
+// assert() is compiled out under NDEBUG (Release), which would turn every check
+// below into a no-op and make CTest pass regardless of correctness. CHECK stays
+// live in all build types and exits non-zero so failures actually surface.
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::cerr << "CHECK FAILED: " #cond " at " << __FILE__ << ":"      \
+                      << __LINE__ << std::endl;                                \
+            std::exit(1);                                                      \
+        }                                                                      \
+    } while (0)
 
 // Simple 1D Linear Model for Testing
 // x_k = x_{k-1} + u + w_k
@@ -54,10 +66,12 @@ void test_resampling() {
     std::mt19937_64 rng(42);
 
     auto parents = PKF::Resampling::systematic(weights, rng);
-    assert(parents.size() == 4);
+    CHECK(parents.size() == 4);
+    for (auto p : parents) CHECK(p < 4);  // indices in range
 
     parents = PKF::Resampling::stratified(weights, rng);
-    assert(parents.size() == 4);
+    CHECK(parents.size() == 4);
+    for (auto p : parents) CHECK(p < 4);
 
     std::cout << "Resampling tests passed." << std::endl;
 }
@@ -67,6 +81,7 @@ void test_particle_filter() {
     std::cout << "Testing Particle Filter..." << std::endl;
     TestModel1D model;
     PKF::ParticleFilter<1, 1> pf(&model, 100);
+    pf.set_seed(42);  // deterministic run
 
     // Initialize
     pf.initialize([](std::mt19937_64& r) {
@@ -85,7 +100,8 @@ void test_particle_filter() {
 
     // Basic sanity check: mean should be somewhere near 1.0 (prior 0 + u 1)
     // and dragged towards y=1.
-    assert(std::abs(mean(0) - 1.0f) < 1.0f);
+    CHECK(std::isfinite(mean(0)));
+    CHECK(std::abs(mean(0) - 1.0f) < 1.0f);
 
     std::cout << "Particle Filter tests passed." << std::endl;
 }

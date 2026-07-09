@@ -26,7 +26,7 @@ Adopting a newer kernel release is a deliberate, audited step:
 2. Audit the upstream diff `git diff <old-tag>..<new-tag>` — pay attention to
    anything under `include/` (public API) and the backend `src/` the filters use.
 3. Bump `OPTMATH_RELEASE_TAG`, reconfigure, rebuild.
-4. `ctest --output-on-failure` (expect 24/24) and run the benchmark suite.
+4. `ctest --output-on-failure` (expect 25/25) and run the benchmark suite.
 5. Update README/this file, then commit and tag the parent release.
 
 ### Audit: v0.5.13 → v0.5.15 (adopted 2026-05-25)
@@ -72,7 +72,7 @@ empty). No `optmath::` call site in `FilterMath.h`, `FilterMathGPU.h`, or
 MPI/OpenMPI — the parallelism story here remains OpenMP (CPU) + CUDA/Vulkan (GPU).
 
 **Verification (2026-07-08):** cleared `_deps/optimizedkernels-*`, reconfigured
-at `v0.5.17` (dep HEAD `cb4b9ef` = tag `v0.5.17`), full rebuild, **24/24 CTest
+at `v0.5.17` (dep HEAD `cb4b9ef` = tag `v0.5.17`), full rebuild, **25/25 CTest
 pass** (≈ 5.8 s), benchmarks rerun and plots regenerated — RMSE/NEES figures
 numerically consistent with the prior run (the changed test path is not on the
 UKF/SRUKF CUDA/Eigen benchmark path; only 3 of 15 committed PNGs changed at the
@@ -135,7 +135,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=native -DOPTMATH_
 make -j$(nproc)
 ```
 
-**Test Results: 24/24 passing** (8 filter/benchmark + 16 OptMathKernels GPU/SIMD,
+**Test Results: 25/25 passing** (9 filter/benchmark + 16 OptMathKernels GPU/SIMD,
 incl. `test_cuda_kernels` on the Blackwell GPU and the 4 Vulkan suites selecting
 the discrete GPU). Total CTest time ≈ 5.9 s.
 
@@ -283,49 +283,87 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 
 ## Changelog
 
-### v3.2.3 (July 2026) — perf: fixed-size dispatch fast path
-- **`filtermath::gemm` / `mat_vec_mul` fixed-size overloads.** On x86 every
-  filter matrix is small (2..10) and below the CUDA threshold, so these calls
-  always fell to Eigen — but the dynamic `MatrixXf` signature forced heap-backed
-  temporaries and runtime dispatch branches around each product. Added SFINAE
-  overloads (in `Common/include/FilterMath.h`) that bind to compile-time-sized
-  operands and compute directly into stack-allocated fixed-size results, with no
-  dispatch branch. Genuinely dynamic operands (EKF, the RBPF model dynamics /
-  observation matrices) still bind to the `MatrixXf` overloads, so the
-  large-matrix CUDA/SVE2/NEON dispatch is fully preserved.
-- Tightened one UKF update intermediate (`KS`) to fixed-size so both covariance
-  gemms take the fast path.
-- Measured: UKF 10D benchmark ~3.6% faster (38.3 → 36.9 ms, min of 5 runs);
-  RMSE/NEES bit-identical. SRUKF unchanged (it uses direct Eigen, not gemm).
-  Note: EKF and the RBPF per-particle KF use dynamic `MatrixXf` by design and do
-  not auto-benefit — converting them is a larger interface refactor (follow-up).
+### Audit remediation (Jul 2026)
 
-### v3.2.2 (July 2026) — audit fixes
-- **RBPF OpenMP data race (correctness).** `rbpf_core.hpp::step()` declared the
-  per-particle work matrices `A,B,bias,Q,H,offset,R` outside the
-  `#pragma omp parallel for`, so they were shared across threads and clobbered
-  mid-`predict`/`update` — nondeterministic wrong results (and possible crash via
-  concurrent Eigen realloc). Moved the declarations inside the loop body.
-- **SRUKF gated-covariance consistency (correctness).** `SRUKF::update()` applied
-  the innovation-gate `scale` only to the state correction while downdating the
-  covariance by the full `K·S_yy·S_yyᵀ·Kᵀ`. A rejected outlier (`scale==0`) thus
-  shrank the covariance with no state change → false certainty / divergence.
-  Downdate now uses the Joseph partial-update form `U = √(2·scale − scale²)·(K·S_yy)`
-  (covariance shrinks by `(2s − s²)·K·P_yy·Kᵀ`; full at scale=1, no-op when rejected).
-  Default down-scaling path is numerically unchanged (`scale==1`).
-- **Benchmark divergence metric (harness).** Bearing-Only used the default
-  `divergence_threshold = 10.0f` against a ~64 m error scale, mislabelling ~65% of
-  steps as "divergences" (NEES showed the filter was consistent). Gave it a
-  problem-scaled 500 m threshold (analogous to reentry's 5 km); count now 0.
+Repository-wide audit (correctness, build/reproducibility, docs). Verified on the
+aarch64 Raspberry Pi host (CPU: NEON/SVE2/Eigen path; no CUDA) and on the x86_64 +
+RTX 5070 Ti / CUDA 13.1 reference host (25/25 CTest) — all CTest cases pass before
+and after; benchmark RMSE/NEES numerically unchanged.
 
-### v3.2.1 (July 2026)
-- Audited OptMathKernels bump v0.5.15 → v0.5.17 (see "Release Audit" above);
-  upstream diff is docs + a NEON unit-test tolerance fix only — no public API,
-  compute-backend, or MPI/OpenMPI change
-- Bumped `OPTMATH_RELEASE_TAG` to `v0.5.17`, cleared `_deps` to force re-checkout,
-  full rebuild, **24/24 CTest pass**
-- Benchmarks rerun and plots regenerated (RMSE/NEES consistent; 3/15 committed
-  PNGs changed cosmetically)
+**Correctness**
+- **RBPF OpenMP data race (HIGH)**: `A,B,bias,Q,H,offset,R` were declared outside
+  the `#pragma omp parallel for` in `rbpf_core.hpp::step()` (shared → concurrent
+  writes). Moved inside the loop body (thread-private). Confirmed with
+  ThreadSanitizer (~24 worker-vs-worker races → 0).
+- **OpenMP RNG ignored the seed**: RBPF and PKF used a `std::random_device`
+  `thread_local` in the parallel path, so `config.seed` / `set_seed()` had no
+  effect and runs were non-reproducible. Replaced with per-thread `mt19937_64`
+  seeded deterministically (SplitMix64 mix of the base seed) + `schedule(static)`.
+  Reproducibility confirmed (identical output across runs at 4 threads).
+- **RBPF fixed-lag ancestry off-by-one**: `initialize()` stored the initial
+  snapshot at logical slot 0 but never advanced `parent_indices_cnt_`, so step 1
+  clobbered it and the smoother could never reach the true initial state. The
+  counter now advances so the initial state is preserved as an ancestor.
+- **UKF covariance update**: switched `P = P - K S K^T` to the symmetric Joseph
+  form `P - K Pxy^T - Pxy K^T + K S K^T` (identical in exact arithmetic, PSD-safe
+  by construction) and replaced the single fixed regularization bump with an
+  escalating, re-checked jitter loop.
+- **SRUKF gate/covariance consistency**: when the innovation gate scales the state
+  correction by `s < 1`, the covariance downdate is now scaled by `sqrt(2s - s^2)`
+  (the Joseph-consistent reduction for a gain `sK`) instead of removing the full
+  `K S_yy S_yy^T K^T`, so the reported covariance is no longer over-confident.
+
+**Build / reproducibility**
+- Dependency source is now the **public GitHub URL** by default (was a local
+  `$HOME` path that broke clean clones), overridable via `-DOPTMATH_REPO`.
+- Tests now use a `CHECK` macro (exits non-zero) instead of `assert()`, which was
+  compiled out under `NDEBUG` — CTest was green regardless of correctness in
+  Release. Added real numeric + fixed-lag-smoother assertions to the RBPF test.
+- `Benchmarks/CMakeLists.txt` guards `find_package(Eigen3)` like the other subdirs
+  (was aborting configure when Eigen came from FetchContent).
+- Default CUDA arch list adds Blackwell SM 100/120 automatically when nvcc is
+  CUDA ≥ 13 (documented host built without manual flags otherwise).
+- `install()` rules added for the filter headers (`<prefix>/include/nlf/`).
+- Python venv is opt-out (`-DNLF_BUILD_PYTHON_VENV=OFF`) so offline/CI C++ builds
+  don't require PyPI.
+
+**Docs**
+- Removed README "Numerical Stability" issues describing the deleted GPS/INS /
+  AircraftNav simulation (kept the real Eigen-aliasing fix, stripped the fictional
+  application narrative). Reconciled the contradictory bearing-only RMSE tables.
+  Corrected the Benchmarks/README to the four problems actually run (Lorenz96 is
+  present in the header but not in the default suite). Added a host note clarifying
+  that GPU test counts/timings are from the x86_64 reference host.
+
+**Feature-branch additions (merged from `feature/srukf-angular-wrap-and-nis`)**
+These landed on the feature branch and were merged with the audit above. The RBPF
+race and the SRUKF gate/covariance fix were done independently on both branches and
+reconciled to `main`'s versions (SRUKF uses the `sqrt(2s - s^2)` Joseph form).
+- **SRUKF angular-observation innovation wrap (R32)** + **NIS exposure / reject
+  policy (R33)**: angular observation innovations are wrapped to [−π, π]; NIS is
+  exposed via `getLastNIS()` and the innovation gate has an optional
+  `setRejectOutliers()` reject-vs-downscale policy.
+- **OptMathKernels kernel bump v0.5.15 → v0.5.17** (audited per the pinning policy;
+  upstream diff is docs + a NEON unit-test-tolerance fix — no API/backend/MPI change).
+  See "Audit: v0.5.15 → v0.5.17" above.
+- **Bearing-Only divergence-metric fix**: `count_divergences()` used the default
+  10.0 threshold against this problem's ~64 m error scale, mislabelling ~65% of
+  steps as "divergences" (the filter was consistent — NEES 99.6% in-bounds). Gave
+  it a problem-scaled 500 m threshold (like reentry's 5 km); count now 0.
+- **filtermath fixed-size dispatch fast-path**: SFINAE `gemm` / `mat_vec_mul`
+  overloads bind to compile-time-sized operands and compute into stack-allocated
+  fixed-size results (no `MatrixXf` heap temporaries / dispatch branch); dynamic
+  operands still take the CUDA/SVE2/NEON path. UKF 10D ~3.6% faster; RMSE/NEES
+  bit-identical.
+
+### Recommended follow-up: CI
+
+No CI is committed yet. A minimal GitHub Actions workflow would need to build
+CPU-only (`-DCMAKE_CUDA_COMPILER=""`), skip the venv (`-DNLF_BUILD_PYTHON_VENV=OFF`),
+and either provide a Vulkan loader / `glslang` on the runner or gate the
+dependency's Vulkan tests, because `ENABLE_VULKAN` is forced ON. Run
+`ctest -R "EKF_Test|UKF_Test|SRUKF_Test|PKF_Test|PKF_Example|RBPF_Basic|RBPF_CTRV|Benchmarks"`
+to enforce the eight project tests on every clean checkout.
 
 ### v3.2.0 (May 2026)
 - Audited OptMathKernels major updates v0.5.13 → v0.5.15 (see "Release Audit" above)

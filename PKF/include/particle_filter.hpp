@@ -70,14 +70,19 @@ public:
             }
         }
 
-        // Seed RNG
+        // Seed RNG. Derive a 64-bit base seed so both the serial rng_ and the
+        // per-thread RNGs come from the same source.
         std::random_device rd;
-        rng_.seed(rd());
+        base_seed_ = (static_cast<uint64_t>(rd()) << 32) ^ static_cast<uint64_t>(rd());
+        rng_.seed(base_seed_);
+        seed_thread_rngs();
     }
 
-    /** Set a fixed RNG seed for reproducible results. */
+    /** Set a fixed RNG seed for reproducible results (serial AND OpenMP paths). */
     void set_seed(uint64_t seed) {
+        base_seed_ = seed;
         rng_.seed(seed);
+        seed_thread_rngs();
     }
 
     /**
@@ -103,15 +108,15 @@ public:
         // Use pre-allocated props_ and noises_ vectors
 
 #ifdef _OPENMP
-        // Parallel propagation with thread-local RNG
-        #pragma omp parallel
-        {
-            thread_local std::mt19937_64 local_rng{std::random_device{}()};
-            #pragma omp for
-            for (size_t i = 0; i < N_; ++i) {
-                props_[i] = model_->propagate(particles_[i], t_k, u_k);
-                noises_[i] = model_->sample_process_noise(t_k, local_rng);
-            }
+        // Parallel propagation with per-thread RNGs seeded deterministically from
+        // base_seed_ (see seed_thread_rngs). schedule(static) fixes the
+        // iteration->thread mapping so a given seed + thread count is reproducible.
+        // (Previously a std::random_device thread_local was used, ignoring set_seed.)
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < N_; ++i) {
+            std::mt19937_64& local_rng = thread_rngs_[static_cast<size_t>(omp_get_thread_num())];
+            props_[i] = model_->propagate(particles_[i], t_k, u_k);
+            noises_[i] = model_->sample_process_noise(t_k, local_rng);
         }
 #else
         for (size_t i = 0; i < N_; ++i) {
@@ -308,6 +313,29 @@ private:
     std::vector<State> particles_;
     std::vector<double> log_weights_;
     std::mt19937_64 rng_;
+    uint64_t base_seed_ = 0;
+
+#ifdef _OPENMP
+    // One RNG per OpenMP thread, seeded deterministically from base_seed_ so that
+    // set_seed() makes the parallel propagation reproducible (it previously used a
+    // std::random_device thread_local that ignored the seed entirely).
+    std::vector<std::mt19937_64> thread_rngs_;
+#endif
+
+    /** Seed one mt19937_64 per OpenMP thread deterministically from base_seed_. */
+    void seed_thread_rngs() {
+#ifdef _OPENMP
+        const int nthreads = omp_get_max_threads();
+        thread_rngs_.resize(static_cast<size_t>(nthreads));
+        for (int t = 0; t < nthreads; ++t) {
+            uint64_t s = base_seed_ + 0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(t + 1);
+            s ^= s >> 30; s *= 0xBF58476D1CE4E5B9ULL;
+            s ^= s >> 27; s *= 0x94D049BB133111EBULL;
+            s ^= s >> 31;
+            thread_rngs_[static_cast<size_t>(t)].seed(s);
+        }
+#endif
+    }
 
     // Pre-allocated temporary vectors for step()
     std::vector<State> props_;

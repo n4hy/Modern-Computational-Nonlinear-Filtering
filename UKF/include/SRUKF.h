@@ -49,14 +49,15 @@ public:
      */
     void initialize(const State& x0, const StateMat& P0) {
         x_ = x0;
-        // Dimension-adaptive parameters for SRUKF
-        // Low/medium dimensions: alpha=1.0 for better weak observability handling
-        // High dimensions: alpha=1e-3 to prevent numerical issues
+        // Dimension-adaptive parameters for SRUKF (alpha=1.0 in both regimes; the
+        // earlier alpha=1e-3 for high NX was removed in the audit because it made
+        // Wm(0)/Wc(0) hugely negative and destabilized the 10D coupled-oscillator
+        // case). Only kappa varies with dimension.
         if (kappa < 0) {
             beta = 2.0f;  // Optimal for Gaussian
             if (NX <= 5) {
                 alpha = 1.0f;
-                kappa = 3.0f - static_cast<float>(NX);
+                kappa = 3.0f - static_cast<float>(NX);  // classic n+kappa = 3
             } else {
                 alpha = 1.0f;
                 kappa = 0.0f;
@@ -380,8 +381,8 @@ public:
         // approximation) -- stored in last_nis_ for monitoring (R33).
         Eigen::Matrix<float, NY, 1> temp_innov = S_yy.template triangularView<Eigen::Lower>().solve(innovation);
         float mahal_dist_sq = temp_innov.squaredNorm();
-        last_nis_ = mahal_dist_sq;
-        float gate_threshold = 25.0f;  // Chi-squared threshold (larger to allow GPS)
+        last_nis_ = mahal_dist_sq;     // expose NIS for monitoring (R33)
+        float gate_threshold = 25.0f;  // Chi-squared gate on Mahalanobis distance (NIS)
 
         float scale = 1.0f;
         if (mahal_dist_sq > gate_threshold) {
@@ -411,7 +412,8 @@ public:
         // zero downdate, so a discarded measurement never shrinks the covariance
         // into false certainty. NOTE: a plain `scale` here (an s^2 reduction) is
         // NOT Joseph-consistent for a partial (0<s<1) update and leaves the
-        // covariance over-conservative — use 2s - s^2.
+        // covariance over-conservative — use 2s - s^2. The factor 2s - s^2 =
+        // 1 - (1 - s)^2 >= 0, so the downdate also stays PSD-safe.
         const float downdate_scale = std::sqrt(std::max(0.0f, 2.0f * scale - scale * scale));
         Eigen::Matrix<float, NX, NY> U = downdate_scale * (K * S_yy);
 

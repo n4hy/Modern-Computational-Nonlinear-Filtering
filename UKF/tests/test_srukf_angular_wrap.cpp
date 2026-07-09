@@ -15,12 +15,16 @@
 //       -L"$NLF/build/_deps/optimizedkernels-build/src" -lOptMathKernels \
 //       -o /tmp/test_srukf_angular_wrap && /tmp/test_srukf_angular_wrap
 // =============================================================================
-#include <cassert>
 #include <cstdio>
 #include <cmath>
 #include <Eigen/Dense>
 #include "StateSpaceModel.h"
 #include "SRUKF.h"
+
+// Release-safe check: unlike assert(), this is NOT compiled out under NDEBUG, so
+// the test actually fails (non-zero exit) in the Release CTest build.
+#define CHECK(cond, msg) \
+    do { if (!(cond)) { std::fprintf(stderr, "FAIL: %s\n", (msg)); return 1; } } while (0)
 
 // Minimal 1-state, 1-observation model whose observation is an ANGLE.
 //   f: identity (a static phase);  h(x) = x (the angle itself).
@@ -53,12 +57,12 @@ int main() {
     std::printf("x_new = %.4f   NIS = %.4f   gated = %u\n",
                 x_new, f.getLastNIS(), f.getGatedCount());
 
-    assert(std::fabs(x_new) > 2.5f &&
-           "angular-OBSERVATION innovation was not wrapped at +/-pi (R32)");
+    CHECK(std::fabs(x_new) > 2.5f,
+          "angular-OBSERVATION innovation was not wrapped at +/-pi (R32)");
 
     // R33: the rigorous NIS is exposed and finite/positive.
-    assert(f.getLastNIS() >= 0.0f && std::isfinite(f.getLastNIS()) &&
-           "getLastNIS() must expose a finite NIS (R33)");
+    CHECK(f.getLastNIS() >= 0.0f && std::isfinite(f.getLastNIS()),
+          "getLastNIS() must expose a finite NIS (R33)");
 
     std::printf("PASS: angular-observation innovation wrapped (R32); "
                 "NIS exposed (R33)\n");

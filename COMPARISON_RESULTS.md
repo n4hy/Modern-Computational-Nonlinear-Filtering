@@ -34,13 +34,20 @@
 
 ## Executive Summary
 
-After fixing **5 critical numerical bugs** and implementing **dimension-adaptive parameters**, SRUKF performs exceptionally well on low-to-medium dimensional problems:
+_The figures in this summary are from the historical Feb–Apr 2026 bearing-only
+configuration (~17 m RMSE) and are **superseded** — see the banner above. In the
+current v3.2.0 suite the bearing-only RMSE is 64.17 and SRUKF is **not** uniformly
+faster than UKF (e.g. it is marginally slower on the 10D case). For authoritative
+numbers use [README.md](README.md). The points below are retained as a record of
+the v3.0 bug-fix campaign's impact at the time._
 
-- ✅ **43% faster** than standard UKF on bearing-only tracking
-- ✅ **98.6% better RMSE** on bearing-only (1229m → 17m)
-- ✅ **36% fewer divergences** on bearing-only (284 → 182)
+After fixing **5 critical numerical bugs** and implementing **dimension-adaptive parameters**, SRUKF performed exceptionally well on the low-to-medium dimensional problems of that era:
+
+- ✅ **43% faster** than standard UKF on bearing-only tracking *(historical config)*
+- ✅ **98.6% better RMSE** on bearing-only (1229m → 17m) *(historical config)*
+- ✅ **36% fewer divergences** on bearing-only (284 → 182) *(historical config)*
 - ✅ **Excellent stability** on 2D/4D problems
-- ⚠️ **High-dimensional (10D) requires future work** (Option B)
+- ⚠️ **High-dimensional (10D) requires future work** — since **resolved** (now rock-solid)
 
 ---
 

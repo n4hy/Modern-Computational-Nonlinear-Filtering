@@ -129,19 +129,31 @@ public:
         // State update
         x_ = x_ + K * y_diff;
 
-        // Covariance update: P = P - K*S*K^T. Keep KS fixed-size (NX x NY) so
-        // both gemms take the compile-time fixed-size fast path in FilterMath.h
-        // (no MatrixXf heap temporaries around a 10x10-scale product).
-        Eigen::Matrix<float, NX, NY> KS = filtermath::gemm(K, S);
-        P_ = P_ - filtermath::gemm(KS, K.transpose());
+        // Covariance update — Joseph-style symmetric form for the UKF.
+        // Algebraically identical to P = P - K*S*K^T (since Pxy = K*S, both
+        // K*Pxy^T and Pxy*K^T equal K*S*K^T, so the four terms reduce to
+        // -K*S*K^T), but written with the cross terms it is symmetric by
+        // construction and rounding partially cancels — the same PSD-preserving
+        // intent as the EKF/RBPF Joseph updates, without needing an explicit H.
+        // Fixed-size types (NX/NY known at compile time) keep every gemm on
+        // FilterMath.h's compile-time fast path (no MatrixXf heap temporaries).
+        Eigen::Matrix<float, NX, NY> KS    = filtermath::gemm(K, S);
+        StateMat                     KSKt  = filtermath::gemm(KS, K.transpose());
+        StateMat                     KPxyT = filtermath::gemm(K, Pxy.transpose());
+        P_ = P_ - KPxyT - KPxyT.transpose() + KSKt;
 
-        // Symmetrize and ensure positive definiteness
+        // Symmetrize
         P_ = 0.5f * (P_ + P_.transpose());
 
-        // Check for positive definiteness and regularize if needed
+        // Ensure positive definiteness with escalating diagonal jitter (re-checked
+        // each time) rather than a single fixed bump, matching the Cholesky
+        // fallback chain used elsewhere in the filters.
         Eigen::LLT<StateMat> llt_check(P_);
-        if (llt_check.info() != Eigen::Success) {
-            P_ += 1e-6f * StateMat::Identity();
+        float jitter = 1e-9f;
+        for (int tries = 0; llt_check.info() != Eigen::Success && tries < 6; ++tries) {
+            P_ += jitter * StateMat::Identity();
+            llt_check.compute(P_);
+            jitter *= 10.0f;
         }
     }
 

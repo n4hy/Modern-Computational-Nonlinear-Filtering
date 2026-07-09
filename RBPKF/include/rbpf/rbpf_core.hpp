@@ -56,6 +56,7 @@ public:
 
         particles_.resize(config_.num_particles);
         rng_.seed(config_.seed);
+        seed_thread_rngs();
 
         if (config_.fixed_lag > 0) {
             ancestry_buffer_size_ = config_.fixed_lag + 1;
@@ -72,6 +73,10 @@ public:
                     const LinearCov&      P_lin0) {
         float init_log_weight = -std::log(static_cast<float>(config_.num_particles));
 
+        // Reseed so a re-run after initialize() with the same config seed reproduces.
+        rng_.seed(config_.seed);
+        seed_thread_rngs();
+
         for (auto& p : particles_) {
             p.x_nl = x_nl0;
             p.kf.initialize(x_lin0, P_lin0);
@@ -79,7 +84,13 @@ public:
         }
 
         if (config_.fixed_lag > 0) {
+            // Record the initial state as logical time 0 and advance the counter so
+            // the first step() stores at logical time 1 instead of overwriting slot 0.
+            // Without this the initial snapshot is clobbered by step 1, and the
+            // fixed-lag smoother can never reach the true initial state (off-by-one
+            // in smoothing depth). parent_indices at slot 0 are the identity map.
             store_history(0);
+            parent_indices_cnt_ = 1;
         }
     }
 
@@ -96,18 +107,13 @@ public:
               const NonlinearState& u_k) {
 
 #ifdef _OPENMP
-        #pragma omp parallel for
+        #pragma omp parallel for schedule(static)
 #endif
         for (int i = 0; i < config_.num_particles; ++i) {
-            auto& p = particles_[i];
-
-            // Per-particle dynamics / observation work matrices. These MUST be
-            // declared inside the loop body: under `#pragma omp parallel for`
-            // any variable declared outside the region is shared across threads,
-            // so hoisting them would let thread B's get_dynamics()/get_observation()
-            // clobber A/B/Q/H/R while thread A is still mid predict()/update() —
-            // a data race yielding nondeterministic (wrong) per-particle KFs and,
-            // via concurrent Eigen reallocation, potential crashes.
+            // Per-particle dynamics/observation matrices MUST be declared inside the
+            // loop body: under `omp parallel for` any variable declared outside is
+            // shared, so hoisting these would let threads stomp each other's
+            // get_dynamics()/get_observation() output (a data race). Keep them local.
             Eigen::MatrixXf A(Types::Nlin, Types::Nlin);
             Eigen::MatrixXf B(Types::Nlin, Types::Nlin);
             LinearState bias;
@@ -117,9 +123,14 @@ public:
             Observation offset;
             ObsCov R;
 
+            auto& p = particles_[i];
+
             NonlinearState x_nl_prev = p.x_nl;
 #ifdef _OPENMP
-            thread_local std::mt19937_64 local_rng{std::random_device{}()};
+            // Per-thread RNG seeded deterministically from config_.seed (see
+            // seed_thread_rngs). schedule(static) above keeps the iteration->thread
+            // mapping fixed, so results are reproducible for a given thread count.
+            std::mt19937_64& local_rng = thread_rngs_[omp_get_thread_num()];
             p.x_nl = nonlinear_model_.propagate(x_nl_prev, t_k, u_k, local_rng);
 #else
             p.x_nl = nonlinear_model_.propagate(x_nl_prev, t_k, u_k, rng_);
@@ -274,6 +285,14 @@ private:
     std::mt19937_64        rng_;
     std::vector<RbpfParticle<Types>> particles_;
 
+#ifdef _OPENMP
+    // One RNG per OpenMP thread, seeded deterministically from config_.seed so the
+    // parallel propagation honors the configured seed (previously it used a
+    // std::random_device thread_local, ignoring the seed and making parallel runs
+    // non-reproducible). Reproducible for a fixed OMP thread count + static schedule.
+    std::vector<std::mt19937_64> thread_rngs_;
+#endif
+
     int ancestry_buffer_size_ = 0;
     std::vector<std::vector<int>> parent_indices_;
     std::vector<std::vector<RbpfParticle<Types>>> particle_history_;
@@ -322,6 +341,26 @@ private:
         // FIX: guard against division by zero
         if (sum_sq <= 0.0f) return static_cast<float>(config_.num_particles);
         return 1.0f / sum_sq;
+    }
+
+    /**
+     * Seed one mt19937_64 per OpenMP thread deterministically from config_.seed.
+     * Each thread gets a distinct, well-mixed seed (SplitMix64 finalizer) so the
+     * per-thread streams are decorrelated yet fully determined by config_.seed.
+     * No-op when built without OpenMP (the serial path uses rng_).
+     */
+    void seed_thread_rngs() {
+#ifdef _OPENMP
+        const int nthreads = omp_get_max_threads();
+        thread_rngs_.resize(static_cast<size_t>(nthreads));
+        for (int t = 0; t < nthreads; ++t) {
+            uint64_t s = config_.seed + 0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(t + 1);
+            s ^= s >> 30; s *= 0xBF58476D1CE4E5B9ULL;
+            s ^= s >> 27; s *= 0x94D049BB133111EBULL;
+            s ^= s >> 31;
+            thread_rngs_[static_cast<size_t>(t)].seed(s);
+        }
+#endif
     }
 
     /** Store current particles and parent indices into the circular ancestry buffer. */
