@@ -400,16 +400,20 @@ public:
         // P = P - K*S_yy*S_yy^T*K^T = S*S^T - K*S_yy*S_yy^T*K^T
         // Use QR to compute: [S^T, (K*S_yy)^T]^T and extract updated S
         //
-        // The downdate MUST carry the same `scale` as the state correction
-        // (R33). The effective gain applied to the state is `scale*K`, so the
-        // covariance must shrink by (scale*K)*P_yy*(scale*K)^T = scale^2 *
-        // K*P_yy*K^T. Scaling each downdate column by `scale` yields exactly
-        // that scale^2 reduction (a downdate subtracts u*u^T). When an outlier
-        // is rejected (scale == 0) U becomes zero → no downdate, so a discarded
-        // measurement no longer shrinks the covariance into false certainty;
-        // for 0 < scale < 1 the covariance stays consistent with the partial
-        // state correction instead of collapsing as if fully fused.
-        Eigen::Matrix<float, NX, NY> U = scale * (K * S_yy);
+        // The downdate MUST stay consistent with the gated state correction
+        // (R33), which applies an effective gain `scale*K`. The Joseph form for a
+        // suboptimal gain s*K,
+        //     P+ = (I - sKH) P (I - sKH)^T + s^2 K R K^T,
+        // reduces to  P+ = P - (2s - s^2) * K*P_yy*K^T  (using K*P_yy*K^T = KHP).
+        // So the consistent square-root downdate scales each column of K*S_yy by
+        //     downdate_scale = sqrt(2s - s^2)   (=> U*U^T = (2s - s^2)*K*P_yy*K^T).
+        // Endpoints: s=1 -> full update (2s-s^2 = 1); s=0 (rejected outlier) ->
+        // zero downdate, so a discarded measurement never shrinks the covariance
+        // into false certainty. NOTE: a plain `scale` here (an s^2 reduction) is
+        // NOT Joseph-consistent for a partial (0<s<1) update and leaves the
+        // covariance over-conservative — use 2s - s^2.
+        const float downdate_scale = std::sqrt(std::max(0.0f, 2.0f * scale - scale * scale));
+        Eigen::Matrix<float, NX, NY> U = downdate_scale * (K * S_yy);
 
         // Try rank-1 downdates, but detect if they fail
         StateMat S_updated = S_;
@@ -422,7 +426,7 @@ public:
             // Fallback: compute P directly and take Cholesky
             // P_new = P - K * P_yy * K^T = S*S^T - K*S_yy*S_yy^T*K^T
             StateMat P_curr = S_ * S_.transpose();
-            StateMat KPyyKT = U * U.transpose();  // U = scale*K*S_yy, so U*U^T = scale^2 * K*S_yy*S_yy^T*K^T (consistent with the state scaling)
+            StateMat KPyyKT = U * U.transpose();  // U = sqrt(2s-s^2)*K*S_yy, so U*U^T = (2s-s^2)*K*S_yy*S_yy^T*K^T (Joseph partial-update, consistent with the gated state correction)
             StateMat P_new = P_curr - KPyyKT;
 
             // Ensure positive definiteness

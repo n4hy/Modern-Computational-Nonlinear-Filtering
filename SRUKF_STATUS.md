@@ -68,11 +68,13 @@ beta = 2.0f;  // Optimal for Gaussian
    and exposed via `getLastNIS()`. On a gate trip the correction is scaled by
    `scale`: down-scaled by `√(gate/NIS)` by default, or **rejected** (`scale = 0`)
    when `setRejectOutliers(true)`.
-   - **Consistency (fixed v3.2.2):** the covariance downdate carries the same
-     `scale` — `U = scale·(K·S_yy)`, a scale² reduction — so a rejected/gated
-     outlier no longer shrinks the covariance into false certainty (zero downdate
-     when rejected). Previously only the state was scaled while the covariance was
-     downdated in full.
+   - **Consistency (fixed v3.2.2):** the covariance downdate stays consistent with
+     the gated gain `scale·K` via the Joseph partial-update form — the downdate
+     column is scaled by `√(2·scale − scale²)`, i.e. the covariance shrinks by
+     `(2·scale − scale²)·K·P_yy·Kᵀ`. Endpoints: `scale = 1` → full update;
+     `scale = 0` (rejected outlier) → zero downdate, so a discarded measurement no
+     longer shrinks the covariance into false certainty. Previously only the state
+     was scaled while the covariance was downdated in full.
 5. S_yy validation → `allFinite()` check + diagonal minimum enforcement
 6. Multiple Cholesky fallbacks: accelerated → jitter → LDLT → diagonal
 

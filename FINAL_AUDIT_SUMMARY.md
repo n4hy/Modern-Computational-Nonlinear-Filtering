@@ -118,10 +118,16 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 
 ### Phase 8 (July 8, 2026): Kernel bump v0.5.17, audit fixes & dispatch fast-path
 
+> **Branch status:** this work was done on `feature/srukf-angular-wrap-and-nis`,
+> which has **diverged from `main`** (common ancestor `035b10c`). `main`
+> independently landed an overlapping audit (its `v3.2.1` = commit `0cd2d83`) that
+> fixes the same RBPF race and SRUKF gate. The `v3.2.x` version labels below are
+> the feature branch's internal labels; **release tagging is deferred** until this
+> branch is reconciled with `main` (whose release line already owns `v3.2.1`).
+
 - **Adopted OptMathKernels v0.5.15 → v0.5.17** (audited per the pinning policy).
   Upstream diff is docs + a NEON unit-test-tolerance fix only — no public-API,
-  compute-backend, or MPI change. Tagged parent `v3.2.1`. See DEVELOPMENT_NOTES.md
-  → "Audit: v0.5.15 → v0.5.17".
+  compute-backend, or MPI change. See DEVELOPMENT_NOTES.md → "Audit: v0.5.15 → v0.5.17".
 - **Fix — `count_divergences()` harness bug (v3.2.2):** Bearing-Only used the
   default 10.0 error threshold against a ~64 m error scale, mis-reporting ~176/175
   "divergences" for a filter that was actually consistent (NEES 99.6% in-bounds).
@@ -133,13 +139,19 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
   races → 0.
 - **Fix — SRUKF innovation-gate consistency (v3.2.2):** a gated/rejected outlier
   previously downdated the covariance by the full `K·S_yy·S_yyᵀ·Kᵀ` (scale applied
-  only to the state) → false certainty. Downdate now uses `U = scale·(K·S_yy)`
-  (scale² reduction; no-op when rejected).
+  only to the state) → false certainty. Downdate now uses the Joseph partial-update
+  form `U = √(2·scale − scale²)·(K·S_yy)` (covariance shrinks by `(2s − s²)·K·P_yy·Kᵀ`;
+  full at scale=1, no-op when rejected).
 - **Optimization (v3.2.3):** fixed-size Eigen fast-path for `filtermath::gemm` /
   `mat_vec_mul` (no heap temporaries / dispatch branch for small compile-time-sized
   operands). UKF 10D ~3.6% faster; RMSE/NEES bit-identical.
 - Rebuilt, **24/24 CTest pass** (also under `OMP_NUM_THREADS=24`), benchmarks rerun
-  (RMSE/NEES unchanged), plots regenerated. Tagged parent `v3.2.3`.
+  (RMSE/NEES unchanged), plots regenerated.
+- **SRUKF downdate aligned with `main`:** the gate downdate now uses the Joseph
+  partial-update `√(2s − s²)` form (was `scale`), matching `main`'s more-correct fix
+  and reducing merge friction. Unique to this branch (not yet on `main`): the
+  Bearing-Only divergence-threshold fix, optimization #1, the v0.5.17 kernel bump,
+  and this validation record.
 
 ---
 

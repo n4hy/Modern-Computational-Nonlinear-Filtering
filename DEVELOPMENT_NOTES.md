@@ -310,7 +310,8 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
   the innovation-gate `scale` only to the state correction while downdating the
   covariance by the full `K·S_yy·S_yyᵀ·Kᵀ`. A rejected outlier (`scale==0`) thus
   shrank the covariance with no state change → false certainty / divergence.
-  Downdate now uses `U = scale·(K·S_yy)` (scale² reduction; no-op when rejected).
+  Downdate now uses the Joseph partial-update form `U = √(2·scale − scale²)·(K·S_yy)`
+  (covariance shrinks by `(2s − s²)·K·P_yy·Kᵀ`; full at scale=1, no-op when rejected).
   Default down-scaling path is numerically unchanged (`scale==1`).
 - **Benchmark divergence metric (harness).** Bearing-Only used the default
   `divergence_threshold = 10.0f` against a ~64 m error scale, mislabelling ~65% of
