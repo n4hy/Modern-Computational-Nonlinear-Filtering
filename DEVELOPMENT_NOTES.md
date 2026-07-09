@@ -143,7 +143,7 @@ the discrete GPU). Total CTest time ≈ 5.9 s.
 
 ## Before/After Validation Record (July 8, 2026)
 
-Side-by-side validation of the v3.2.1 → v3.2.3 work (kernel bump + the three
+Side-by-side validation of the v3.3.0 feature work (kernel bump + the three
 audit fixes + optimization #1). **Before** = commit `7609df4` (session start,
 OptMathKernels v0.5.15); **After** = commit `2c7dccf` (v0.5.17 + fixes + opt).
 The "before" tree was built from a detached `git worktree` at that commit so the
@@ -283,7 +283,35 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 
 ## Changelog
 
-### Audit remediation (Jul 2026)
+### v3.3.0 (July 2026)
+
+Feature release: SRUKF angular-observation support (R32/R33), the OptMathKernels
+v0.5.17 kernel bump, the Bearing-Only divergence-metric fix, and the fixed-size
+`filtermath` dispatch fast-path — merged onto the v3.2.1 audit-remediation line.
+Verified on x86_64 + RTX 5070 Ti / CUDA 13.1 (**25/25 CTest**, also under
+`OMP_NUM_THREADS=24`); benchmark RMSE/NEES unchanged. The RBPF race and the SRUKF
+gate/covariance fix were done independently on both branches and reconciled to
+`main`'s versions (SRUKF uses the `sqrt(2s - s^2)` Joseph form).
+
+- **SRUKF angular-observation innovation wrap (R32)** + **NIS exposure / reject
+  policy (R33)**: angular observation innovations are wrapped to [−π, π]; NIS is
+  exposed via `getLastNIS()` and the innovation gate has an optional
+  `setRejectOutliers()` reject-vs-downscale policy. Covered by the registered
+  `SRUKF_AngularWrap` CTest.
+- **OptMathKernels kernel bump v0.5.15 → v0.5.17** (audited per the pinning policy;
+  upstream diff is docs + a NEON unit-test-tolerance fix — no API/backend/MPI change).
+  See "Audit: v0.5.15 → v0.5.17" above.
+- **Bearing-Only divergence-metric fix**: `count_divergences()` used the default
+  10.0 threshold against this problem's ~64 m error scale, mislabelling ~65% of
+  steps as "divergences" (the filter was consistent — NEES 99.6% in-bounds). Gave
+  it a problem-scaled 500 m threshold (like reentry's 5 km); count now 0.
+- **filtermath fixed-size dispatch fast-path**: SFINAE `gemm` / `mat_vec_mul`
+  overloads bind to compile-time-sized operands and compute into stack-allocated
+  fixed-size results (no `MatrixXf` heap temporaries / dispatch branch); dynamic
+  operands still take the CUDA/SVE2/NEON path. UKF 10D ~3.6% faster; RMSE/NEES
+  bit-identical.
+
+### v3.2.1 (July 2026) — audit remediation
 
 Repository-wide audit (correctness, build/reproducibility, docs). Verified on the
 aarch64 Raspberry Pi host (CPU: NEON/SVE2/Eigen path; no CUDA) and on the x86_64 +
@@ -335,26 +363,8 @@ and after; benchmark RMSE/NEES numerically unchanged.
   present in the header but not in the default suite). Added a host note clarifying
   that GPU test counts/timings are from the x86_64 reference host.
 
-**Feature-branch additions (merged from `feature/srukf-angular-wrap-and-nis`)**
-These landed on the feature branch and were merged with the audit above. The RBPF
-race and the SRUKF gate/covariance fix were done independently on both branches and
-reconciled to `main`'s versions (SRUKF uses the `sqrt(2s - s^2)` Joseph form).
-- **SRUKF angular-observation innovation wrap (R32)** + **NIS exposure / reject
-  policy (R33)**: angular observation innovations are wrapped to [−π, π]; NIS is
-  exposed via `getLastNIS()` and the innovation gate has an optional
-  `setRejectOutliers()` reject-vs-downscale policy.
-- **OptMathKernels kernel bump v0.5.15 → v0.5.17** (audited per the pinning policy;
-  upstream diff is docs + a NEON unit-test-tolerance fix — no API/backend/MPI change).
-  See "Audit: v0.5.15 → v0.5.17" above.
-- **Bearing-Only divergence-metric fix**: `count_divergences()` used the default
-  10.0 threshold against this problem's ~64 m error scale, mislabelling ~65% of
-  steps as "divergences" (the filter was consistent — NEES 99.6% in-bounds). Gave
-  it a problem-scaled 500 m threshold (like reentry's 5 km); count now 0.
-- **filtermath fixed-size dispatch fast-path**: SFINAE `gemm` / `mat_vec_mul`
-  overloads bind to compile-time-sized operands and compute into stack-allocated
-  fixed-size results (no `MatrixXf` heap temporaries / dispatch branch); dynamic
-  operands still take the CUDA/SVE2/NEON path. UKF 10D ~3.6% faster; RMSE/NEES
-  bit-identical.
+_(The feature-branch additions merged on top of this audit are listed under
+v3.3.0 above.)_
 
 ### Recommended follow-up: CI
 

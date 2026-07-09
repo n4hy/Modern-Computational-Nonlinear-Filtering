@@ -1,6 +1,6 @@
 # SRUKF Implementation Status
 
-## Current State (v3.2.3, July 2026)
+## Current State (v3.3.0, July 2026)
 
 > Branch `feature/srukf-angular-wrap-and-nis`. SRUKF now (R32) wraps angular
 > **observation** innovations to [−π, π], and (R33) exposes the normalized
@@ -68,7 +68,7 @@ beta = 2.0f;  // Optimal for Gaussian
    and exposed via `getLastNIS()`. On a gate trip the correction is scaled by
    `scale`: down-scaled by `√(gate/NIS)` by default, or **rejected** (`scale = 0`)
    when `setRejectOutliers(true)`.
-   - **Consistency (fixed v3.2.2):** the covariance downdate stays consistent with
+   - **Consistency (fixed in the v3.2.1 audit):** the covariance downdate stays consistent with
      the gated gain `scale·K` via the Joseph partial-update form — the downdate
      column is scaled by `√(2·scale − scale²)`, i.e. the covariance shrinks by
      `(2·scale − scale²)·K·P_yy·Kᵀ`. Endpoints: `scale = 1` → full update;

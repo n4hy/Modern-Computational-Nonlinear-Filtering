@@ -1,7 +1,7 @@
 # Final Comprehensive Audit Summary
 ## Modern Computational Nonlinear Filtering
 
-**Date**: July 8, 2026 (v3.2.3)
+**Date**: July 8, 2026 (v3.3.0)
 **Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. Verified on Ubuntu 26.04 LTS x86_64, RTX 5070 Ti Laptop GPU (Blackwell, SM 120), CUDA 13.1.115, Vulkan 1.4.341, Eigen 3.4.0. CUDA active for SM 75–120 including Blackwell RTX 50-series. Compute kernels from OptMathKernels pinned at release tag **v0.5.17**.
 
 ---
@@ -118,40 +118,39 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 
 ### Phase 8 (July 8, 2026): Kernel bump v0.5.17, audit fixes & dispatch fast-path
 
-> **Branch status:** this work was done on `feature/srukf-angular-wrap-and-nis`,
-> which has **diverged from `main`** (common ancestor `035b10c`). `main`
-> independently landed an overlapping audit (its `v3.2.1` = commit `0cd2d83`) that
-> fixes the same RBPF race and SRUKF gate. The `v3.2.x` version labels below are
-> the feature branch's internal labels; **release tagging is deferred** until this
-> branch is reconciled with `main` (whose release line already owns `v3.2.1`).
+> **Release status:** this work was done on `feature/srukf-angular-wrap-and-nis`
+> and **reconciled with `main`** (merge of `main`'s independent audit, its `v3.2.1`
+> = commit `0cd2d83`, which fixed the same RBPF race and SRUKF gate). The combined
+> result is release **v3.3.0**; where the two overlapped, `main`'s versions were
+> kept (SRUKF uses the `√(2s − s²)` Joseph downdate).
 
 - **Adopted OptMathKernels v0.5.15 → v0.5.17** (audited per the pinning policy).
   Upstream diff is docs + a NEON unit-test-tolerance fix only — no public-API,
   compute-backend, or MPI change. See DEVELOPMENT_NOTES.md → "Audit: v0.5.15 → v0.5.17".
-- **Fix — `count_divergences()` harness bug (v3.2.2):** Bearing-Only used the
+- **Fix — `count_divergences()` harness bug:** Bearing-Only used the
   default 10.0 error threshold against a ~64 m error scale, mis-reporting ~176/175
   "divergences" for a filter that was actually consistent (NEES 99.6% in-bounds).
   Gave it a problem-scaled 500 m threshold (analogous to reentry's 5 km); count is
   now **0** for every problem.
-- **Fix — RBPF OpenMP data race (v3.2.2):** the per-particle dynamics/observation
+- **Fix — RBPF OpenMP data race:** the per-particle dynamics/observation
   matrices `A,B,Q,H,R` were declared outside the `#pragma omp parallel for` and
   shared across threads. Moved inside the loop. ThreadSanitizer: ~24 worker-vs-worker
   races → 0.
-- **Fix — SRUKF innovation-gate consistency (v3.2.2):** a gated/rejected outlier
+- **Fix — SRUKF innovation-gate consistency:** a gated/rejected outlier
   previously downdated the covariance by the full `K·S_yy·S_yyᵀ·Kᵀ` (scale applied
   only to the state) → false certainty. Downdate now uses the Joseph partial-update
   form `U = √(2·scale − scale²)·(K·S_yy)` (covariance shrinks by `(2s − s²)·K·P_yy·Kᵀ`;
   full at scale=1, no-op when rejected).
-- **Optimization (v3.2.3):** fixed-size Eigen fast-path for `filtermath::gemm` /
+- **Optimization:** fixed-size Eigen fast-path for `filtermath::gemm` /
   `mat_vec_mul` (no heap temporaries / dispatch branch for small compile-time-sized
   operands). UKF 10D ~3.6% faster; RMSE/NEES bit-identical.
 - Rebuilt, **25/25 CTest pass** (also under `OMP_NUM_THREADS=24`), benchmarks rerun
   (RMSE/NEES unchanged), plots regenerated.
-- **SRUKF downdate aligned with `main`:** the gate downdate now uses the Joseph
-  partial-update `√(2s − s²)` form (was `scale`), matching `main`'s more-correct fix
-  and reducing merge friction. Unique to this branch (not yet on `main`): the
-  Bearing-Only divergence-threshold fix, optimization #1, the v0.5.17 kernel bump,
-  and this validation record.
+- **SRUKF downdate aligned with `main`:** the gate downdate uses the Joseph
+  partial-update `√(2s − s²)` form (was `scale`), matching `main`'s fix. Feature-branch
+  additions merged on top of `main`'s audit: the SRUKF angular-observation wrap
+  (R32/R33), the Bearing-Only divergence-threshold fix, optimization #1, and the
+  v0.5.17 kernel bump — released together as **v3.3.0**.
 
 ---
 
@@ -211,7 +210,7 @@ All 25 CTest targets pass (9 filter tests/demos + 16 OptimizedKernels tests incl
   estimate carries a large steady-state RMSE (~64 m) — this is a physics/observability
   limit, not filter instability (NEES stays 99.6% in-bounds). Note: earlier summaries
   called this "divergences"; that count was a `count_divergences()` harness bug
-  (threshold 10.0 vs ~64 m error scale), fixed in v3.2.2 — the count is now 0.
+  (threshold 10.0 vs ~64 m error scale), fixed in v3.3.0 — the count is now 0.
 - All filters are float32-only; no double-precision template support in FilterMath
 - CUDA Blackwell requires CUDA 13.x and a `native`/SM 120 build (default arch list
   stops at SM 90) — see Phase 7 and DEVELOPMENT_NOTES.md

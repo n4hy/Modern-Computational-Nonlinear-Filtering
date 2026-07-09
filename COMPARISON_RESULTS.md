@@ -11,7 +11,7 @@
 >
 > **For current, authoritative numbers** see [README.md](README.md) (Benchmark
 > Results), [SRUKF_STATUS.md](SRUKF_STATUS.md), and
-> [FINAL_AUDIT_SUMMARY.md](FINAL_AUDIT_SUMMARY.md). As of **v3.2.3 (July 2026)**:
+> [FINAL_AUDIT_SUMMARY.md](FINAL_AUDIT_SUMMARY.md). As of **v3.3.0 (July 2026)**:
 > all 4 problems pass with **zero divergences**, and compute kernels come
 > from OptMathKernels pinned at **v0.5.17** (CUDA 13.x / Blackwell SM 120).
 >
@@ -20,7 +20,7 @@
 > observability" / "inherent difficulty") were later found to be a **benchmark
 > metric artifact** — `count_divergences()` used a fixed 10.0 error threshold
 > against this problem's ~64 m error scale. With a problem-scaled 500 m threshold
-> (v3.2.2) the count is **0**; the filter was statistically consistent the whole
+> (v3.3.0) the count is **0**; the filter was statistically consistent the whole
 > time (NEES 99.6% in-bounds). Bearing-only *is* weakly observable, but that shows
 > up as a large range RMSE, not as divergences.
 
