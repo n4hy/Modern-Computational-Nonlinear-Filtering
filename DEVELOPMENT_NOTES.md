@@ -295,6 +295,38 @@ This will enable full GPU acceleration for UKF/SRUKF sigma point operations.
 
 ## Changelog
 
+### v3.4.0 (July 2026)
+
+Full-interval (batch) RTS smoothers with optional iteration, across all three
+filter families — the "revisit the whole capture after the pass, as time is
+available" refinement that complements the existing fixed-lag smoothers:
+
+- `UKF/include/SRUKFSmoother.h` — square-root unscented RTS smoother.
+- `UKF/include/UKFSmoother.h` — plain-covariance unscented RTS smoother.
+- `EKF/include/EKFSmoother.h` — EKF RTS smoother (uses the stored transition
+  Jacobian F for the smoothing gain).
+
+Each keeps the entire forward trajectory and runs a single backward RTS pass once
+all measurements are in (every measurement informs every epoch). `smooth(n>0)`
+re-runs the forward filter from the smoothed initial condition — keeping the
+original prior so the data still dominate — and re-smooths, re-linearising about a
+better trajectory (an iterated smoother; an IEKS for the EKF). Each reuses its
+family's existing RTS recursion and history struct plus the NEON-accelerated
+`gemm`/`kalman_gain`/`cholesky` path, with non-finite guards.
+
+New CTest regressions `SRUKF_Smoother` / `UKF_Smoother` / `EKF_Smoother` (moving
+target, mildly nonlinear observation, off prior) confirm smoothing beats filtering
+and iteration helps further:
+
+| filter | filtered → smoothed → iterated RMSE | interior cov trace |
+|--------|-------------------------------------|--------------------|
+| SRUKF  | 1.22 → 0.68 → 0.66 m                 | 0.89 → 0.13        |
+| UKF    | 1.22 → 0.68 → 0.66 m                 | 0.89 → 0.13        |
+| EKF    | 1.21 → 0.72 → 0.64 m                 | 0.86 → 0.13        |
+
+All three build and pass under CMake; no filter/model code changed, so the rest of
+the suite is unaffected.
+
 ### v3.3.0 (July 2026)
 
 Feature release: SRUKF angular-observation support (R32/R33), the OptMathKernels
