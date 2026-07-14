@@ -105,8 +105,10 @@ int main() {
     for (int k = 1; k < steps; ++k) {
         float t = k * model.dt;
 
-        // Step (Predict k-1 -> k, Update k)
-        smoother.step(t, measurements[k], u_dummy);
+        // Step (Predict k-1 -> k, Update k) -- now said in the call rather than
+        // only in this comment: step() takes the propagate-from time and the
+        // measurement time separately, because they are different times.
+        smoother.step((k - 1) * model.dt, t, measurements[k], u_dummy);
 
         // Current Filtered State (k)
         DragBallModel::State x_filt = smoother.get_filtered_state();

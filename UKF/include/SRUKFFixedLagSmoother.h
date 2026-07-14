@@ -41,8 +41,9 @@ public:
         : srukf_(model), lag_(lag) {}
 
     /** Set initial state and covariance, compute Cholesky factor, reset history. */
-    void initialize(const State& x0, const StateMat& P0) {
+    void initialize(const State& x0, const StateMat& P0, float t0 = 0.0f) {
         srukf_.initialize(x0, P0);
+        t_last_ = t0;
         history_.clear();
 
         SRUKFHistoryEntry<NX> entry;
@@ -64,26 +65,58 @@ public:
     }
 
     /**
-     * Advance one time step: SRUKF predict/update, store square-root
-     * covariance and cross-covariance, trim buffer, run RTS smoothing.
-     * Includes NaN guard to prevent corrupt state from propagating.
+     * Fuse the first measurement at the initialization time, without propagating.
+     *
+     * initialize() leaves the estimate at t0. If y(t0) is to be used, it must be
+     * fused where the estimate already is -- calling step() instead would predict
+     * first, landing the estimate at t1 and folding an observation of x(t0) into
+     * it. Callers whose first measurement is at t1 skip this and go to step().
      */
-    void step(float t_k, const Observation& y_k, const Eigen::Ref<const State>& u_k) {
+    void observe_initial(float t0, const Observation& y_0) {
+        if (history_.empty()) return;
+
+        srukf_.update(t0, y_0);
+        if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) return;
+
+        // Refines entry 0 in place: still the estimate at t0, now a posterior
+        // rather than a prior. Not a new time step, so no entry is appended.
+        history_.back().x_filt = srukf_.getState();
+        history_.back().S_filt = srukf_.getSqrtCovariance();
+        t_last_ = t0;
+        perform_smoothing();
+    }
+
+    /**
+     * Advance from t_prev to t_k and fuse y_k: SRUKF predict/update, store
+     * square-root covariance and cross-covariance, trim buffer, run RTS
+     * smoothing. Includes NaN guard to prevent corrupt state from propagating.
+     *
+     * @param t_prev  time the current estimate is AT (propagate from here).
+     * @param t_k     time of y_k (evaluate the observation model here).
+     *
+     * These are two distinct times and previously were one parameter, passed to
+     * both SRUKF::predict (which evaluates model.f(x, t) at the state's CURRENT
+     * time) and SRUKF::update (model.h(x, t) at the MEASUREMENT time). Collapsing
+     * them propagated from the wrong end of the interval.
+     */
+    void step(float t_prev, float t_k, const Observation& y_k,
+              const Eigen::Ref<const State>& u_k) {
         if (history_.empty()) {
             return;
         }
 
         SRUKFHistoryEntry<NX>& last_entry = history_.back();
 
-        // Predict
-        StateMat P_cross = srukf_.predict(t_k, u_k);
+        // Predict: propagate FROM t_prev (where the estimate is) TO t_k.
+        StateMat P_cross = srukf_.predict(t_prev, u_k);
 
         last_entry.x_pred_next = srukf_.getState();
         last_entry.S_pred_next = srukf_.getSqrtCovariance();
         last_entry.P_cross_next = P_cross;
 
-        // Update
+        // Update: y_k observes the state at t_k.
         srukf_.update(t_k, y_k);
+        t_last_ = t_k;
 
         // NaN guard
         if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) {
@@ -127,6 +160,8 @@ public:
 private:
     SRUKFType srukf_;
     int lag_;
+    // Time the current estimate sits at (see step()'s t_prev).
+    float t_last_ = 0.0f;
     std::deque<SRUKFHistoryEntry<NX>> history_;
 
     std::vector<State> smoothed_states_;

@@ -24,6 +24,33 @@ using namespace Benchmark;
  * Cholesky from FilterMath for noise covariance factorization.
  */
 template<typename Model>
+// ============================================================================
+//  Timestep alignment  (read before touching any filter loop below)
+// ============================================================================
+// This generator defines the convention the whole suite is scored against:
+//
+//     true_states[i]   = x_i,  the state at times[i]
+//     measurements[i]  = h(x_i, times[i]) + v      -- y_i observes x_i AT t_i
+//     true_states[i+1] = f(x_i, times[i]) + w      -- f is evaluated at the
+//                                                     SOURCE time, not the target
+//
+// Two consequences the filter loops must respect:
+//
+//  1. `initialize()` places the estimate at times[0], so iteration 0 must NOT
+//     predict -- y_0 already observes the state being held. The loops used to
+//     call predict() unconditionally, which advanced the estimate to times[1],
+//     fused y_0 (an observation of x_0) into it, and scored the result against
+//     true_states[0]. Every stored estimate sat one step ahead of the truth it
+//     was compared with, biasing every published RMSE.
+//
+//  2. `predict(t)` evaluates model.f(x, t): t names where the state currently
+//     IS, not where it is going. Advancing from t_{i-1} to t_i therefore takes
+//     times[i-1]. Passing times[i] propagated from the wrong end of the
+//     interval, which matters for any time-varying model (BearingOnlyTracking's
+//     observer position is a function of t).
+//
+// The same distinction is why SmootherType::step() takes both a `t_prev` and a
+// `t_k` rather than one time for both roles.
 auto generate_trajectory(Model& model,
                         const typename Model::State& x0,
                         float T_final,
@@ -130,7 +157,10 @@ BenchmarkMetrics run_ukf_benchmark(Model& model,
     for (size_t i = 0; i < data.times.size(); ++i) {
         auto step_start = std::chrono::high_resolution_clock::now();
 
-        filter.predict(data.times[i], u);
+        // See "Timestep alignment" above generate_trajectory(): no propagation on
+        // iteration 0 (the estimate is already at times[0]), and predict() takes
+        // the time the state is currently AT, hence times[i-1].
+        if (i > 0) filter.predict(data.times[i - 1], u);
         filter.update(data.times[i], data.measurements[i]);
 
         auto step_end = std::chrono::high_resolution_clock::now();
@@ -186,7 +216,10 @@ BenchmarkMetrics run_srukf_benchmark(Model& model,
     for (size_t i = 0; i < data.times.size(); ++i) {
         auto step_start = std::chrono::high_resolution_clock::now();
 
-        filter.predict(data.times[i], u);
+        // See "Timestep alignment" above generate_trajectory(): no propagation on
+        // iteration 0 (the estimate is already at times[0]), and predict() takes
+        // the time the state is currently AT, hence times[i-1].
+        if (i > 0) filter.predict(data.times[i - 1], u);
         filter.update(data.times[i], data.measurements[i]);
 
         auto step_end = std::chrono::high_resolution_clock::now();
@@ -244,7 +277,11 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
     for (size_t i = 0; i < data.times.size(); ++i) {
         auto step_start = std::chrono::high_resolution_clock::now();
 
-        smoother.step(data.times[i], data.measurements[i], u);
+        // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
+        // y_0 where the estimate already is; from then on we propagate from
+        // times[i-1] to times[i] and fuse the measurement taken at times[i].
+        if (i == 0) smoother.observe_initial(data.times[0], data.measurements[0]);
+        else        smoother.step(data.times[i - 1], data.times[i], data.measurements[i], u);
 
         auto step_end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float, std::milli> step_duration = step_end - step_start;
@@ -315,7 +352,11 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
     for (size_t i = 0; i < data.times.size(); ++i) {
         auto step_start = std::chrono::high_resolution_clock::now();
 
-        smoother.step(data.times[i], data.measurements[i], u);
+        // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
+        // y_0 where the estimate already is; from then on we propagate from
+        // times[i-1] to times[i] and fuse the measurement taken at times[i].
+        if (i == 0) smoother.observe_initial(data.times[0], data.measurements[0]);
+        else        smoother.step(data.times[i - 1], data.times[i], data.measurements[i], u);
 
         auto step_end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float, std::milli> step_duration = step_end - step_start;

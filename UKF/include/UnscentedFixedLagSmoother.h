@@ -40,10 +40,11 @@ public:
     UnscentedFixedLagSmoother(Model& model, int lag)
         : ukf_(model), lag_(lag) {}
 
-    /** Set initial state and covariance, reset history buffer. */
-    void initialize(const State& x0, const StateMat& P0) {
+    /** Set initial state and covariance at time t0, reset history buffer. */
+    void initialize(const State& x0, const StateMat& P0, float t0 = 0.0f) {
         ukf_.initialize(x0, P0);
         history_.clear();
+        t_last_ = t0;
 
         UKFHistoryEntry<NX> entry;
         entry.x_filt = x0;
@@ -52,26 +53,63 @@ public:
     }
 
     /**
-     * Advance one time step: UKF predict/update, store cross-covariance
-     * in the history deque, trim to lag+2 entries, then run backward
-     * RTS smoothing over the entire window.
+     * Fuse the first measurement at the initialization time, without propagating.
+     *
+     * initialize() leaves the estimate at t0. If y(t0) is to be used, it must be
+     * fused where the estimate already is -- calling step() instead would predict
+     * first, landing the estimate at t1 and folding an observation of x(t0) into
+     * it. Callers whose first measurement is at t1 (i.e. the prior at t0 is not
+     * observed) skip this and go straight to step().
      */
-    void step(float t_k, const Observation& y_k, const Eigen::Ref<const State>& u_k) {
+    void observe_initial(float t0, const Observation& y_0) {
+        if (history_.empty()) return;
+
+        ukf_.update(t0, y_0);
+        if (!ukf_.getState().allFinite() || !ukf_.getCovariance().allFinite()) return;
+
+        // Refines entry 0 in place: this is still the estimate at t0, now a
+        // posterior rather than a prior. It is not a new time step, so no history
+        // entry is appended and no cross-covariance exists to record.
+        history_.back().x_filt = ukf_.getState();
+        history_.back().P_filt = ukf_.getCovariance();
+        t_last_ = t0;
+        perform_smoothing();
+    }
+
+    /**
+     * Advance from t_prev to t_k and fuse y_k: UKF predict/update, store
+     * cross-covariance in the history deque, trim to lag+2 entries, then run
+     * backward RTS smoothing over the entire window.
+     *
+     * @param t_prev  time the current estimate is AT (propagate from here).
+     * @param t_k     time of y_k (evaluate the observation model here).
+     *
+     * These are two distinct times and previously were one parameter, passed to
+     * both UKF::predict (which evaluates model.f(x, t) at the state's CURRENT
+     * time) and UKF::update (which evaluates model.h(x, t) at the MEASUREMENT
+     * time). Collapsing them propagated from the wrong end of the interval. For a
+     * time-invariant h the error is confined to the predict; for a time-varying
+     * one (e.g. BearingOnlyTracking, whose observer position depends on t) both
+     * halves were wrong.
+     */
+    void step(float t_prev, float t_k, const Observation& y_k,
+              const Eigen::Ref<const State>& u_k) {
         if (history_.empty()) {
             return;
         }
 
         UKFHistoryEntry<NX>& last_entry = history_.back();
 
-        // Predict
-        StateMat P_cross = ukf_.predict(t_k, u_k);
+        // Predict: propagate FROM t_prev (where the estimate is) TO t_k.
+        StateMat P_cross = ukf_.predict(t_prev, u_k);
 
         last_entry.x_pred_next = ukf_.getState();
         last_entry.P_pred_next = ukf_.getCovariance();
         last_entry.P_cross_next = P_cross;
 
-        // Update
+        // Update: y_k observes the state at t_k.
         ukf_.update(t_k, y_k);
+        t_last_ = t_k;
 
         // NaN guard: skip this step if filter state is corrupted
         if (!ukf_.getState().allFinite() || !ukf_.getCovariance().allFinite()) {
@@ -113,6 +151,9 @@ public:
 private:
     UKFType ukf_;
     int lag_;
+    // Time the current estimate sits at. Tracked so callers that only have the
+    // measurement time can still be handed a correct propagate-from time.
+    float t_last_ = 0.0f;
     std::deque<UKFHistoryEntry<NX>> history_;
 
     std::vector<State> smoothed_states_;
