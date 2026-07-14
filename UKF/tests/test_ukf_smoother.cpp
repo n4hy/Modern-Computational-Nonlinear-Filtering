@@ -54,6 +54,12 @@ int main() {
         double s = 0; for (int k = 1; k <= N; ++k) { float e = get(k) - truth_pos[k]; s += e*e; }
         return std::sqrt(s / N);
     };
+    // allFinite() accepts a negative variance and trace() hides one behind a
+    // larger positive diagonal entry, so check the spectrum directly.
+    auto min_eig = [](const Eigen::MatrixXf& P) {
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXf> es(P, Eigen::EigenvaluesOnly);
+        return es.info() == Eigen::Success ? es.eigenvalues().minCoeff() : -1.0f;
+    };
 
     M model;
     UKFCore::UKFSmoother<2, 1> sm(model);
@@ -64,16 +70,23 @@ int main() {
 
     double filt   = rmse([&](int k){ return sm.filtered_state(k)(0); });
     double smooth = rmse([&](int k){ return sm.smoothed_state(k)(0); });
-    for (int k = 0; k <= N; ++k)
+    for (int k = 0; k <= N; ++k) {
         CHECK(std::isfinite(sm.smoothed_state(k)(0)) && sm.smoothed_covariance(k).allFinite(),
               "smoothed finite");
+        CHECK(min_eig(sm.smoothed_covariance(k)) >= -1e-4f, "smoothed covariance PSD");
+    }
     std::printf("filtered RMSE = %.3f m | smoothed RMSE = %.3f m\n", filt, smooth);
     CHECK(smooth < filt, "smoothed RMSE < filtered RMSE");
+    // The ratio gate above still passes when both estimates degrade together, so
+    // bound each in absolute terms. Clean run is 1.218 / 0.680 (seed 12345,
+    // deterministic); ~20% headroom absorbs FP-association drift across flags.
+    CHECK(filt   < 1.46, "filtered RMSE within absolute bound");
+    CHECK(smooth < 0.82, "smoothed RMSE within absolute bound");
 
     int mid = N / 2;
     double fv = sm.filtered_covariance(mid).trace(), sv = sm.smoothed_covariance(mid).trace();
     std::printf("interior cov trace: filtered %.3f -> smoothed %.3f\n", fv, sv);
-    CHECK(sv <= fv + 1e-4, "smoothed covariance <= filtered at interior");
+    CHECK(sv >= 0.0 && sv <= fv + 1e-4, "smoothed covariance in [0, filtered] at interior");
 
     UKFCore::UKFSmoother<2, 1> smit(model);
     smit.initialize(x0, P0);

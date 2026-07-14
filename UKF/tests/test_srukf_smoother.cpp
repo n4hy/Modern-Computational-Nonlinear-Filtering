@@ -78,6 +78,12 @@ int main() {
         for (int k = 1; k <= N; ++k) { float e = get(k) - truth_pos[k]; s += e*e; ++n; }
         return std::sqrt(s / n);
     };
+    // allFinite() accepts a negative variance and trace() hides one behind a
+    // larger positive diagonal entry, so check the spectrum directly.
+    auto min_eig = [](const Eigen::MatrixXf& P) {
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXf> es(P, Eigen::EigenvaluesOnly);
+        return es.info() == Eigen::Success ? es.eigenvalues().minCoeff() : -1.0f;
+    };
 
     M model;
     UKFCore::SRUKFSmoother<2, 1> sm(model);
@@ -93,21 +99,29 @@ int main() {
     double filt_rmse   = rmse([&](int k){ return sm.filtered_state(k)(0); });
     double smooth_rmse = rmse([&](int k){ return sm.smoothed_state(k)(0); });
 
-    // finiteness
-    for (int k = 0; k <= N; ++k)
+    // finiteness + positive semi-definiteness
+    for (int k = 0; k <= N; ++k) {
         CHECK(std::isfinite(sm.smoothed_state(k)(0)) &&
               sm.smoothed_covariance(k).allFinite(), "smoothed finite");
+        CHECK(min_eig(sm.smoothed_covariance(k)) >= -1e-4f, "smoothed covariance PSD");
+    }
 
     // (1) smoothing reduces trajectory RMSE
     std::printf("filtered RMSE = %.3f m | smoothed RMSE = %.3f m\n", filt_rmse, smooth_rmse);
     CHECK(smooth_rmse < filt_rmse, "smoothed RMSE < filtered RMSE");
+    // The ratio gate above still passes when both estimates degrade together, so
+    // bound each in absolute terms. Clean run is 1.218 / 0.680 (seed 12345,
+    // deterministic); ~20% headroom absorbs FP-association drift across flags.
+    CHECK(filt_rmse   < 1.46, "filtered RMSE within absolute bound");
+    CHECK(smooth_rmse < 0.82, "smoothed RMSE within absolute bound");
 
     // interior covariance shrinks (variance-reduction property of RTS)
     int mid = N / 2;
     double filt_var   = sm.filtered_covariance(mid).trace();
     double smooth_var = sm.smoothed_covariance(mid).trace();
     std::printf("interior cov trace: filtered %.3f -> smoothed %.3f\n", filt_var, smooth_var);
-    CHECK(smooth_var <= filt_var + 1e-4, "smoothed covariance <= filtered at interior");
+    CHECK(smooth_var >= 0.0 && smooth_var <= filt_var + 1e-4,
+          "smoothed covariance in [0, filtered] at interior");
 
     // (2) iterated smoother: rebuild forward + smooth 3x; should not be worse
     UKFCore::SRUKFSmoother<2, 1> smit(model);
