@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 #include <cmath>
+#include <iostream>  // std::cerr in the decomposition-failure warning below
 #include "FilterMath.h"
 
 namespace UKFCore {

@@ -21,8 +21,14 @@
 #include <algorithm>
 #include <numeric>
 
-// Include FilterMath for GPU availability detection
-#include "../../Common/include/FilterMath.h"
+// Include FilterMath for GPU availability detection.
+// Resolved via the include path (PKF_Lib carries Common/include), NOT a relative
+// path out of this directory: install(DIRECTORY) flattens every -I root into a
+// single include/nlf, so "../../Common/include/FilterMath.h" pointed outside the
+// installed tree at a file that is never installed there. That made every PKF
+// header uninstallable -- this one and, transitively, particle_filter.hpp and
+// particle_fixed_lag.hpp.
+#include "FilterMath.h"
 
 #if FILTERMATH_HAS_CUDA
 #include <optmath/cuda_backend.hpp>
