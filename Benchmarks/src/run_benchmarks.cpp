@@ -673,14 +673,40 @@ int main() {
     // wall-clock does not, and this suite has no warmup or repetitions, so a timing
     // gate would just flake on any loaded or slower box.
     //
-    // Ceilings are ~25% above the values measured on this problem set and are here
-    // to catch a filter that has broken or diverged, not numerical drift.
-    struct RmseCeiling { const char* problem; float ceiling; };
-    const RmseCeiling ceilings[] = {
-        {"CoupledOscillators10D",   1.85f},   // measured 1.45666
-        {"VanDerPol2D",             0.60f},   // measured 0.46626 - 0.468053
-        {"BearingOnly4D",          80.0f},    // measured 63.81 - 64.17
-        {"ReentryVehicle6D",      460.0f},    // measured 369.04 - 369.19
+    // RMSE is gated against a per-(filter, problem) baseline with a two-sided
+    // relative band, NOT a loose ceiling. Every RMSE/NEES figure here is
+    // deterministic -- the generators are seeded, and re-running this suite
+    // reproduces them bit-identically (only the wall-clock columns move). The
+    // tolerance therefore absorbs cross-host floating-point reassociation, which is
+    // orders of magnitude smaller, and nothing else.
+    //
+    // The band is two-sided deliberately. A one-sided ceiling only notices a filter
+    // getting worse. The last real defect here -- the one-timestep misalignment
+    // fixed in 3dbbf4c -- moved reentry RMSE by 0.589%, and the ~25% ceilings that
+    // replaced this table were baselined on the *buggy* values and reported PASS for
+    // its entire lifetime. Drift in either direction is a regression signal; an
+    // intentional improvement is expected to update this table in the same commit.
+    static constexpr float kRmseTol = 0.005f;  // 0.5%: tight enough for the 0.589% class
+    struct RmseBaseline {
+        const char* filter;
+        const char* problem;
+        float rmse;           // filtered RMSE
+        float rmse_smoothed;  // smoothed RMSE; 0 for rows that do not smooth
+    };
+    const RmseBaseline baselines[] = {
+        {"UKF",            "CoupledOscillators10D",   1.45655f,   0.0f},
+        {"SRUKF",          "CoupledOscillators10D",   1.45655f,   0.0f},
+        {"UKF+Smoother",   "CoupledOscillators10D",   1.45655f,   1.14768f},
+        {"SRUKF+Smoother", "CoupledOscillators10D",   1.45655f,   1.14768f},
+        {"UKF",            "VanDerPol2D",             0.468888f,  0.0f},
+        {"SRUKF",          "VanDerPol2D",             0.467096f,  0.0f},
+        {"SRUKF+Smoother", "VanDerPol2D",             0.467096f,  0.430381f},
+        {"UKF",            "BearingOnly4D",          63.4902f,    0.0f},
+        {"SRUKF",          "BearingOnly4D",          63.8392f,    0.0f},
+        {"SRUKF+Smoother", "BearingOnly4D",          63.8392f,   51.6818f},
+        {"UKF",            "ReentryVehicle6D",      366.868f,     0.0f},
+        {"SRUKF",          "ReentryVehicle6D",      367.115f,     0.0f},
+        {"SRUKF+Smoother", "ReentryVehicle6D",      367.115f,   236.251f},
     };
 
     std::cout << "\n--- Regression gate ---" << std::endl;
@@ -712,15 +738,29 @@ int main() {
         NLF_CHECK(m.pct_in_bounds >= 80.0f,
                   ("NEES stays inside the 95% chi-square band: " + tag).c_str());
 
-        for (const auto& c : ceilings) {
-            if (m.problem_name == c.problem) {
-                NLF_CHECK(m.rmse_overall < c.ceiling,
-                          ("filtered RMSE within absolute bound: " + tag).c_str());
+        const RmseBaseline* base = nullptr;
+        for (const auto& b : baselines) {
+            if (m.problem_name == b.problem && m.filter_name == b.filter) {
+                base = &b;
+                break;
             }
+        }
+        // Without this, a row whose name matches no entry would skip the RMSE gate
+        // silently -- the failure mode being that adding a filter appears to pass.
+        NLF_CHECK(base != nullptr, ("row is covered by an RMSE baseline: " + tag).c_str());
+
+        NLF_CHECK(std::abs(m.rmse_overall - base->rmse) <= kRmseTol * base->rmse,
+                  ("filtered RMSE matches baseline within 0.5%: " + tag).c_str());
+
+        if (base->rmse_smoothed > 0.0f) {
+            NLF_CHECK(std::abs(m.rmse_smoothed_overall - base->rmse_smoothed)
+                          <= kRmseTol * base->rmse_smoothed,
+                      ("smoothed RMSE matches baseline within 0.5%: " + tag).c_str());
         }
     }
     std::cout << "PASS: " << all_metrics.size()
-              << " rows within RMSE bounds, NEES-consistent, no divergences" << std::endl;
+              << " rows matched RMSE baselines within " << (kRmseTol * 100.0f)
+              << "%, NEES-consistent, no divergences" << std::endl;
 
     return 0;
 }

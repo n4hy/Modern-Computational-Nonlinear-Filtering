@@ -26,8 +26,11 @@ if(@OpenMP_CXX_FOUND@)
 endif()
 
 # OptMathKernels links Vulkan PRIVATE. It is a static library, so its private link
-# dependencies still land on a consumer's link line and must be resolvable here.
-if(@ENABLE_VULKAN@)
+# dependencies still land on a consumer's link line and must be resolvable here --
+# but only when the backend was actually built. Gate on NLF_VULKAN_ACTIVE (was the SDK
+# found?) rather than ENABLE_VULKAN (was it requested?): the latter is ON by default
+# and would demand the SDK from consumers of a package built without it.
+if(@NLF_VULKAN_ACTIVE@)
     find_dependency(Vulkan)
 endif()
 

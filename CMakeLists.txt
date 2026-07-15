@@ -5,6 +5,28 @@ project(NonlinearFiltering VERSION 3.4.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --- Default build type ---
+# Single-config generators leave CMAKE_BUILD_TYPE empty unless told otherwise, so a
+# bare `cmake ..` compiles at -O0 with no NDEBUG. Every -O3, native-tuning and LTO
+# decision below is guarded on $<CONFIG:Release>, which means an empty build type
+# yields an unoptimized library that still runs the benchmarks and still prints
+# plausible-looking step times -- the numbers are simply measuring different code.
+#
+# NLF never actually chose Release: the value arrived as a side effect of the
+# OptimizedKernels dependency's add_subdirectory defaulting it into the cache. That
+# made our optimization level a property of a third-party file, and it silently
+# reverts to -O0 if that dependency ever stops doing it. Choose it here instead, ahead
+# of the add_subdirectory. Multi-config generators (Ninja Multi-Config, VS, Xcode)
+# ignore CMAKE_BUILD_TYPE by design and select the config at build time, so skip them.
+get_property(_nlf_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _nlf_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE not specified - defaulting to Release")
+endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+    Debug Release RelWithDebInfo MinSizeRel)
+
 # --- CUDA Detection and Configuration ---
 include(CheckLanguage)
 check_language(CUDA)
@@ -334,6 +356,27 @@ set(OPTMATH_BINARY_DIR "${CMAKE_BINARY_DIR}/optmath-build")
 add_subdirectory("${OPTMATH_DIR}" "${OPTMATH_BINARY_DIR}")
 include_directories("${OPTMATH_SOURCE_DIR}/include")
 
+# --- Warnings, for NLF's own targets only ---
+# Placed deliberately AFTER the dependency's add_subdirectory above and BEFORE ours
+# below: directory options are inherited by subdirectories added after the call, so
+# this covers code we own without burying the build in warnings from third-party
+# sources we are not in a position to fix.
+#
+# Previously -Wall/-Wextra were set on exactly two targets (pkf_example, pkf_test).
+# Every filter, every smoother, the RBPF and the benchmark compiled with no warning
+# flags whatsoever, so a silent build was not evidence of much.
+#
+# Deliberately NOT -Werror. This is numerical code compiled by a wide range of
+# toolchains, and each new compiler release invents warnings that would turn a
+# previously working checkout into a hard build failure for someone who just wants to
+# use the library. These are signal for maintainers, not a tripwire for users.
+if(MSVC)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/W4>)
+else()
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wextra>)
+endif()
+
 # Add subdirectories
 add_subdirectory(EKF)
 add_subdirectory(UKF)
@@ -427,6 +470,22 @@ install(EXPORT nlfTargets
         FILE nlfTargets.cmake
         NAMESPACE nlf::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nlf)
+
+# Whether the build ACTUALLY linked Vulkan, as opposed to whether it was asked for.
+# NLF_ENABLE_VULKAN defaults ON and is FORCEd into the ENABLE_VULKAN cache entry above,
+# so ENABLE_VULKAN reads ON even on a host with no SDK, where the dependency quietly
+# skips the backend (its own auto-disable is a directory-scoped normal variable inside
+# add_subdirectory and is invisible from here). Interpolating that request into the
+# package config emitted `if(ON) find_dependency(Vulkan)` unconditionally, so
+# find_package(nlf) hard-failed on every SDK-less consumer -- for a backend that build
+# never contained, and contradicting NLF_ENABLE_VULKAN's own "auto-skipped when no SDK
+# is found" contract. Vulkan_LIBRARY is set by the dependency's find_package(Vulkan)
+# and is a cache entry, so unlike Vulkan_FOUND it is readable at this scope.
+set(NLF_VULKAN_ACTIVE OFF)
+if(ENABLE_VULKAN AND Vulkan_LIBRARY)
+    set(NLF_VULKAN_ACTIVE ON)
+endif()
+message(STATUS "Vulkan backend: requested=${NLF_ENABLE_VULKAN} active=${NLF_VULKAN_ACTIVE}")
 
 configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/nlfConfig.cmake.in"

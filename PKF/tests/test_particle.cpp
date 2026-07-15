@@ -59,19 +59,67 @@ public:
     }
 };
 
-/** Verify that systematic and stratified resampling produce correct-sized output. */
+/** Verify that systematic and stratified resampling actually follow the weights.
+ *
+ *  Checking only that N in-range indices come back is not a test of a resampler: an
+ *  implementation that ignored the weights entirely and always returned {0,0,0,0}
+ *  satisfies both of those checks and always picked the least likely particle. What
+ *  defines these two algorithms is the distribution of offspring, so assert that.
+ */
 void test_resampling() {
     std::cout << "Testing Resampling..." << std::endl;
-    std::vector<float> weights = {0.1f, 0.2f, 0.3f, 0.4f};
-    std::mt19937_64 rng(42);
+    const std::vector<float> weights = {0.1f, 0.2f, 0.3f, 0.4f};
+    const size_t N = weights.size();
+    const int kTrials = 4000;
 
-    auto parents = PKF::Resampling::systematic(weights, rng);
-    CHECK(parents.size() == 4);
-    for (auto p : parents) CHECK(p < 4);  // indices in range
+    std::vector<double> share_sys(N, 0.0), share_str(N, 0.0);
 
-    parents = PKF::Resampling::stratified(weights, rng);
-    CHECK(parents.size() == 4);
-    for (auto p : parents) CHECK(p < 4);
+    for (int t = 0; t < kTrials; ++t) {
+        std::mt19937_64 rng(t + 1);
+
+        auto sys = PKF::Resampling::systematic(weights, rng);
+        CHECK(sys.size() == N);
+        for (auto p : sys) CHECK(p < N);
+
+        std::vector<int> count(N, 0);
+        for (auto p : sys) count[p]++;
+
+        // Systematic draws a single offset u0 ~ U(0, 1/N) and then steps by exactly
+        // 1/N, so particle i's cumulative-weight interval -- of width w_i -- captures
+        // either floor(N*w_i) or ceil(N*w_i) of the N evenly spaced probes. That holds
+        // on EVERY draw, not merely in expectation. For these weights it pins the
+        // counts to {0,1}, {0,1}, {1,2}, {1,2}: particles 2 and 3 must always be
+        // selected at least once. No weight-insensitive implementation survives this.
+        for (size_t i = 0; i < N; ++i) {
+            const double expected = static_cast<double>(N) * weights[i];
+            CHECK(count[i] >= static_cast<int>(std::floor(expected)));
+            CHECK(count[i] <= static_cast<int>(std::ceil(expected)));
+            share_sys[i] += count[i] / static_cast<double>(N);
+        }
+
+        // Stratified draws one uniform per stratum, so it admits a wider per-draw
+        // spread than systematic and only the distributional claim below holds for it.
+        auto str = PKF::Resampling::stratified(weights, rng);
+        CHECK(str.size() == N);
+        for (auto p : str) CHECK(p < N);
+        std::vector<int> count_str(N, 0);
+        for (auto p : str) count_str[p]++;
+        for (size_t i = 0; i < N; ++i) share_str[i] += count_str[i] / static_cast<double>(N);
+    }
+
+    // Both schemes are unbiased -- E[count_i] = N * w_i -- so each particle's mean
+    // share over kTrials seeded draws concentrates on its own weight. The 0.02 band is
+    // many standard errors wide at this trial count (so it cannot flake) while still
+    // being far tighter than the gap to any implementation that mis-weights particles.
+    for (size_t i = 0; i < N; ++i) {
+        share_sys[i] /= kTrials;
+        share_str[i] /= kTrials;
+        std::cout << "  w=" << weights[i]
+                  << "  systematic share=" << share_sys[i]
+                  << "  stratified share=" << share_str[i] << std::endl;
+        CHECK(std::abs(share_sys[i] - weights[i]) < 0.02);
+        CHECK(std::abs(share_str[i] - weights[i]) < 0.02);
+    }
 
     std::cout << "Resampling tests passed." << std::endl;
 }
