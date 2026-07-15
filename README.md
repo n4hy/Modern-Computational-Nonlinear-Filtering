@@ -219,21 +219,27 @@ threshold — missing data reads as missing, in pandas and in a spreadsheet.
 Consolidated metrics (`benchmark_results.csv`). RMSE / NEES / Div are
 host-independent; **Avg step** and **Total** are from **host A**:
 
-| Problem | Filter | RMSE | Smoothed RMSE | NEES median | In 95% | Avg step (host A) | Total (host A) | Div |
+| Problem | Filter | RMSE | Smoothed RMSE | NEES median | In 95% | Avg step (host A)† | Total (host A)† | Div |
 |---------|--------|-----:|--------------:|------------:|-------:|---------:|------:|----:|
 | Coupled Osc 10D | UKF | 1.457 | — | 9.89 | 94.5% | 0.0076 ms | 38.2 ms | 0 |
 | Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0082 ms | 41.5 ms | 0 |
 | Coupled Osc 10D | UKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0275 ms | 138.0 ms | 0 |
 | Coupled Osc 10D | SRUKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0400 ms | 201.1 ms | 0 |
-| Van der Pol 2D | UKF | 0.468 | — | 1.14 | 95.9% | 0.00039 ms | 0.81 ms | 0 |
-| Van der Pol 2D | SRUKF | 0.466 | — | 1.14 | 96.0% | 0.00027 ms | 0.57 ms | 0 |
-| Van der Pol 2D | SRUKF+Smoother | 0.466 | **0.430** | 1.14 | 96.0% | 0.0050 ms | 10.2 ms | 0 |
-| Bearing-Only 4D | UKF | 63.81 | — | 3.77 | 99.6% | 0.00052 ms | 0.16 ms | 0 |
-| Bearing-Only 4D | SRUKF | 64.17 | — | 3.77 | 99.6% | 0.00046 ms | 0.15 ms | 0 |
-| Bearing-Only 4D | SRUKF+Smoother | 64.17 | **52.03** | 3.77 | 99.6% | 0.0108 ms | 3.25 ms | 0 |
-| Reentry 6D | UKF | 369.1 | — | 5.00 | 95.9% | 0.0024 ms | 0.72 ms | 0 |
-| Reentry 6D | SRUKF | 369.2 | — | 4.99 | 95.6% | 0.0024 ms | 0.73 ms | 0 |
-| Reentry 6D | SRUKF+Smoother | 369.2 | **236.8** | 4.99 | 95.6% | 0.0176 ms | 5.30 ms | 0 |
+| Van der Pol 2D | UKF | 0.469 | — | 1.13 | 95.8% | 0.00039 ms | 0.81 ms | 0 |
+| Van der Pol 2D | SRUKF | 0.467 | — | 1.13 | 95.9% | 0.00027 ms | 0.57 ms | 0 |
+| Van der Pol 2D | SRUKF+Smoother | 0.467 | **0.430** | 1.13 | 95.9% | 0.0050 ms | 10.2 ms | 0 |
+| Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.6% | 0.00052 ms | 0.16 ms | 0 |
+| Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.6% | 0.00046 ms | 0.15 ms | 0 |
+| Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.6% | 0.0108 ms | 3.25 ms | 0 |
+| Reentry 6D | UKF | 366.9 | — | 4.99 | 95.9% | 0.0024 ms | 0.72 ms | 0 |
+| Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.9% | 0.0024 ms | 0.73 ms | 0 |
+| Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.9% | 0.0176 ms | 5.30 ms | 0 |
+
+> † The accuracy columns were re-measured after the timestep-alignment fix
+> (commit `3dbbf4c`, which moved every RMSE by up to ~0.6%). The **host A timing
+> columns predate that fix and have not been re-measured there** — treat them as
+> indicative of relative cost, not as a matched run. Timings are the one thing you
+> should measure on your own hardware anyway.
 
 ### Coupled Oscillators (10D State, 5D Observation)
 
@@ -245,30 +251,38 @@ Ten coupled states tracked over 50 s; True, Filtered, and Smoothed curves are ne
 
 ![Van der Pol trajectories](docs/images/vanderpol_srukf_smooth_plot.png)
 
-Classic relaxation oscillator: slow drift in `x0` with sharp limit-cycle transitions in `x1` (the spikes near t≈1.5 s and t≈11 s). The filter captures the fast transitions without lag; the smoother visibly tightens the estimate in noisy stretches. Smoothing improves RMSE by **8%** (0.466 → 0.430). SRUKF is ~2× faster than UKF on this small problem.
+Classic relaxation oscillator: slow drift in `x0` with sharp limit-cycle transitions in `x1` (the spikes near t≈1.5 s and t≈11 s). The filter captures the fast transitions without lag; the smoother visibly tightens the estimate in noisy stretches. Smoothing improves RMSE by **8%** (0.467 → 0.430). SRUKF is ~1.4× faster than UKF on this small problem (consistent on both hosts).
 
 ### Bearing-Only Tracking (4D State, 1D Observation)
 
 ![Bearing-only trajectories](docs/images/bearing_srukf_smooth_plot.png)
 
-Weak-observability problem: angle-only measurements barely constrain range, so the range estimate drifts (large steady-state RMSE ~64) even though the filter stays statistically consistent — NEES holds at **99.6% in-bounds** throughout. Smoothing improves RMSE by **19%** (64.17 → 52.03) but cannot fully recover the lost range. (Earlier runs reported a spurious ~175 "divergence" count here; that was a benchmark-metric bug — a fixed 10 m error threshold measured against this problem's ~64 m error scale — corrected in v3.3.0 with a problem-scaled 500 m threshold, so the divergence count is now **0**. The filter never actually diverged; NEES was in-bounds the whole time.)
+Weak-observability problem: angle-only measurements barely constrain range, so the range estimate drifts (large steady-state RMSE ~64) even though the filter stays statistically consistent — NEES holds at **99.6% in-bounds** throughout. Smoothing improves RMSE by **19%** (63.84 → 51.68) but cannot fully recover the lost range. (Earlier runs reported a spurious ~175 "divergence" count here; that was a benchmark-metric bug — a fixed 10 m error threshold measured against this problem's ~64 m error scale — corrected in v3.3.0 with a problem-scaled 500 m threshold, so the divergence count is now **0**. The filter never actually diverged; NEES was in-bounds the whole time.)
 
 ### Reentry Vehicle (6D State, 3D Observation)
 
 ![Reentry vehicle trajectories](docs/images/reentry_srukf_smooth_plot.png)
 
-Realistic spacecraft reentry with altitude-dependent gravity (μ/r²), exponential-atmosphere drag, and a ground-based radar. Position states (`x0`–`x2`) track the truth almost exactly; the noisy velocity states (`x3`, `x5`) show the smoother clearly reducing noise relative to the filter. NEES median 4.99 (expected ~6) with 95.6% in bounds. Smoothing improves RMSE by **36%** (369.2 → 236.8) — the largest gain of the four problems.
+Realistic spacecraft reentry with altitude-dependent gravity (μ/r²), exponential-atmosphere drag, and a ground-based radar. Position states (`x0`–`x2`) track the truth almost exactly; the noisy velocity states (`x3`, `x5`) show the smoother clearly reducing noise relative to the filter. NEES median 4.99 (expected ~6) with 95.9% in bounds. Smoothing improves RMSE by **36%** (367.1 → 236.3) — the largest gain of the four problems.
 
 > **Note on the trajectory plots**: the Smoothed (red) curve is correctly aligned to the time it estimates and ends one fixed-lag window before the filtered curve (the smoother has no refined estimate for the most recent `lag` steps). Earlier revisions showed a spurious run of leading zeros here; that was a CSV-writer alignment bug (the RMSE numbers were always correct) and is fixed as of the latest commit.
 
 ### Filter & Smoother Test Results
 
+Each row is the filtered-vs-smoothed pair reported by that test's own smoother run
+(`ekf_test`, `ukf_test`, `srukf_test`, `pkf_example`), re-measured after the
+timestep-alignment fix:
+
 | Test | Filter RMSE | Smoother RMSE | Improvement |
 |------|-------------|---------------|-------------|
 | EKF (Nonlinear Oscillator, 2D) | 0.060 | 0.052 | 13% |
 | UKF (Drag Ball, 4D) | 0.228 | 0.119 | 48% |
-| SRUKF (Drag Ball, 4D) | 0.354 | 0.165 | 53% |
-| PKF (Lorenz-63, 3D) | 0.802 | 0.600 | 25% |
+| SRUKF (Drag Ball, 4D) | 0.311 | 0.167 | 46% |
+| PKF (Lorenz-63, 3D) | 0.813 | 0.604 | 26% |
+
+> The PKF row is a Monte-Carlo result on a chaotic system, so it moves slightly
+> from host to host (floating-point association changes which particles survive
+> resampling); the other three are deterministic and reproduce exactly.
 
 ### v3.0.0 Before/After Comparison
 
@@ -305,7 +319,7 @@ Comparison between v2.8.0 (commit `12b8015`, direct NEON calls, `-ffast-math`) a
 This is a **historical v2.8.0 → v3.0.0 regression snapshot**: it shows that the
 v3.0 dispatch-layer refactor preserved accuracy to floating-point precision for
 the problem configurations *as they were then*. The Bearing-Only scenario has
-since changed, so its figure here (43.151) does not match the current **64.17**
+since changed, so its figure here (43.151) does not match the current **63.84**
 in the main results table above — that main table is the authoritative current
 result; this row is retained only as a historical refactor-regression check and
 is not directly comparable to the current Bearing-Only run. NEES consistency
@@ -692,11 +706,19 @@ int main() {
     Eigen::Matrix4f P0 = Eigen::Matrix4f::Identity();
     filter.initialize(x0, P0);
 
-    // Process measurements
+    // Process measurements.
+    //
+    // Timestep alignment matters: initialize() leaves the estimate AT time[0], and
+    // predict(t) evaluates the process model at t = where the state currently IS.
+    // So iteration 0 must not propagate, and advancing time[k-1] -> time[k] passes
+    // time[k-1] to predict() and time[k] to update().
     Eigen::Vector4f u = Eigen::Vector4f::Zero();
-    for (int k = 0; k < num_steps; ++k) {
-        filter.predict(time[k], u);
-        filter.update(time[k], measurements[k]);
+
+    filter.update(time[0], measurements[0]);   // fuse y0 where the estimate already is
+
+    for (int k = 1; k < num_steps; ++k) {
+        filter.predict(time[k - 1], u);        // propagate FROM time[k-1]
+        filter.update(time[k], measurements[k]);  // fuse a measurement taken AT time[k]
 
         auto x_est = filter.getState();
         auto P_est = filter.getCovariance();  // Reconstructs P = S*S^T
@@ -715,11 +737,20 @@ int main() {
     int lag = 50;
 
     UKFCore::SRUKFFixedLagSmoother<4, 2> smoother(model, lag);
-    smoother.initialize(x0, P0);
+    smoother.initialize(x0, P0);            // estimate now sits AT time[0]
 
     Eigen::Vector4f u = Eigen::Vector4f::Zero();
-    for (int k = 0; k < num_steps; ++k) {
-        smoother.step(time[k], measurements[k], u);
+
+    // If you have a measurement at time[0], fuse it where the estimate already is.
+    // Calling step() here instead would predict first, landing the estimate at
+    // time[1] and folding an observation of x(time[0]) into it. Skip this if your
+    // first measurement is at time[1].
+    smoother.observe_initial(time[0], measurements[0]);
+
+    for (int k = 1; k < num_steps; ++k) {
+        // Two DISTINCT times: propagate from where the estimate is (time[k-1]),
+        // then fuse a measurement taken at time[k].
+        smoother.step(time[k - 1], time[k], measurements[k], u);
 
         auto x_filt = smoother.get_filtered_state();
         auto x_smooth = smoother.get_smoothed_state(lag);  // Lag steps back

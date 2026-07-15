@@ -59,8 +59,9 @@ as a fourth problem — see [Benchmarks/README.md](Benchmarks/README.md).)*
 
 _The figures in this summary are from the historical Feb–Apr 2026 bearing-only
 configuration (~17 m RMSE) and are **superseded** — see the banner above. In the
-current suite (v3.3.0+) the bearing-only RMSE is **64.17** and SRUKF is **not**
-faster than UKF: it is a few percent slower per step, as QR overhead predicts. For
+current suite (v3.3.0+) the bearing-only RMSE is **63.84** and SRUKF is **not**
+faster than UKF: on the one problem where the difference is measurable (Reentry)
+it is ~5% slower per step, as QR overhead predicts. For
 authoritative numbers use [Benchmarks/README.md](Benchmarks/README.md). The points
 below are retained as a record of the v3.0 bug-fix campaign's impact at the time._
 
@@ -121,24 +122,39 @@ QR-decomposition overhead, and current measurements are consistent with that
 textbook expectation. Measured on an aarch64 Cortex-A76 host (4 cores, NEON, no
 SVE2, no CUDA; GCC Release, `-mcpu=native`):
 
+Figures below are **means of 5 repeated runs**:
+
 | Problem | UKF | SRUKF | Result |
 |---------|-----|-------|--------|
-| Reentry Vehicle (6D) | 0.00471 ms/step | 0.00494 ms/step | SRUKF **~4.9% slower** — consistent |
-| Coupled Oscillators (10D) | 0.0247 ms/step | 0.0252 ms/step | **no conclusion** — within run-to-run noise |
-| Van der Pol (2D) | 0.000914 ms/step | 0.000733 ms/step | **no conclusion** — at `chrono` resolution |
-| Bearing-Only (4D) | 0.00118 ms/step | 0.00136 ms/step | **no conclusion** — at `chrono` resolution |
+| Reentry Vehicle (6D) | 0.00473 ms/step | 0.00501 ms/step | SRUKF **~6% slower** — the one claim this suite supports |
+| Coupled Oscillators (10D) | 0.0240 ms/step | 0.0252 ms/step | **no conclusion** — not robust to machine load |
+| Bearing-Only (4D) | 0.00132 ms/step | 0.00146 ms/step | **no conclusion** — distributions overlap |
+| Van der Pol (2D) | 0.000984 ms/step | 0.000725 ms/step | **no conclusion** — sub-µs, harness untrustworthy here |
 
-Only the Reentry row supports a claim. Across 5 repeated runs SRUKF was slower on
-every one, and the slowest UKF run (0.00481) still beat the fastest SRUKF run
-(0.00491) — the distributions do not overlap.
+**Only the Reentry row supports a claim.** SRUKF was slower on all 5 runs and the
+distributions do not overlap (UKF 0.00469-0.00486, SRUKF 0.00491-0.00514). It is
+also the one result that reproduced across two independent 5-run sets on this
+host.
 
-The 10D row does **not** support one, which is why it reports no conclusion
-despite a 2% mean gap: UKF's own run-to-run spread there is 0.0238-0.0256
-(±3.7%), *wider* than the gap being measured, and on one of the five runs the
-sign flipped and UKF was the slower filter. Quoting "SRUKF is 3.3% slower on 10D"
-from a single run would repeat the exact mistake this section retracts — reading
-a number off one execution of a contended 4-core machine and calling it a
-property of the algorithm. Figures above are means of 5 runs.
+**Why the other three report no conclusion**, even though two of them looked
+separable in a single 5-run set:
+
+- **Bearing-Only** simply overlaps (UKF 0.00123-0.00140, SRUKF 0.00139-0.00155).
+- **10D** was cleanly separated in one 5-run set (UKF 0.0239-0.0243 vs SRUKF
+  0.0250-0.0255) but a second set on the same host drew a UKF sample out to
+  0.0256, erasing the gap. An effect that a bit of CPU contention can delete is
+  not a property of the algorithm.
+- **Van der Pol** measures SRUKF ~26% *faster*, consistently — but this is exactly
+  the shape of the claim retracted above, and at 0.7-1.0 µs/step the harness (no
+  warmup, no repetitions, `chrono` reads inside the measured region) is at its
+  least trustworthy. There is a plausible mechanism (SRUKF special-cases NY==1 and
+  skips the QR — see Bug #3), so this may well be real; it needs a proper
+  benchmarking harness to establish, and until then it is not published as a
+  result.
+
+Quoting any of these three off a single run would repeat the exact mistake this
+section retracts: reading a number off one execution of a contended 4-core machine
+and calling it a property of the algorithm.
 
 **Why the original claim was wrong**: the retracted analysis attributed the
 speedup to "NEON optimizations working exceptionally well for square root
@@ -174,14 +190,11 @@ divergence; the corrected count is 0 and NEES stayed 99.6% in-bounds throughout.
 
 ## Accuracy Metrics
 
-> ⚠️ **Systematic RMSE bias (known, unfixed) — applies to every RMSE in this
-> document.** The benchmark loop (`Benchmarks/src/run_benchmarks.cpp`) calls
-> `predict()` for step `i` *before* `update()` with measurement `i`, then scores
-> the result against `true_states[i]` — so each stored estimate sits one timestep
-> ahead of the truth it is compared to. This inflates **every published RMSE by
-> roughly 0.6%**. The bias is small, systematic and identical across filters, so
-> filter-vs-filter comparisons remain valid; absolute values are slightly
-> pessimistic. Fixing it requires an API change to the smoother `step()` interface.
+> **Time alignment fixed (`3dbbf4c`).** A one-timestep predict/update
+> misalignment previously biased every RMSE the suite published. It is now fixed
+> and the current figures quoted in this document are correctly aligned. The
+> historical numbers in the sections below were produced *before* that fix (and
+> before several others) and are superseded regardless — see the banner at the top.
 
 ### Bearing-Only Tracking (30 seconds, 300 timesteps)
 
@@ -203,9 +216,9 @@ divergence; the corrected count is 0 and NEES stayed 99.6% in-bounds throughout.
 ### High-Dimensional Problems (Coupled Oscillators, Van der Pol)
 
 ⚠️ **[SUPERSEDED — the NaN was a metric bug and it has since been fixed.]** The
-current suite computes finite RMSE on both: Coupled Oscillators **1.45666**
+current suite computes finite RMSE on both: Coupled Oscillators **1.45655**
 (identical for UKF and SRUKF, median NEES 9.89, 94.5% in-bounds) and Van der Pol
-**0.468053** (UKF) / **0.46626** (SRUKF), both with 0 divergences. The original
+**0.468888** (UKF) / **0.467096** (SRUKF), both with 0 divergences. The original
 text follows for the record.
 
 > ⚠️ Both UKF and SRUKF show NaN in computed RMSE metrics. This is a **metric computation bug**, not filter failure. The filters produce valid trajectories (see plots), but the RMSE computation encounters numerical issues.
@@ -227,14 +240,15 @@ text follows for the record.
   the corrected count is 0*
 - ❌ Poor accuracy on bearing-only (1229m RMSE) *(historical config)*
 - ~~❌ Slower execution (43-47% slower than SRUKF)~~ — **RETRACTED**; UKF is in
-  fact the marginally *cheaper* of the two per step (by 3-5% on current
-  measurements)
+  fact the marginally *cheaper* of the two per step on the one problem where the
+  difference is measurable at all (Reentry, ~6%)
 - ❌ Covariance can become non-positive-definite
 
 ### SRUKF Characteristics Observed
 - ✅ **Excellent stability** (0 divergences on high-dimensional problems)
 - ~~✅ **43-47% faster** execution (NEON-optimized)~~ — **RETRACTED**; SRUKF costs
-  **3-5% more** per step than UKF, consistent with QR overhead. Expect
+  **~6% more** per step than UKF on Reentry, the only problem where the suite can
+  resolve the difference — consistent with QR overhead. Expect
   parity-to-modest-overhead, never a speedup.
 - ✅ **Superior accuracy** on bearing-only (17m vs 1229m) *(historical config)*
 - ✅ **Guaranteed positive-definite** covariance (by construction)
@@ -254,11 +268,10 @@ text follows for the record.
 - SRUKF: **0 divergences** (perfect stability)
 - UKF: 3 divergences
 - ~~SRUKF **47% faster** (0.178 ms vs 0.335 ms)~~ — **RETRACTED**. Current
-  measurement on an aarch64 Cortex-A76 host (mean of 5 runs): UKF 0.0247 ms/step,
-  SRUKF 0.0252 ms/step. The two are **indistinguishable at this problem size** —
-  the 2% gap sits inside UKF's own ±3.7% run-to-run spread, and the sign flips
-  between runs. There is certainly no 47% speedup; there is also no measurable
-  slowdown. See [Computational Performance](#computational-performance).
+  measurement on an aarch64 Cortex-A76 host (means of 5 runs): UKF 0.0240 ms/step,
+  SRUKF 0.0252 ms/step. There is certainly **no 47% speedup** — if anything SRUKF
+  is the slower of the two here — but the gap is not robust to machine load, so no
+  figure is quoted. See [Computational Performance](#computational-performance).
 
 **Lesson**: High-dimensional problems (>5D) benefit enormously from square root formulation. Condition number of 10×10 covariance can reach 10^6-10^10, making standard UKF unstable. The benefit is **numerical, not computational** — buy stability here, not speed.
 
@@ -272,8 +285,12 @@ text follows for the record.
 - SRUKF: **1 divergence** (excellent)
 - UKF: 14 divergences
 - ~~SRUKF **37% faster** (0.0035 ms vs 0.0056 ms)~~ — **RETRACTED**. Current
-  per-step times for this problem (~0.7-0.9 µs) are at `chrono` resolution, so no
-  filter-vs-filter speed claim is supportable here in either direction.
+  per-step times for this problem (~0.7-1.0 µs, means of 5 runs: UKF 0.000984 ms,
+  SRUKF 0.000725 ms) are small enough that this suite's timing harness — no warmup,
+  no repetitions, `chrono` reads inside the measured region — cannot support a
+  filter-vs-filter claim in either direction. SRUKF does measure faster here and
+  there is a plausible mechanism (the NY==1 path skips the QR, see Bug #3), but
+  establishing that needs a real benchmarking harness, not this one.
 
 **Lesson**: Stiff dynamics cause rapid state changes. SRUKF maintains positive-definiteness through these transitions; UKF does not.
 
@@ -288,7 +305,7 @@ text follows for the record.
 > loss of lock — the corrected count is **0** for both filters, and NEES was 99.6%
 > in-bounds throughout. Insights 2, 3 and 5-7 below are therefore built on an
 > artifact and do not describe real filter behavior. Current measurement:
-> UKF **63.81 m**, SRUKF **64.17 m**, smoothed **52.03 m**, 0 divergences.
+> UKF **63.49 m**, SRUKF **63.84 m**, smoothed **51.68 m**, 0 divergences.
 
 **Results**:
 - SRUKF RMSE: **17.29 m** (excellent!) *(historical config)*
@@ -300,7 +317,7 @@ text follows for the record.
 1. **Both filters struggle** - this is inherent to the problem *(true: weak
    observability shows up as a large steady-state range RMSE, ~64 m)*
 2. ~~**SRUKF tracks better** when it has lock~~ *(not supported: the two agree to
-   within 0.6% — 63.81 vs 64.17 m)*
+   within 0.6% — 63.49 vs 63.84 m)*
 3. ~~**SRUKF recovers faster** after divergence~~ *(no divergences occur)*
 4. **30 seconds is too short** for bearing-only convergence
 5. **Initial 0-10 seconds**: Large errors as filter triangulates
@@ -322,7 +339,7 @@ text follows for the record.
 
 1. **SRUKF Stability**: Zero divergences on high-dimensional problems. Guaranteed positive-definite covariance is not just theoretical - it **works** in practice.
 
-2. ~~**Performance**: SRUKF is faster despite additional QR decompositions. NEON optimization of square root operations outweighs the overhead.~~ — **RETRACTED.** The QR overhead is real and is *not* outweighed: SRUKF costs 3-5% more per step than UKF on current measurements. The lesson worth keeping is the opposite one — an unattributed speedup measured once on one machine, explained by a mechanism (NEON) that was not even present on that machine, should never have been published.
+2. ~~**Performance**: SRUKF is faster despite additional QR decompositions. NEON optimization of square root operations outweighs the overhead.~~ — **RETRACTED.** The QR overhead is real and is *not* outweighed: on the one problem where the suite can resolve a step-time difference (Reentry), SRUKF costs ~6% *more* per step than UKF. The lesson worth keeping is the opposite one — an unattributed speedup measured once on one machine, explained by a mechanism (NEON) that was not even present on that machine, should never have been published.
 
 3. **Accuracy**: 98.6% improvement in RMSE on bearing-only (17m vs 1229m) demonstrates the practical value of numerical stability.
 
@@ -334,8 +351,8 @@ text follows for the record.
 
 2. ~~**Metric Computation**: RMSE computation produces NaN on some problems.~~ —
    **FIXED.** The current suite computes finite RMSE on all four problems (10D
-   Coupled Oscillators reads 1.45666). A separate, still-open metric issue is the
-   ~0.6% one-timestep alignment bias noted under "Accuracy Metrics" above.
+   Coupled Oscillators reads 1.45655). The one-timestep predict/update alignment
+   bias that affected every RMSE has also since been fixed (`3dbbf4c`).
 
 3. **Documentation**: The numerous numerical pitfalls need to be clearly documented (now done in README.md).
 
@@ -373,9 +390,9 @@ text follows for the record.
 > host-unattributed and are superseded. Current measurement, on an **aarch64
 > Cortex-A76 host (4 cores, NEON, no SVE2, no CUDA; GCC Release, `-mcpu=native`)**:
 
-**Total benchmark execution time: ~1.9 seconds** *(13 rows, 4 problems)*
+**Total benchmark execution time: ~1.8 seconds** *(13 rows, 4 problems)*
 
-- 10D Coupled Oscillators: ~1.49 seconds (5001 timesteps, 4 filters)
+- 10D Coupled Oscillators: ~1.46 seconds (5001 timesteps, 4 filters)
 - 2D Van der Pol: ~0.05 seconds (2000 timesteps, 3 filters)
 - 4D Bearing-Only: ~0.014 seconds (300 timesteps, 3 filters)
 - 6D Reentry Vehicle: ~0.020 seconds (300 timesteps, 3 filters)
@@ -402,8 +419,8 @@ when filters were producing NaN values.
 2. **Divergence count matters** - low RMSE with high divergences means lucky initialization
 3. **Weak observability is hard** - expect 50-100 steps to converge
 4. **Square root is worth it for stability** - expect parity-to-modest-overhead on
-   speed (3-5% slower per step), not a speedup. Buy SRUKF for guaranteed
-   positive-definiteness, not for throughput.
+   speed (~6% slower per step where measurable), not a speedup. Buy SRUKF for
+   guaranteed positive-definiteness, not for throughput.
 5. **Tune process noise carefully** - especially for SRUKF on weak observability
 
 ---
@@ -412,7 +429,7 @@ when filters were producing NaN values.
 
 ### Implementation
 - [x] ~~Fix RMSE computation for high-dimensional problems~~ (done — no NaN in the current suite)
-- [ ] Fix the one-timestep predict/update alignment in the benchmark loop (~0.6% RMSE bias; needs a smoother `step()` API change)
+- [x] ~~Fix the one-timestep predict/update alignment in the benchmark loop~~ (done in `3dbbf4c`: no `predict()` on iteration 0; `predict()` now takes the propagate-from time; smoother `step()` split into `step(t_prev, t_k, y_k, u_k)` plus `observe_initial(t0, y0)`)
 - [ ] Replace `chi2_quantile`'s Wilson-Hilferty approximation with exact quantiles (its low-biased lower bound makes `Pct_In_Bounds` optimistic, −48% at n=2)
 - [ ] Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region (~5% bias on the smallest step times)
 - [ ] Add adaptive Q tuning for SRUKF
@@ -422,7 +439,7 @@ when filters were producing NaN values.
 ### Benchmarking
 - [ ] Longer test duration (60-120 seconds) for bearing-only
 - [ ] Test Lorenz96 (40D) to stress high-dimensional performance (the model exists in `Benchmarks/include/BenchmarkProblems.h` but is still not in the default suite)
-- [x] ~~Add Reentry Vehicle problem with proper tuning~~ (done — Reentry Vehicle (6D) is now the suite's fourth problem: RMSE 369.04 (UKF), median NEES 5.00, 0 divergences)
+- [x] ~~Add Reentry Vehicle problem with proper tuning~~ (done — Reentry Vehicle (6D) is now the suite's fourth problem: RMSE 366.868 (UKF), median NEES 4.99, 0 divergences)
 - [ ] Monte Carlo runs (100+ trials) for statistical significance
 
 ### Documentation

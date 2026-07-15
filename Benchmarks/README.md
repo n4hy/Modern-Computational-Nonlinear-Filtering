@@ -109,14 +109,16 @@ The default suite (`run_benchmarks`) runs **four** problems — Coupled Oscillat
 > no clean position/velocity split. Reporting a per-subvector number the framework
 > cannot define generically would be worse than omitting it.
 
-> ⚠️ **Systematic RMSE bias (known, unfixed).** The benchmark loop
-> (`src/run_benchmarks.cpp`) calls `predict()` for step `i` *before* `update()`
-> with measurement `i`, then compares the result against `true_states[i]` — so
-> every stored estimate is offset one timestep ahead of the truth it is scored
-> against. This biases **every RMSE figure in this document by roughly +0.6%**.
-> The bias is small, systematic, and identical across filters, so *relative*
-> comparisons remain valid; absolute RMSE values are slightly pessimistic.
-> Fixing it requires an API change to the smoother `step()` interface.
+> **Time alignment (fixed in `3dbbf4c`).** The RMSE figures here are correctly
+> aligned: estimate `i` is scored against `true_states[i]`. Three bugs previously
+> biased every published RMSE and are now fixed — the loops called `predict()` on
+> iteration 0 (advancing the estimate past the very measurement it was about to
+> fuse); they passed `times[i]` to `predict()` when propagating `t_{i-1} → t_i`
+> (the argument names where the state currently *is*, so `times[i-1]` is correct);
+> and the fixed-lag smoothers' `step()` took a single time and handed it to both
+> `predict()` and `update()`. The smoother API is now
+> `step(t_prev, t_k, y_k, u_k)`, with `observe_initial(t0, y0)` for fusing a
+> measurement at initialization without propagating.
 
 ### Consistency Metrics
 - **NEES (Normalized Estimation Error Squared)**
@@ -206,7 +208,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DNLF_ENABLE_NEON=OFF -DNLF_ENABLE_SVE2=OFF 
 
 > **Note**: The benchmark target is compiled with `-fno-fast-math` and `EIGEN_FAST_MATH=0` to ensure numerically stable filter results. All linear algebra is routed through `FilterMath.h`, which dispatches at runtime to the best backend the machine actually provides: CUDA cuBLAS > SVE2 GEMM > NEON > Eigen. Tiers the host cannot supply are skipped, and **Eigen is always present as the fallback** — no backend is required for correct results. Compute kernels come from OptMathKernels **v0.6.3**, consumed as an **unpinned sibling checkout** (`add_subdirectory`), so the build tracks whatever revision is checked out in `OPTMATH_DIR` rather than a fixed release tag.
 >
-> **Backend independence (verified)**: RMSE/NEES are backend-independent; only timings are host-specific. Comparing a no-SIMD build (`-DNLF_ENABLE_NEON=OFF -DNLF_ENABLE_SVE2=OFF -DNLF_ENABLE_NATIVE_ARCH=OFF`) against the NEON build on the same aarch64 host: Coupled Oscillators and Van der Pol are **bit-identical**; Bearing-Only differs by 0.0008% (64.1723 vs 64.1728) and Reentry by 0.02% (369.117 vs 369.043). Those deltas are pure floating-point association, not behavioral differences.
+> **Backend independence (verified)**: RMSE/NEES are backend-independent; only timings are host-specific. A no-SIMD build (`-DNLF_ENABLE_NEON=OFF -DNLF_ENABLE_SVE2=OFF -DNLF_ENABLE_NATIVE_ARCH=OFF`) was compared against the NEON build on the same aarch64 host: Coupled Oscillators and Van der Pol came out **bit-identical**, Bearing-Only agreed to **0.0008%** and Reentry to **0.02%** — i.e. pure floating-point association differences, not behavioral ones. *(That comparison was run on the pre-`3dbbf4c` binary, so its absolute RMSE values predate the time-alignment fix and do not match the table below; the finding is about backend **agreement**, which the alignment fix does not affect — both backends ran identical code.)* Within a single build, results are fully deterministic: RMSE/NEES were byte-identical across 5 consecutive runs.
 >
 > **Reproducibility**: the PKF/RBPF OpenMP paths seed one `mt19937_64` per thread deterministically from the base seed (`config.seed`) and use `schedule(static)`, so multithreaded runs are reproducible **for a given thread count** (verified: identical `test_rbpf_basic` output across runs at 8 threads on an 8-thread host; the guarantee is per-thread-count, not cross-machine).
 
@@ -274,55 +276,56 @@ any host** (see "Backend independence" above). **Timing figures are host-specifi
 > tier on this machine. Reproduce on your own hardware rather than quoting these
 > numbers — they will not transfer.
 
-Full suite: **13 rows, ~1.9 s wall** on the timing host above.
+Full suite: **13 rows, ~1.8 s wall** on the timing host above. Accuracy and
+consistency columns are **deterministic** — byte-identical across 5 consecutive
+runs.
 
 | Filter | Problem | RMSE_Overall | RMSE_Smoothed | Median_NEES | Pct_In_Bounds | Avg_Step_ms | Convergence | Diverg |
 |---|---|---|---|---|---|---|---|---|
-| UKF | CoupledOscillators10D | 1.45666 | — | 9.892 | 94.5% | 0.0243 | 21.8404 s | 0 |
-| SRUKF | CoupledOscillators10D | 1.45666 | — | 9.892 | 94.5% | 0.0251 | 21.8404 s | 0 |
-| UKF+Smoother | CoupledOscillators10D | 1.45666 | 1.14767 | 9.892 | 94.5% | 0.0998 | 21.8404 s | 0 |
-| SRUKF+Smoother | CoupledOscillators10D | 1.45666 | 1.14767 | 9.892 | 94.5% | 0.1469 | 21.8404 s | 0 |
-| UKF | VanDerPol2D | 0.468053 | — | 1.136 | 95.9% | 0.000914 | 0.839999 s | 0 |
-| SRUKF | VanDerPol2D | 0.46626 | — | 1.137 | 96.0% | 0.000733 | 0.839999 s | 0 |
-| SRUKF+Smoother | VanDerPol2D | 0.46626 | 0.429704 | 1.137 | 96.0% | 0.0240 | 0.839999 s | 0 |
-| UKF | BearingOnly4D | 63.8082 | — | 3.772 | 99.6% | 0.00118 | did not converge | 0 |
-| SRUKF | BearingOnly4D | 64.1728 | — | 3.774 | 99.6% | 0.00136 | did not converge | 0 |
-| SRUKF+Smoother | BearingOnly4D | 64.1728 | 52.0285 | 3.774 | 99.6% | 0.0445 | did not converge | 0 |
-| UKF | ReentryVehicle6D | 369.043 | — | 4.996 | 95.9% | 0.00467 | did not converge | 0 |
-| SRUKF | ReentryVehicle6D | 369.192 | — | 4.989 | 95.6% | 0.00490 | did not converge | 0 |
-| SRUKF+Smoother | ReentryVehicle6D | 369.192 | 236.785 | 4.989 | 95.6% | 0.0575 | did not converge | 0 |
+| UKF | CoupledOscillators10D | 1.45655 | — | 9.892 | 94.5% | 0.0239 | 21.8404 s | 0 |
+| SRUKF | CoupledOscillators10D | 1.45655 | — | 9.892 | 94.5% | 0.0251 | 21.8404 s | 0 |
+| UKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.0975 | 21.8404 s | 0 |
+| SRUKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.1433 | 21.8404 s | 0 |
+| UKF | VanDerPol2D | 0.468888 | — | 1.134 | 95.8% | 0.000965 | 0.839999 s | 0 |
+| SRUKF | VanDerPol2D | 0.467096 | — | 1.135 | 95.9% | 0.000718 | 0.839999 s | 0 |
+| SRUKF+Smoother | VanDerPol2D | 0.467096 | 0.430381 | 1.135 | 95.9% | 0.0234 | 0.839999 s | 0 |
+| UKF | BearingOnly4D | 63.4902 | — | 3.714 | 99.6% | 0.00121 | did not converge | 0 |
+| SRUKF | BearingOnly4D | 63.8392 | — | 3.723 | 99.6% | 0.00138 | did not converge | 0 |
+| SRUKF+Smoother | BearingOnly4D | 63.8392 | 51.6818 | 3.723 | 99.6% | 0.0433 | did not converge | 0 |
+| UKF | ReentryVehicle6D | 366.868 | — | 4.986 | 95.9% | 0.00468 | did not converge | 0 |
+| SRUKF | ReentryVehicle6D | 367.115 | — | 4.986 | 95.9% | 0.00491 | did not converge | 0 |
+| SRUKF+Smoother | ReentryVehicle6D | 367.115 | 236.251 | 4.986 | 95.9% | 0.0566 | did not converge | 0 |
 
 Per-problem wall time on the timing host (summed across that problem's filters):
-Coupled Oscillators ~1.49 s (5001 steps), Van der Pol ~0.05 s (2000 steps),
+Coupled Oscillators ~1.46 s (5001 steps), Van der Pol ~0.05 s (2000 steps),
 Bearing-Only ~0.014 s (300 steps), Reentry ~0.020 s (300 steps).
 
 ### SRUKF vs UKF
-- **Equivalent accuracy.** RMSE agrees to 4-6 significant figures on every
-  problem, and is bit-identical on Coupled Oscillators (1.45666 for both).
+- **Equivalent accuracy.** RMSE agrees to within 0.6% on every problem, and is
+  identical on Coupled Oscillators (1.45655 for both).
 - **Better conditioning**: guaranteed positive-definite covariance by construction.
-- **Comparable-to-modestly-slower** execution. The only step-time difference this
-  suite can actually resolve is Reentry, where SRUKF costs **~4.9%** per step
-  (slower on all 5 of 5 repeat runs, with non-overlapping distributions) —
-  consistent with the expected QR-decomposition overhead. The 10D problem shows a
-  ~2% gap that is **not resolvable**: UKF's run-to-run spread there (±3.7%) is
-  wider than the gap, and the sign flips between runs. Van der Pol and Bearing-Only
-  step times (<1.4 µs) sit at `chrono` resolution. Treat all three as "no
-  measurable difference" rather than quoting a percentage — the suite has no
-  warmup and no repetitions, so a single run cannot support a claim this small.
+- **No speed advantage.** The one step-time difference this suite can defensibly
+  quote is **Reentry, where SRUKF costs ~5% more per step** than UKF (slower on
+  5 of 5 repeat runs, non-overlapping ranges) — consistent with the expected
+  QR-decomposition overhead. For Coupled Oscillators, Van der Pol and Bearing-Only,
+  **no conclusion** is drawn: the gaps are small relative to what this harness can
+  measure (no warmup, no repetitions, in-loop `chrono` reads, and step times down
+  to ~0.7 µs). Do not quote a percentage for those three.
   - ⚠️ **Do not expect SRUKF to be faster than UKF.** Earlier revisions of
     [COMPARISON_RESULTS.md](../COMPARISON_RESULTS.md) advertised SRUKF as "43-47%
-    faster on all problems". That claim did not reproduce — the sign of the effect
-    is *reversed* on this host — and has been retracted.
+    faster on all problems". That claim came from a single unattributed machine,
+    was never reproduced, and has been retracted.
 
 ### Smoothers vs Filters
-- **~8-36% RMSE improvement** from smoothing: Van der Pol 7.8%, Bearing-Only 18.9%,
-  Coupled Oscillators 21.2%, Reentry 35.9%.
-- **Better performance** on weakly observable problems (Bearing-Only 64.17 → 52.03).
+- **~8-36% RMSE improvement** from smoothing: Van der Pol 7.9%, Bearing-Only 19.0%,
+  Coupled Oscillators 21.2%, Reentry 35.7%.
+- **Better performance** on weakly observable problems (Bearing-Only 63.84 → 51.68).
 - **~4x to ~33x computational cost** from the backward pass, scaling with the lag
   window and *inversely* with filter-step cost — the cheapest problems show the
-  largest ratios. Measured: Coupled Oscillators 4.1x (UKF) / 5.9x (SRUKF), Reentry
-  11.7x, Van der Pol 32.7x, Bearing-Only 32.7x. (The previously documented "2-3x"
-  was wrong by roughly an order of magnitude.)
+  largest ratios. Measured across 5 runs: Coupled Oscillators 4.0-4.1x (UKF) /
+  5.6-5.7x (SRUKF), Reentry 11.1-11.6x, Bearing-Only 28.4-31.0x, Van der Pol
+  32.2-32.6x. (The previously documented "2-3x" was wrong by roughly an order of
+  magnitude.)
 
 ### Problem-Specific Insights
 
@@ -330,9 +333,9 @@ Bearing-Only ~0.014 s (300 steps), Reentry ~0.020 s (300 steps).
 - Large steady-state range error (~64 m) from weak observability — this is the
   problem's nature, not filter divergence: NEES is 99.6% in-bounds and divergences
   are 0.
-- Significant improvement from smoothing (18.9%).
+- Significant improvement from smoothing (19.0%).
 - Reports *did not converge* because the convergence metric uses a fixed absolute
-  0.5 threshold, far below this problem's error scale.
+  threshold (1.0 as the runner calls it), far below this problem's error scale.
 
 ## Extending the Benchmarks
 
