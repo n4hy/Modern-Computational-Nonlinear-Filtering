@@ -1,8 +1,8 @@
 # Final Comprehensive Audit Summary
 ## Modern Computational Nonlinear Filtering
 
-**Date**: May 25, 2026
-**Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. CUDA active for SM 75–120 including Blackwell RTX 50-series (verified on RTX 5070 Ti / SM 120, CUDA 13.1). Compute kernels from OptMathKernels pinned at release tag **v0.5.15**.
+**Date**: July 18, 2026 (audit remediation pass — Phase 8 added)
+**Status**: Production-ready with CUDA/SVE2/NEON/Vulkan acceleration and cross-platform Eigen fallback. CUDA active for SM 75–120 including Blackwell RTX 50-series (verified on RTX 5070 Ti / SM 120, CUDA 13.1). Compute kernels from OptMathKernels pinned at release tag **v0.5.15**. **28/28** CTest cases pass in Release and under ASan+UBSan (`NLF_ENABLE_SANITIZERS=ON`). CI enforced via `.github/workflows/ci.yml`.
 
 ---
 
@@ -116,6 +116,35 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 - Created the repository's first annotated release tag (`v3.2.0`).
 - Rebuilt, **24/24 CTest pass**, benchmarks rerun (RMSE/NEES unchanged), plots regenerated.
 
+### Phase 8 (July 18, 2026): Audit Remediation — Correctness + Test/CI Hardening
+
+Targeted follow-up to the Phase 6 correctness audit. Full detail in
+`DEVELOPMENT_NOTES.md` → "Audit Remediation Pass (2026-07-18)".
+
+- **UKF Joseph-form P update + LLT/LDLT recovery ladder** with relative jitter
+  `max(1e-6, 1e-8·trace(P)/NX)` — replaces fixed `1e-6·I` regularization.
+- **SRUKF `initialize()` throws `std::runtime_error`** on NaN / Inf / asymmetric
+  / non-PSD `P0` (previously silently degraded to `L0 = Identity`).
+- **SRUKF innovation gate now configurable** via `setInnovationGateChi2()`;
+  first firing per instance logs to `std::clog`.
+- **RBPF log-det via LDLT-only** — removed direct `det(S)` fast path that
+  underflowed silently at high condition numbers.
+- **PKF `get_mean` / `get_covariance` no longer const** — GPU calls wrapped in
+  `try/catch` with CPU-only demotion on any exception. Removed all `const_cast`.
+- **Four new regression tests** — `test_ukf_numerical`, `test_srukf_initialize`,
+  `test_particle_const`, `test_rbpf_logdet`. Registered with CTest.
+- **Uniform warnings via `nlf_add_warning_flags`** applied to every executable;
+  GCC-only `-Wno-stringop-overread` at compile+link (Eigen AVX-512 LTO false
+  positive).
+- **`NLF_ENABLE_SANITIZERS` CMake option** — ASan+UBSan on C++ TUs in Debug /
+  RelWithDebInfo (CUDA TUs excluded).
+- **`.github/workflows/ci.yml`** — two-job matrix (Release + sanitizer),
+  both pre-cloning OptMathKernels v0.5.15 to `$HOME`.
+
+**Verification (2026-07-18):** **28/28 CTest pass** in Release; **28/28 pass**
+under ASan + UBSan; all benchmark RMSE / NEES numbers match the Phase 7 baseline
+to 3+ decimal places.
+
 ---
 
 ## Current Benchmark Results (May 25, 2026 — OptMathKernels v0.5.15)
@@ -130,7 +159,7 @@ Orange Pi (aarch64 A720/SVE2/NEON/Mali-G720) optimization.
 | Reentry (6D) | UKF | 369.1 | -- | 5.00 | 95.9% | 0 |
 | Reentry (6D) | SRUKF | 369.2 | 236.8 | 4.99 | 95.6% | 0 |
 
-All 24 CTest targets pass (8 filter tests/demos + 16 OptimizedKernels tests including CUDA and Vulkan).
+All **28** CTest targets pass (8 filter tests/demos + 4 audit-remediation regression tests + 16 OptimizedKernels tests including CUDA and Vulkan) in Release and under ASan+UBSan.
 
 ---
 

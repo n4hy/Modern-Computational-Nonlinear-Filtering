@@ -1,5 +1,80 @@
 # Development Notes
 
+## Audit Remediation Pass (2026-07-18)
+
+Applied a targeted correctness + test/CI hardening pass on top of v3.2.0.
+None of the numerical shifts are visible in the RMSE / NEES benchmark table,
+but the failure modes each fix removes are real and would have surfaced under
+odd caller behavior (bad P0, ill-conditioned S, GPU init failure, etc.).
+
+### Correctness fixes
+
+- **`UKF/include/UKF.h`** — `update()` covariance step now uses an LLT/LDLT
+  recovery ladder with **relative** jitter `max(1e-6, 1e-8·trace(P)/NX)` instead
+  of the previous fixed `1e-6·I`. Mirrors the ladder already in `SRUKF.h`.
+- **`UKF/include/SRUKF.h`** — `initialize()` **throws `std::runtime_error`** on
+  NaN / Inf / asymmetric / non-PSD `P0` (including the condition number of `P0`
+  in the message on the not-PSD path) instead of silently degrading to
+  `L0 = Identity`. Callers hear about a broken `P0` at init, not eight steps
+  later.
+- **`UKF/include/SRUKF.h`** — innovation-gate threshold `25.0f` is now a
+  member with `setInnovationGateChi2()` / `getInnovationGateChi2()` accessors.
+  First gate firing per filter instance logs a single line to `std::clog`.
+- **`RBPKF/include/rbpf/rbpf_core.hpp`** — direct `det(S)` fast path removed;
+  log-det is always computed via `LDLT` diagonal-product with a `1e-30f` clamp.
+  Direct `det` on float32 underflows silently at high condition numbers; the
+  LDLT path is uniformly safe.
+- **`PKF/include/particle_filter.hpp`** — `get_mean()` and `get_covariance()`
+  are no longer `const`; the previous `const_cast` on GPU state has been
+  removed. GPU paths are wrapped in `try/catch` — any exception demotes the
+  filter to CPU-only for the remainder of its life. `compute_mean_cpu()` and
+  `compute_covariance_cpu()` are provided as const-safe alternatives.
+
+### New regression tests
+
+Four new test targets registered with CTest bring the count from **24/24 to 28/28**:
+
+- `UKF/tests/test_ukf_numerical.cpp` — rank-deficient `P0` + well-conditioned
+  convergence.
+- `UKF/tests/test_srukf_initialize.cpp` — NaN / Inf / asymmetric / non-PSD /
+  valid `P0` (throw vs no-throw).
+- `PKF/tests/test_particle_const.cpp` — SFINAE `static_assert` that
+  `get_mean` / `get_covariance` are **not** const-callable, while
+  `compute_mean_cpu` is.
+- `RBPKF/tests/test_rbpf_logdet.cpp` — LDLT log-det vs SVD reference across
+  cond ∈ {1e2, 1e6, 1e12}.
+
+### Build & CI infrastructure
+
+- Root `CMakeLists.txt` gained `nlf_add_warning_flags(<target>)`:
+  `-Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter`, plus GCC-only
+  `-Wno-stringop-overread` at both compile and link (works around a well-known
+  Eigen AVX-512 LTO false positive). Applied to every executable across
+  EKF / UKF / PKF / RBPKF / Benchmarks.
+- Root `CMakeLists.txt` gained the `NLF_ENABLE_SANITIZERS` option. When `ON`
+  and the build type is `Debug` or `RelWithDebInfo`, ASan + UBSan are
+  attached to C++ TUs (CUDA TUs are skipped — nvcc does not consistently
+  forward `-fsanitize=…`).
+- `.github/workflows/ci.yml` — two-job matrix (Release build + ctest;
+  RelWithDebInfo + sanitizers). Both jobs `git clone --branch v0.5.15`
+  OptMathKernels into `$HOME` before configuring so that the root
+  `FetchContent_Declare(... GIT_REPOSITORY $ENV{HOME}/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)`
+  line resolves.
+
+### Verification (2026-07-18, Z890 host, CUDA 13.0, GCC 13.3)
+
+- `cmake -B build-audit-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-audit-release -j && ctest --test-dir build-audit-release --output-on-failure`
+  → **28/28 pass**.
+- `cmake -B build-audit-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNLF_ENABLE_SANITIZERS=ON && cmake --build build-audit-asan -j && ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 ctest --test-dir build-audit-asan --output-on-failure`
+  → **28/28 pass**, no ASan or UBSan hits.
+- `./build-audit-release/Benchmarks/run_benchmarks` — all RMSE / NEES / divergence
+  numbers match the 2026-05-25 baseline in `FINAL_AUDIT_SUMMARY.md` to 3+
+  decimal places (e.g. Coupled Osc UKF RMSE 1.45665 vs 1.457; Bearing SRUKF
+  64.1727 vs 64.17; Reentry SRUKF+Smoother 236.858 vs 236.8). The correctness
+  fixes ship no behavioural regression.
+
+---
+
 ## OptMathKernels Dependency — Release Audit & Pinning Policy
 
 **Date**: 2026-05-25

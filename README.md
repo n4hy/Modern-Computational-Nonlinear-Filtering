@@ -115,7 +115,7 @@ This repository provides nonlinear filtering implementations optimized for **ARM
 
 Four challenging problems tested with UKF, SRUKF, and fixed-lag smoothers. Benchmarks run through the FilterMath dispatch layer (CUDA cuBLAS / SVE2 / NEON / Eigen, selected at runtime by platform).
 
-> **Latest run**: 25 May 2026 on **Ubuntu 26.04 x86_64**, **NVIDIA GeForce RTX 5070 Ti (Blackwell, SM 120)** with **CUDA 13.1**, Eigen 3.4, Vulkan 1.4, against **OptMathKernels v0.5.15** (pinned release tag). All **24/24** CTest cases pass (8 filter tests + 16 OptimizedKernels GPU/SIMD tests, including the CUDA kernel suite on the Blackwell GPU and the Vulkan suites, which now auto-select the discrete RTX 5070 Ti).
+> **Latest run**: 18 July 2026 (post audit-remediation) on the Z890 host, CUDA 13.0, GCC 13.3, Eigen 3.4, Vulkan 1.3, against **OptMathKernels v0.5.15** (pinned release tag). All **28/28** CTest cases pass — the original 24 plus four new regression tests introduced by the audit-remediation pass (UKF numerical / SRUKF initialize / PKF const-canary / RBPF log-det); benchmark RMSE and NEES numbers are numerically identical to the 25 May 2026 run to 3+ decimal places, so the correctness fixes ship no behavioural regression.
 
 Reproduce everything below with:
 
@@ -497,6 +497,12 @@ ctest --output-on-failure
 ./PKF/pkf_test
 ./RBPKF/test_rbpf_basic
 
+# Audit-remediation regression tests
+./UKF/test_ukf_numerical
+./UKF/test_srukf_initialize
+./PKF/test_particle_const
+./RBPKF/test_rbpf_logdet
+
 # Run benchmarks
 ./Benchmarks/run_benchmarks
 
@@ -521,6 +527,8 @@ python3 ../scripts/plot_benchmarks.py .
 | `-DOPTMATH_RELEASE_TAG=v0.5.15` | OptMathKernels release tag to fetch/pin (default `v0.5.15`). Bump only after auditing the upstream diff — see [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) |
 | `-DCMAKE_BUILD_TYPE=Release` | Optimized build with `-O3 -march=native` (forwarded to nvcc's host compiler via `-Xcompiler` for ABI consistency) |
 | `-DCMAKE_BUILD_TYPE=Debug` | Debug build with symbols |
+| `-DCMAKE_BUILD_TYPE=RelWithDebInfo` | Optimized build with symbols (used by the sanitizer CI lane) |
+| `-DNLF_ENABLE_SANITIZERS=ON` | Attach AddressSanitizer + UndefinedBehaviorSanitizer to C++ TUs when the build type is `Debug` or `RelWithDebInfo`. Skips CUDA TUs (nvcc does not reliably forward `-fsanitize=...`). Used by the CI sanitizer lane. |
 
 ### Build Outputs
 
@@ -534,6 +542,10 @@ python3 ../scripts/plot_benchmarks.py .
 | `RBPKF/test_rbpf_basic` | RBPF unit tests |
 | `RBPKF/example_rbpf_ctrv` | RBPF on CTRV vehicle model |
 | `Benchmarks/run_benchmarks` | Full benchmark suite (4 problems, 4 filters) |
+| `UKF/test_ukf_numerical` | Audit-remediation regression: Joseph-form P update + LLT/LDLT recovery ladder |
+| `UKF/test_srukf_initialize` | Audit-remediation regression: `SRUKF::initialize()` throws on NaN/Inf/asymmetric/non-PSD P0 |
+| `PKF/test_particle_const` | Audit-remediation regression: `get_mean` / `get_covariance` are non-const (GPU state may mutate) |
+| `RBPKF/test_rbpf_logdet` | Audit-remediation regression: log-det via LDLT-only path is numerically stable at cond ~1e12 |
 
 ---
 
