@@ -489,11 +489,6 @@ Before deploying any Kalman filter, verify:
 > work for memory-bound elementwise kernels. Treat Vulkan here as available
 > infrastructure, not as an active accelerator for typical particle counts.
 
-> **FilterMathGPU status**: `Common/include/FilterMathGPU.h` (`GPUBufferPool`,
-> `GPUSigmaContext<NX>`) is **experimental and not yet wired in** — no filter currently
-> includes it, and the UKF/SRUKF paths go through `FilterMath.h`. It ships as a public
-> header for downstream experimentation only.
-
 > **CUDA Status**: Active for SM 75–90 (CUDA 12.x) and SM 75–120 incl. Blackwell RTX 50-series (CUDA 13.x). See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
 
 ### Software Quality
@@ -836,7 +831,6 @@ Modern-Computational-Nonlinear-Filtering/
 ├── Common/                     # Shared interfaces
 │   └── include/
 │       ├── FilterMath.h        # CUDA/SVE2/NEON/Eigen dispatch layer
-│       ├── FilterMathGPU.h     # experimental, not included by any filter
 │       ├── StateSpaceModel.h   # Base model for UKF/SRUKF
 │       ├── SystemModel.h       # Base model for EKF
 │       └── FileUtils.h         # File I/O utilities

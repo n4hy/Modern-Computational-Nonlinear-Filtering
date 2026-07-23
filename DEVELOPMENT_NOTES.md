@@ -39,11 +39,12 @@ The optional NEON / SVE2 / Vulkan / CUDA compute backends live in the external
 [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 (OptMathKernels) project, dispatched to through `Common/include/FilterMath.h`.
 
-> `Common/include/FilterMathGPU.h` also targets the optmath CUDA API, but it is
-> **currently included by no translation unit** (`grep -rn '#include.*FilterMathGPU'`
-> → 0 hits) and therefore never compiled. Treat it as dead code pending removal or
-> wiring up; do not cite it as a live dispatch path. The live GPU path is
-> `PKF/include/particle_filter_gpu.hpp`, included by `PKF/include/particle_filter.hpp`.
+> The live GPU dispatch paths are `Common/include/FilterMath.h` (UKF/SRUKF/EKF
+> linear algebra) and `PKF/include/particle_filter_gpu.hpp` (included by
+> `PKF/include/particle_filter.hpp`). The previously-dormant
+> `Common/include/FilterMathGPU.h` (`GPUBufferPool`, `GPUSigmaContext<NX>`) was
+> **removed on 2026-07-23** — it had never been `#include`d by any translation
+> unit across four upstream-audit cycles, so deletion changed no compiled code.
 
 ### Provisioning policy (current)
 
@@ -91,8 +92,9 @@ full `git diff v0.5.13..v0.5.15`:
 
 **Public API (`include/optmath/*.hpp`): zero changes** across v0.5.13..v0.5.15,
 so every `optmath::` call site in `FilterMath.h` and `particle_filter_gpu.hpp` is
-unaffected (`FilterMathGPU.h` has optmath call sites too, but is compiled by
-nothing — see the note at the top of this file).
+unaffected. (An additional never-compiled header, `FilterMathGPU.h`, also
+targeted `optmath::cuda::*` at the time of this audit; it was removed on
+2026-07-23 — see the note at the top of this file.)
 
 **Verification (2026-05-25):** reconfigured at `v0.5.15`, full rebuild, **24/24
 CTest pass**, Vulkan tests confirm `[Vulkan] Selected GPU: NVIDIA GeForce RTX
@@ -117,7 +119,7 @@ releases). The entire diff touches only 5 files — `CMakeLists.txt`, `README.md
 **Public API (`include/`) and compute backends (`src/`): zero changes** across
 v0.5.15..v0.5.17 (`git diff --name-only v0.5.15..v0.5.17 -- include/ src/` is
 empty). No `optmath::` call site in `FilterMath.h` or `particle_filter_gpu.hpp` is
-affected (nor in the uncompiled `FilterMathGPU.h`). **Note:** the upstream releases contain no
+affected. **Note:** the upstream releases contain no
 MPI/OpenMPI — the parallelism story here remains OpenMP (CPU) + CUDA/Vulkan (GPU).
 
 **Verification (2026-07-08):** cleared `_deps/optimizedkernels-*`, reconfigured

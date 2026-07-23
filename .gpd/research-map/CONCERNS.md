@@ -21,7 +21,7 @@
 | **HIGH** | CI pins OptMathKernels v0.5.15 while working tree runs v0.6.3 | `.github/workflows/ci.yml:41-45` vs `DEVELOPMENT_NOTES.md` line 132 |
 | **MED** | Version drift: `README.md` says v3.4.0, `DEVELOPMENT_NOTES.md` changelog reaches v3.4.2 | root docs |
 | **MED** | `cmake_minimum_required` inconsistent across trees (3.10 / 3.14 / 3.20) | `CMakeLists.txt`, `RBPKF/CMakeLists.txt`, `Benchmarks/CMakeLists.txt` |
-| **MED** | `Common/include/FilterMathGPU.h` (~460 lines) is dead — no `#include` anywhere | flagged repeatedly across status docs |
+| **RESOLVED** | `Common/include/FilterMathGPU.h` dead-code header — **deleted 2026-07-23**; no `#include` sites ever existed | flagged repeatedly across status docs; closed by removal |
 | **MED** | 6 of 12 historical CTest registrations were demo programs that could not fail | `AUDIT_2026-07-08.md` broader-audit note |
 | **MED** | Smoother tests originally gated on *ratios* only; PSD not enforced in production | `UKF/tests/test_ukf_smoother.cpp:76`, `UKF/tests/test_srukf_smoother.cpp:106`, `EKF/tests/test_ekf_smoother.cpp:82` |
 | **LOW** | Bearing-only weak observability shows as ~64 m range RMSE (not divergence) | `SRUKF_STATUS.md` — WORKING with 99.6% NEES-in-bounds |
@@ -202,9 +202,10 @@ items visible in-doc:
   §CUDA Development Status). Default multi-arch list does not include SM 120.
 - **Sanitizer coverage**: only GCC/Clang. Non-GCC/Clang builds silently drop the
   ASan/UBSan safety net.
-- **`Common/include/FilterMathGPU.h`**: 460 lines of dead code. No `#include`
-  hits. Repeatedly flagged (DEVELOPMENT_NOTES, README, AUDIT_2026-07-08) but
-  never removed or wired in. Live bit-rot risk.
+- **`Common/include/FilterMathGPU.h`** — deleted 2026-07-23. The header carried
+  ~460 lines targeting the optmath CUDA API but was never `#include`d anywhere
+  across four upstream-audit cycles. Removal changed no compiled code (verified
+  by full rebuild + 34/34 CTest post-deletion).
 
 ---
 
@@ -254,10 +255,7 @@ items visible in-doc:
 4. **What is the closure state of the July 14 broader audit?** The three most
    recent commits look like remediation, but no explicit "audit closed" statement
    exists.
-5. **`FilterMathGPU.h` — delete or wire in?** The file has been dormant across
-   multiple version bumps. It should be either deleted or made the CUDA dispatch
-   surface behind an `NLF_ENABLE_CUDA_FILTERMATH` toggle.
-6. **CI dependency version.** Should CI move to v0.6.3 (matches dev tree) or
+5. **CI dependency version.** Should CI move to v0.6.3 (matches dev tree) or
    should the tree be pinned to a specific `OPTMATH_DIR` hash?
 
 ---
@@ -285,8 +283,8 @@ items visible in-doc:
 - `README.md` (977 lines) — user-facing project doc.
 - `.github/workflows/ci.yml` — CI pin drift evidence.
 - Root and sub-tree `CMakeLists.txt` — build inconsistency evidence.
-- `Common/include/StateSpaceModel.h`, `Common/include/FilterMath.h`,
-  `Common/include/FilterMathGPU.h` — Common-tier concerns.
+- `Common/include/StateSpaceModel.h`, `Common/include/FilterMath.h`
+  — Common-tier concerns.
 - `UKF/include/{SRUKF,UKF,SigmaPoints,SRUKFSmoother,UKFSmoother}.h`,
   `EKF/include/EKFSmoother.h`, `PKF/include/particle_filter.hpp`,
   `RBPKF/include/rbpf/rbpf_core.hpp`, `Benchmarks/include/BenchmarkProblems.h`

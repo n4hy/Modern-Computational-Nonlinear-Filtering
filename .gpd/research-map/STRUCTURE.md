@@ -83,7 +83,6 @@ target of its own.
     `mat_vec_mul`, `cholesky`, `inverse`, `solve_spd`, `kalman_gain`, etc.
     CUDA > SVE2 > NEON > Eigen fallback chain, with compile-time fixed-size
     fast paths.
-  - `FilterMathGPU.h` -- GPU-specific dispatch helpers.
   - `TestCheck.h` -- `NLF_CHECK(cond, msg)` assertion macro that survives
     NDEBUG (unlike `assert()`).
   - `FileUtils.h` -- CSV I/O helper `save_to_csv` for the EKF example.
@@ -256,7 +255,6 @@ scripts. Auto-created by CMake when `NLF_BUILD_PYTHON_VENV=ON` (default).
 **Linear Algebra Dispatch:**
 
 - `Common/include/FilterMath.h` -- primary dispatch layer, 504 lines.
-- `Common/include/FilterMathGPU.h` -- GPU-only helpers.
 
 **Test Utilities:**
 
