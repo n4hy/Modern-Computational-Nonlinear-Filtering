@@ -287,10 +287,10 @@ void compute_nees(const std::vector<State>& true_states,
     size_t mid = nees_values.size() / 2;
     std::nth_element(nees_values.begin(), nees_values.begin() + mid, nees_values.end());
     if (nees_values.size() % 2 == 0) {
-        float upper = nees_values[mid];
+        float median_hi = nees_values[mid];
         // Find max in lower partition for the other median element
-        float lower = *std::max_element(nees_values.begin(), nees_values.begin() + mid);
-        metrics.median_nees = 0.5f * (lower + upper);
+        float median_lo = *std::max_element(nees_values.begin(), nees_values.begin() + mid);
+        metrics.median_nees = 0.5f * (median_lo + median_hi);
     } else {
         metrics.median_nees = nees_values[mid];
     }

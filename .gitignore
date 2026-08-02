@@ -20,6 +20,8 @@ nlfvenv/
 .nlfvenv/
 .cache/
 install/
+install_audit/
+sim_audit/
 cuda-keyring*.deb
 .claude/
 .mcp.json

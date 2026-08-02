@@ -153,6 +153,25 @@ structurally cannot.** Two independent reasons, either sufficient:
 Consistent with both: benchmark RMSE/NEES at v0.6.3 match the pre-bump figures
 (see "Backend portability" below, where the Eigen-only build reproduces them too).
 
+### Post-v0.6.3 sync (adopted 2026-08-02, sibling HEAD 817b643)
+
+The sibling tree has moved a handful of commits past the v0.6.3 tag. `git
+log v0.6.3..HEAD --oneline` in the OptMath tree lists eight commits; six are
+CI/docs (GitHub Actions workflow, README badge, shader-count doc fix, dynamic
+Vulkan ICD path, GEMM cache-blocking docs). Two are substantive: `0f49b74
+cuda_radar: drop redundant syncs, fix silent bugs, bound steering launch` and
+`817b643 cleanup: drop 5 orphan shaders + dead vars in cuda_ifft`.
+
+**NLF impact: none.** The changed symbols (`cuda_radar_*`, `cuda_ifft_*`, and
+the removed Vulkan shaders) are not referenced by any NLF header, source file,
+or benchmark — `grep -rn 'cuda_radar\|cuda_ifft\|radar_kernels' Common UKF PKF
+RBPKF EKF Benchmarks` returns empty. `FilterMath.h` dispatches only to
+`cuda::cuda_gemm`, `sve2::*`, `neon::*`, and `platform::*`, none of which were
+touched. Verified on Host A (x86_64, Ubuntu 24.04, GCC 13.3, CUDA 13.0.88, RTX
+5090, no NEON): **34/34 CTest pass** and the benchmark regression gate reports
+`PASS: 13 rows matched RMSE baselines within 0.5%, NEES-consistent, no
+divergences` — identical to the pre-sync figures in SRUKF_STATUS.md.
+
 ---
 
 ## Backend portability — verified, not assumed
