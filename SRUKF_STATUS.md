@@ -30,8 +30,11 @@
 > see DEVELOPMENT_NOTES "Backend portability"). No host qualifier needed.
 
 All 4 benchmark problems pass with the fixed-lag smoother (table below). The
-**full-interval RTS smoother** added in v3.4.0 is not part of the benchmark suite;
-it is covered by the `SRUKF_Smoother` CTest — see DEVELOPMENT_NOTES v3.4.0.
+**full-interval URTS smoother** added in v3.4.0 is not part of the benchmark
+suite; it is covered by the `SRUKF_Smoother` CTest — see DEVELOPMENT_NOTES
+v3.4.0. Post-`d668a6f` the full-interval variant is Sarkka's URTS in the
+literal book form (see the URTS / SR-URTS section below); the fixed-lag
+variant retains the cached-quantities recursion for streaming efficiency.
 
 10D coupled oscillators previously failed with NaN — now resolved through:
 1. Dimension-adaptive parameters (alpha=1.0, kappa=3-n for NX<=5; kappa=0 for NX>5)
@@ -82,6 +85,51 @@ if (NX <= 5) {
 beta = 2.0f;  // Optimal for Gaussian
 ```
 
+### URTS / SR-URTS Full-Interval Smoother (post-`d668a6f`)
+
+`SRUKFSmoother` implements Sarkka, *Bayesian Filtering and Smoothing*
+(Cambridge, 2013), Algorithm 10.6 SR-URTS literally; the plain-covariance
+sibling `UKFSmoother` (in the same header directory) implements Algorithm 10.1
+URTS.  In both cases:
+
+- **Forward pass** stores only the filtered posteriors `(m_k, P_k)` — or
+  `(m_k, A_k)` in the SR variant, with `A_k A_kᵀ = P_k`.  No cached
+  prediction quantities.
+- **Backward pass at each `j`** regenerates sigma points from the filtered
+  posterior, re-propagates through `model_.f(·, t_{j+1}, u_{j+1})` (with
+  SRUKF's angular-state conventions preserved — circular mean, `std::remainder`
+  wrap of deviations), and recomputes the predicted mean `m~`, predicted
+  covariance `P~ + Q`, and cross-covariance `D` fresh.
+- **SR gain** `G = D · P~⁻¹` in Alg. 10.6 is obtained by two triangular solves
+  against the Cholesky factor `A~` — never inverts `P~`, never materialises
+  the full predicted covariance.  The by-product `U = D · A~⁻ᵀ` satisfies
+  `U Uᵀ = D · P~⁻¹ · Dᵀ`, which feeds the smoothed factor.
+- **Smoothed factor** via the identity
+  `P_j^s = (A_j A_jᵀ − U Uᵀ) + (G · A_{j+1}^s)(G · A_{j+1}^s)ᵀ`:
+  downdate `A_j` column-by-column with `U` to get `A_cond` (a Cholesky factor
+  of the Schur-complement conditional covariance `Cov(x_j | x_{j+1})`, PSD
+  in exact arithmetic), then QR-compose with `G · A_{j+1}^s`.  A rank-1
+  downdate failure (near-singular `P~`) triggers a one-shot full-covariance
+  re-Cholesky fallback with the same jitter ladder used elsewhere in the
+  SRUKF pipeline.
+- **Iteration** (`smooth(n>0)`) re-runs the forward filter from the
+  smoothed initial condition while keeping the ORIGINAL prior covariance so
+  the data still dominate — the practical iterated URTS.
+
+Fixed-lag smoothers (`UnscentedFixedLagSmoother`, `SRUKFFixedLagSmoother`)
+are unchanged — they cache forward-pass predictions on purpose for streaming
+efficiency, since recomputing them each backward step would double the
+per-epoch compute in real-time operation.
+
+Numerical parity check (drag-ball scenario, nonlinear quadratic drag,
+500 steps): pre- vs post-`d668a6f` `SRUKFSmoother` outputs agree to
+~1e-6 absolute / ~1e-6 relative on the smoothed state and covariance
+trace — float32 roundoff, as expected from a different arithmetic
+sequence computing the same mathematical result.  The plain-covariance
+`UKFSmoother` output is bit-exact between the two implementations.
+Epistemic status: *empirically consistent to tolerance stated*, not a
+formal proof of equivalence.
+
 ### Numerical Safety Chain
 1. Safe Cholesky downdate → returns false on failure
 2. Full-covariance fallback → recomputes P from all sigma points
@@ -110,8 +158,11 @@ beta = 2.0f;  // Optimal for Gaussian
 - **Sigma points**: `UKF/include/SigmaPoints.h`
 - **SRUKF fixed-lag smoother**: `UKF/include/SRUKFFixedLagSmoother.h`
   (class `SRUKFFixedLagSmoother`) — the variant exercised by the benchmarks
-- **SRUKF full-interval RTS smoother**: `UKF/include/SRUKFSmoother.h`
-  (class `SRUKFSmoother`) — batch + iterated, added v3.4.0; CTest `SRUKF_Smoother`
+- **SRUKF full-interval URTS smoother**: `UKF/include/SRUKFSmoother.h`
+  (class `SRUKFSmoother`) — batch + iterated, added v3.4.0, rewritten to
+  Sarkka Alg. 10.6 SR-URTS in `d668a6f`; CTest `SRUKF_Smoother`.  Plain-
+  covariance sibling `UKF/include/UKFSmoother.h` (Alg. 10.1 URTS); CTest
+  `UKF_Smoother`
 - **Benchmarks**: `Benchmarks/src/run_benchmarks.cpp`
 
 ## Future Enhancement Opportunities
