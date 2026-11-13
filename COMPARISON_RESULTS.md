@@ -253,7 +253,7 @@ text follows for the record.
 - ✅ **Superior accuracy** on bearing-only (17m vs 1229m) *(historical config)*
 - ✅ **Guaranteed positive-definite** covariance (by construction)
 - ⚠️ **Overconfident** (NEES too high - needs larger Q) *(historical config; the
-  current suite measures median NEES 3.77 with 99.6% in-bounds on bearing-only)*
+  current suite measures median NEES 3.72 with 99.3% in-bounds on bearing-only)*
 - ⚠️ **Requires careful tuning** for weak observability
 
 ---
@@ -430,7 +430,7 @@ when filters were producing NaN values.
 ### Implementation
 - [x] ~~Fix RMSE computation for high-dimensional problems~~ (done — no NaN in the current suite)
 - [x] ~~Fix the one-timestep predict/update alignment in the benchmark loop~~ (done in `3dbbf4c`: no `predict()` on iteration 0; `predict()` now takes the propagate-from time; smoother `step()` split into `step(t_prev, t_k, y_k, u_k)` plus `observe_initial(t0, y0)`)
-- [ ] Replace `chi2_quantile`'s Wilson-Hilferty approximation with exact quantiles (its low-biased lower bound makes `Pct_In_Bounds` optimistic, −48% at n=2)
+- [x] ~~Replace `chi2_quantile`'s Wilson-Hilferty approximation with exact quantiles~~ (done — inverse regularized incomplete gamma, pinned against scipy by CTest `Chi2_Quantile`; `Pct_In_Bounds` moved −0.02 to −1.1 points, Van der Pol most)
 - [ ] Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region (~5% bias on the smallest step times)
 - [ ] Add adaptive Q tuning for SRUKF
 - [ ] Implement multi-hypothesis initialization for bearing-only

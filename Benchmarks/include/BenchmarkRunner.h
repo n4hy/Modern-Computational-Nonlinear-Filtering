@@ -180,21 +180,96 @@ float compute_rmse_indices(const std::vector<State>& true_states,
 }
 
 /**
- * Wilson-Hilferty approximation for chi-squared quantiles.
- * Returns chi2_p(n) for probability p with n degrees of freedom.
+ * Regularized lower incomplete gamma P(a, x) = gamma(a, x) / Gamma(a), a > 0, x >= 0.
+ *
+ * Series for x < a + 1, Lentz continued fraction for Q = 1 - P otherwise; both
+ * are the standard convergent representations (Abramowitz & Stegun 6.5.29 and
+ * 6.5.31). Evaluated in double: the caller's float interface does not need it,
+ * but the Newton iteration in chi2_quantile() does.
+ */
+inline double regularized_gamma_p(double a, double x) {
+    if (x <= 0.0) return 0.0;
+    const double log_prefactor = a * std::log(x) - x - std::lgamma(a);
+    const double eps = 1e-15;
+    if (x < a + 1.0) {
+        // P(a,x) = e^{-x} x^a / Gamma(a) * sum_{k>=0} x^k / (a (a+1) ... (a+k))
+        double term = 1.0 / a;
+        double sum = term;
+        for (int k = 1; k < 1000; ++k) {
+            term *= x / (a + k);
+            sum += term;
+            if (std::abs(term) < std::abs(sum) * eps) break;
+        }
+        return sum * std::exp(log_prefactor);
+    }
+    // Q(a,x) = e^{-x} x^a / Gamma(a) * 1/(x+1-a- 1(1-a)/(x+3-a- 2(2-a)/(x+5-a- ...)))
+    // evaluated by the modified Lentz algorithm.
+    const double tiny = 1e-300;
+    double b = x + 1.0 - a;
+    double c = 1.0 / tiny;
+    double d = 1.0 / b;
+    double h = d;
+    for (int i = 1; i < 1000; ++i) {
+        const double an = -static_cast<double>(i) * (static_cast<double>(i) - a);
+        b += 2.0;
+        d = an * d + b;
+        if (std::abs(d) < tiny) d = tiny;
+        c = b + an / c;
+        if (std::abs(c) < tiny) c = tiny;
+        d = 1.0 / d;
+        const double delta = d * c;
+        h *= delta;
+        if (std::abs(delta - 1.0) < eps) break;
+    }
+    return 1.0 - std::exp(log_prefactor) * h;
+}
+
+/**
+ * Exact chi-squared quantile: the x with P(chi2_n <= x) = p, for 0 < p < 1 and
+ * n >= 1. Since chi2_n is Gamma(n/2, 2), x = 2 * P^{-1}(n/2, p) where P is the
+ * regularized lower incomplete gamma.
+ *
+ * Solved by bisection on P(n/2, y) to a tight bracket, then Newton steps on the
+ * same function (dP/dy = y^{a-1} e^{-y} / Gamma(a)) to round-off. Robust for
+ * every n, including n = 1 where P is steep at the origin.
+ *
+ * This replaced a Wilson-Hilferty approximation whose lower 2.5% quantile was
+ * 48% low at n = 2 (0.026 vs 0.0506), which made Pct_In_Bounds read optimistic.
+ * Agrees with scipy.stats.chi2.ppf to < 3e-7 relative (float rounding of the
+ * result) for n in {1, 2, 3, 4, 6, 10, 40, 100}; tests/test_chi2_quantile.cpp
+ * pins that at 1e-5.
  */
 inline float chi2_quantile(float p, int n) {
-    // z_p from inverse normal CDF (hardcode common values)
-    float z;
-    if (p <= 0.025f) z = -1.96f;
-    else if (p >= 0.975f) z = 1.96f;
-    else if (p <= 0.05f) z = -1.645f;
-    else if (p >= 0.95f) z = 1.645f;
-    else z = 0.0f;
+    if (!(p > 0.0f && p < 1.0f) || n < 1) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    const double a = 0.5 * n;
+    const double target = static_cast<double>(p);
 
-    float nf = static_cast<float>(n);
-    float cube = 1.0f - 2.0f / (9.0f * nf) + z * std::sqrt(2.0f / (9.0f * nf));
-    return nf * cube * cube * cube;
+    // Bracket: P(a, 0) = 0 < target; grow the upper end until P exceeds target.
+    double lo = 0.0;
+    double hi = std::max(1.0, 2.0 * a);
+    while (regularized_gamma_p(a, hi) < target) {
+        lo = hi;
+        hi *= 2.0;
+    }
+    for (int i = 0; i < 200 && (hi - lo) > 1e-12 * hi; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        if (regularized_gamma_p(a, mid) < target) lo = mid; else hi = mid;
+    }
+    double y = 0.5 * (lo + hi);
+
+    // Newton polish; a step that leaves the bracket is discarded.
+    for (int i = 0; i < 8; ++i) {
+        const double f = regularized_gamma_p(a, y) - target;
+        const double df = std::exp((a - 1.0) * std::log(y) - y - std::lgamma(a));
+        if (!(df > 0.0) || !std::isfinite(df)) break;
+        const double y_new = y - f / df;
+        if (!(y_new > lo && y_new < hi)) break;
+        if (std::abs(y_new - y) < 1e-15 * y) { y = y_new; break; }
+        y = y_new;
+    }
+    return static_cast<float>(2.0 * y);
 }
 
 /**
@@ -214,8 +289,8 @@ void compute_nees(const std::vector<State>& true_states,
                   const std::vector<State>& estimated_states,
                   const std::vector<Eigen::MatrixXf>& covs,
                   BenchmarkMetrics& metrics) {
-    const int n = true_states[0].size();  // state dimension
-
+    // Validate before touching true_states[0]: reading it first was UB on an
+    // empty input.
     if (true_states.size() != estimated_states.size() ||
         true_states.size() != covs.size() ||
         true_states.size() < 20) {
@@ -223,6 +298,8 @@ void compute_nees(const std::vector<State>& true_states,
         metrics.pct_in_bounds = 0.0f;
         return;
     }
+
+    const int n = static_cast<int>(true_states[0].size());  // state dimension
 
     // Chi-squared 95% bounds for n degrees of freedom
     float lower = chi2_quantile(0.025f, n);

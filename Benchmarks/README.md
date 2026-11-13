@@ -126,13 +126,13 @@ The default suite (`run_benchmarks`) runs **four** problems — Coupled Oscillat
   - Percentage within 95% chi-squared bounds
   - Uses LDLT solve and diagonal condition number screening for robustness
 
-> ⚠️ **`Pct_In_Bounds` is optimistic.** The chi-squared bounds come from
-> `chi2_quantile()`, a **Wilson-Hilferty approximation**, not exact quantiles. Its
-> *lower* bound is biased low at small `n` — verified against exact values:
-> −48% at n=2 (0.026 vs 0.051), −7% at n=4, −2.5% at n=6, −0.8% at n=10. Since the
-> test counts `nees >= lower`, a too-low floor admits steps that should fail, so
-> reported `Pct_In_Bounds` reads **high**, most notably for Van der Pol (n=2). The
-> upper bound is accurate to <1% for every `n` in this suite.
+> The chi-squared bounds come from `chi2_quantile()`, which now computes the
+> **exact** quantile (inverse regularized incomplete gamma; `tests/test_chi2_quantile.cpp`
+> pins it against `scipy.stats.chi2.ppf` to 1e-5 relative). Before this it was a
+> Wilson-Hilferty approximation whose *lower* bound was biased low at small `n`
+> (−48% at n=2, −7% at n=4, −2.5% at n=6, −0.8% at n=10), so `Pct_In_Bounds`
+> read high. Switching to exact bounds moved the suite by −0.02 to −1.1 points
+> (Van der Pol, n=2, the most); figures in this file are post-fix.
 
 ### Performance Metrics
 - **Average Step Time**: Computational cost per filter step
@@ -286,15 +286,15 @@ runs.
 | SRUKF | CoupledOscillators10D | 1.45655 | — | 9.892 | 94.5% | 0.0251 | 21.8404 s | 0 |
 | UKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.0975 | 21.8404 s | 0 |
 | SRUKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.1433 | 21.8404 s | 0 |
-| UKF | VanDerPol2D | 0.468888 | — | 1.134 | 95.8% | 0.000965 | 0.839999 s | 0 |
-| SRUKF | VanDerPol2D | 0.467096 | — | 1.135 | 95.9% | 0.000718 | 0.839999 s | 0 |
-| SRUKF+Smoother | VanDerPol2D | 0.467096 | 0.430381 | 1.135 | 95.9% | 0.0234 | 0.839999 s | 0 |
-| UKF | BearingOnly4D | 63.4902 | — | 3.714 | 99.6% | 0.00121 | did not converge | 0 |
-| SRUKF | BearingOnly4D | 63.8392 | — | 3.723 | 99.6% | 0.00138 | did not converge | 0 |
-| SRUKF+Smoother | BearingOnly4D | 63.8392 | 51.6818 | 3.723 | 99.6% | 0.0433 | did not converge | 0 |
-| UKF | ReentryVehicle6D | 366.868 | — | 4.986 | 95.9% | 0.00468 | did not converge | 0 |
-| SRUKF | ReentryVehicle6D | 367.115 | — | 4.986 | 95.9% | 0.00491 | did not converge | 0 |
-| SRUKF+Smoother | ReentryVehicle6D | 367.115 | 236.251 | 4.986 | 95.9% | 0.0566 | did not converge | 0 |
+| UKF | VanDerPol2D | 0.468888 | — | 1.134 | 94.8% | 0.000965 | 0.839999 s | 0 |
+| SRUKF | VanDerPol2D | 0.467096 | — | 1.135 | 94.8% | 0.000718 | 0.839999 s | 0 |
+| SRUKF+Smoother | VanDerPol2D | 0.467096 | 0.430381 | 1.135 | 94.8% | 0.0234 | 0.839999 s | 0 |
+| UKF | BearingOnly4D | 63.4902 | — | 3.714 | 99.3% | 0.00121 | did not converge | 0 |
+| SRUKF | BearingOnly4D | 63.8392 | — | 3.723 | 99.3% | 0.00138 | did not converge | 0 |
+| SRUKF+Smoother | BearingOnly4D | 63.8392 | 51.6818 | 3.723 | 99.3% | 0.0433 | did not converge | 0 |
+| UKF | ReentryVehicle6D | 366.868 | — | 4.986 | 95.6% | 0.00468 | did not converge | 0 |
+| SRUKF | ReentryVehicle6D | 367.115 | — | 4.986 | 95.6% | 0.00491 | did not converge | 0 |
+| SRUKF+Smoother | ReentryVehicle6D | 367.115 | 236.251 | 4.986 | 95.6% | 0.0566 | did not converge | 0 |
 
 Per-problem wall time on the timing host (summed across that problem's filters):
 Coupled Oscillators ~1.46 s (5001 steps), Van der Pol ~0.05 s (2000 steps),

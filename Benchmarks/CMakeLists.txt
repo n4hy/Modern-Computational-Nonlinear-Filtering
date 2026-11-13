@@ -43,5 +43,12 @@ target_compile_definitions(run_benchmarks PRIVATE EIGEN_FAST_MATH=0)
 enable_lto_if_supported(run_benchmarks)
 nlf_add_warning_flags(run_benchmarks)
 
+# Regression test: exact chi-squared quantiles behind the NEES 95% band.
+add_executable(test_chi2_quantile tests/test_chi2_quantile.cpp)
+target_link_libraries(test_chi2_quantile PRIVATE Eigen3::Eigen OptMathKernels)
+target_compile_options(test_chi2_quantile PRIVATE -fno-fast-math)
+target_compile_definitions(test_chi2_quantile PRIVATE EIGEN_FAST_MATH=0)
+nlf_add_warning_flags(test_chi2_quantile)
+
 # Installation
 install(TARGETS run_benchmarks DESTINATION bin)

@@ -731,7 +731,7 @@ int main() {
 
         // NEES consistency: a filter whose covariance no longer describes its own
         // error lands far outside the 95% band. The floor is deliberately slack
-        // (measured 94.5-99.6%) so only a gross inconsistency trips it.
+        // (measured 94.5-99.3% with exact chi-square bounds) so only a gross inconsistency trips it.
         NLF_CHECK(std::isfinite(m.median_nees) && m.median_nees > 0.0f,
                   ("median NEES is finite and positive: " + tag).c_str());
         NLF_CHECK(m.nees_valid > 0, ("NEES had well-conditioned samples: " + tag).c_str());

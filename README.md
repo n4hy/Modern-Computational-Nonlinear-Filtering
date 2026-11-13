@@ -234,15 +234,15 @@ host-independent; **Avg step** and **Total** are from **host A**:
 | Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0082 ms | 41.5 ms | 0 |
 | Coupled Osc 10D | UKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0275 ms | 138.0 ms | 0 |
 | Coupled Osc 10D | SRUKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0400 ms | 201.1 ms | 0 |
-| Van der Pol 2D | UKF | 0.469 | — | 1.13 | 95.8% | 0.00039 ms | 0.81 ms | 0 |
-| Van der Pol 2D | SRUKF | 0.467 | — | 1.13 | 95.9% | 0.00027 ms | 0.57 ms | 0 |
-| Van der Pol 2D | SRUKF+Smoother | 0.467 | **0.430** | 1.13 | 95.9% | 0.0050 ms | 10.2 ms | 0 |
-| Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.6% | 0.00052 ms | 0.16 ms | 0 |
-| Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.6% | 0.00046 ms | 0.15 ms | 0 |
-| Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.6% | 0.0108 ms | 3.25 ms | 0 |
-| Reentry 6D | UKF | 366.9 | — | 4.99 | 95.9% | 0.0024 ms | 0.72 ms | 0 |
-| Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.9% | 0.0024 ms | 0.73 ms | 0 |
-| Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.9% | 0.0176 ms | 5.30 ms | 0 |
+| Van der Pol 2D | UKF | 0.469 | — | 1.13 | 94.8% | 0.00039 ms | 0.81 ms | 0 |
+| Van der Pol 2D | SRUKF | 0.467 | — | 1.13 | 94.8% | 0.00027 ms | 0.57 ms | 0 |
+| Van der Pol 2D | SRUKF+Smoother | 0.467 | **0.430** | 1.13 | 94.8% | 0.0050 ms | 10.2 ms | 0 |
+| Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.3% | 0.00052 ms | 0.16 ms | 0 |
+| Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.3% | 0.00046 ms | 0.15 ms | 0 |
+| Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.3% | 0.0108 ms | 3.25 ms | 0 |
+| Reentry 6D | UKF | 366.9 | — | 4.99 | 95.6% | 0.0024 ms | 0.72 ms | 0 |
+| Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.6% | 0.0024 ms | 0.73 ms | 0 |
+| Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.6% | 0.0176 ms | 5.30 ms | 0 |
 
 > † The accuracy columns were re-measured after the timestep-alignment fix
 > (commit `3dbbf4c`, which moved every RMSE by up to ~0.6%). The **host A timing
@@ -266,13 +266,13 @@ Classic relaxation oscillator: slow drift in `x0` with sharp limit-cycle transit
 
 ![Bearing-only trajectories](docs/images/bearing_srukf_smooth_plot.png)
 
-Weak-observability problem: angle-only measurements barely constrain range, so the range estimate drifts (large steady-state RMSE ~64) even though the filter stays statistically consistent — NEES holds at **99.6% in-bounds** throughout. Smoothing improves RMSE by **19%** (63.84 → 51.68) but cannot fully recover the lost range. (Earlier runs reported a spurious ~175 "divergence" count here; that was a benchmark-metric bug — a fixed 10 m error threshold measured against this problem's ~64 m error scale — corrected in v3.3.0 with a problem-scaled 500 m threshold, so the divergence count is now **0**. The filter never actually diverged; NEES was in-bounds the whole time.)
+Weak-observability problem: angle-only measurements barely constrain range, so the range estimate drifts (large steady-state RMSE ~64) even though the filter stays statistically consistent — NEES holds at **99.3% in-bounds** throughout. Smoothing improves RMSE by **19%** (63.84 → 51.68) but cannot fully recover the lost range. (Earlier runs reported a spurious ~175 "divergence" count here; that was a benchmark-metric bug — a fixed 10 m error threshold measured against this problem's ~64 m error scale — corrected in v3.3.0 with a problem-scaled 500 m threshold, so the divergence count is now **0**. The filter never actually diverged; NEES was in-bounds the whole time.)
 
 ### Reentry Vehicle (6D State, 3D Observation)
 
 ![Reentry vehicle trajectories](docs/images/reentry_srukf_smooth_plot.png)
 
-Realistic spacecraft reentry with altitude-dependent gravity (μ/r²), exponential-atmosphere drag, and a ground-based radar. Position states (`x0`–`x2`) track the truth almost exactly; the noisy velocity states (`x3`, `x5`) show the smoother clearly reducing noise relative to the filter. NEES median 4.99 (expected ~6) with 95.9% in bounds. Smoothing improves RMSE by **36%** (367.1 → 236.3) — the largest gain of the four problems.
+Realistic spacecraft reentry with altitude-dependent gravity (μ/r²), exponential-atmosphere drag, and a ground-based radar. Position states (`x0`–`x2`) track the truth almost exactly; the noisy velocity states (`x3`, `x5`) show the smoother clearly reducing noise relative to the filter. NEES median 4.99 (expected ~6) with 95.6% in bounds. Smoothing improves RMSE by **36%** (367.1 → 236.3) — the largest gain of the four problems.
 
 > **Note on the trajectory plots**: the Smoothed (red) curve is correctly aligned to the time it estimates and ends one fixed-lag window before the filtered curve (the smoother has no refined estimate for the most recent `lag` steps). Earlier revisions showed a spurious run of leading zeros here; that was a CSV-writer alignment bug (the RMSE numbers were always correct) and is fixed as of the latest commit.
 

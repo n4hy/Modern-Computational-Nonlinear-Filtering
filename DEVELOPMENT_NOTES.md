@@ -26,8 +26,8 @@ to Eigen, so no tier is ever load-bearing for correctness.
    happened on at least two very different machines (an aarch64 Raspberry Pi 5 and
    an x86_64 + RTX 5070 Ti workstation); neither is canonical.
 2. **Attribute every measured number to the host that produced it.** RMSE/NEES are
-   backend-independent and reproduce anywhere (verified — see "Backend portability"
-   below). **Timings are host-specific and do not transfer.**
+   backend-independent and reproduce across hosts to within float reassociation
+   (≤0.02% RMSE measured — see "Backend portability" below). **Timings are host-specific and do not transfer.**
 
 ---
 
@@ -220,6 +220,13 @@ The residual differences — 0.02% at worst — are float **reassociation**: a d
 summation order in the accelerated kernels, not a different answer. RMSE/NEES are
 therefore backend-independent and may be quoted without naming a host. Timings may
 not.
+
+**Cross-architecture check (2026-11-13, x86_64, post-`d668a6f` tree).** Against
+the 6-significant-figure table in `Benchmarks/README.md`: largest RMSE deviation
+1.0e-4 relative (Reentry SRUKF smoothed, 236.275 vs 236.251); largest median-NEES
+deviation 9.3e-4 relative (Reentry SRUKF, 4.98137 vs 4.986); `Pct_In_Bounds`
+identical on all 13 rows. Same reassociation class as above; the 0.5% regression
+gate passes. *Computed on these seeds only — not a proof of bound for other inputs.*
 
 ---
 
@@ -457,6 +464,21 @@ enabling full GPU acceleration for UKF/SRUKF sigma point operations on CUDA host
 ---
 
 ## Changelog
+
+### Unreleased — exact chi-squared bounds for the NEES band
+
+`Benchmark::chi2_quantile()` (`Benchmarks/include/BenchmarkRunner.h`) now returns
+the exact quantile — inverse of the regularized lower incomplete gamma, bisection
+then Newton in double — instead of the Wilson-Hilferty approximation, whose lower
+2.5% quantile was 48% low at n=2 (0.026 vs 0.0506). New CTest `Chi2_Quantile`
+(`Benchmarks/tests/test_chi2_quantile.cpp`) pins 28 (n, p) pairs against
+`scipy.stats.chi2.ppf` at 1e-5 relative (measured < 3e-7), the closed-form n=2
+case, and CDF∘quantile round trips up to n=400. `Pct_In_Bounds` moved: Coupled
+Osc 94.49→94.47, Van der Pol 95.83/95.89→94.83/94.78, Bearing-Only 99.63→99.26,
+Reentry 95.93→95.56. RMSE and median NEES unchanged; regression gate passes.
+Tables in README.md, Benchmarks/README.md and SRUKF_STATUS.md refreshed.
+Also: `compute_nees()` read `true_states[0]` before its size check (UB on empty
+input); the read now follows the check. No output change on the suite.
 
 ### v3.4.2 (2026-07-18) — audit remediation: correctness fixes, regression tests, sanitizer CI
 

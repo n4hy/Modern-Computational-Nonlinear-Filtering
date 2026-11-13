@@ -21,13 +21,15 @@
 | Problem | SRUKF RMSE | NEES median | In 95% bounds | Status |
 |---------|-----------|-------------|---------------|--------|
 | Coupled Oscillators (10D) | 1.457 | 9.89 | 94.5% | **WORKING** |
-| Van der Pol (2D) | 0.467 | 1.14 | 95.9% | **WORKING** |
-| Bearing-Only (4D) | 63.84 | 3.72 | 99.6% | **WORKING** |
-| Reentry Vehicle (6D) | 367.1 | 4.99 | 95.9% | **WORKING** |
+| Van der Pol (2D) | 0.467 | 1.14 | 94.8% | **WORKING** |
+| Bearing-Only (4D) | 63.84 | 3.72 | 99.3% | **WORKING** |
+| Reentry Vehicle (6D) | 367.1 | 4.99 | 95.6% | **WORKING** |
 
 > These are accuracy figures, not timings: they are backend-independent and
-> reproduce on any host and any acceleration tier (verified NEON vs Eigen-only —
-> see DEVELOPMENT_NOTES "Backend portability"). No host qualifier needed.
+> reproduce across hosts and acceleration tiers to within float reassociation
+> (≤0.02% RMSE measured: NEON vs Eigen-only on aarch64, and x86_64 vs aarch64 —
+> see DEVELOPMENT_NOTES "Backend portability"). At the 4 significant figures
+> shown here no host qualifier is needed.
 
 All 4 benchmark problems pass with the fixed-lag smoother (table below). The
 **full-interval URTS smoother** added in v3.4.0 is not part of the benchmark
