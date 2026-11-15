@@ -465,6 +465,36 @@ enabling full GPU acceleration for UKF/SRUKF sigma point operations on CUDA host
 
 ## Changelog
 
+### Unreleased — benchmark timing harness: warmup, repetitions, clean timed region
+
+`run_benchmarks` now measures accuracy and timing in separate passes. The
+accuracy pass runs once, untimed, and records states/covariances. The timing
+pass rebuilds the filter and replays the same step function 1 warmup + N times
+(N = 5, `NLF_BENCH_REPS`), with one `steady_clock` pair around each whole step
+loop. Before this the clock was read twice per step inside the measured region,
+the total included per-step `MatrixXf` recording, and there was one cold run.
+`Total_Time_ms` is now the median rep and `Avg_Step_Time_ms` = median / steps.
+New CSV columns (appended, so readers that index by name are unaffected):
+`Timing_Reps`, `Step_Time_Min_ms`, `Step_Time_Max_ms`. New gate check: every
+timed run reproduces the accuracy run's final state bit-for-bit (passes on all
+13 rows).
+
+Measured effect, x86_64 host, old harness vs new (one run each): per-step time
+moved −1.7% to −11.4% on 12 rows and +2.2% on SRUKF+Smoother/Van der Pol. The
+largest drops are on the smallest steps (Van der Pol SRUKF, Bearing-Only UKF,
+0.25–0.41 µs). Two consecutive new-harness runs agreed within 3.2% on every row.
+*Computed on one host. This does not separate the clock-read cost from the
+warmup effect.* Suite wall time 0.64 s → 3.46 s.
+
+Accuracy side effect: UKF/Reentry RMSE 366.880 → 366.869 (3.0e-5 relative),
+median NEES 4.98635 → 4.9857. Every other row is identical. Cause, verified:
+GCC's default `-ffp-contract=fast` under `-std=gnu++20`. Moving the loop body
+into a lambda changed which multiply-adds get fused. With `-ffp-contract=off`,
+old and new sources produce identical output on all 13 rows. Turning contraction
+off also shifts results (UKF/Reentry 367.006), so FMA contraction is a
+cross-host variation source of the same order as reassociation. The 0.5%
+gate is unaffected.
+
 ### Unreleased — exact chi-squared bounds for the NEES band
 
 `Benchmark::chi2_quantile()` (`Benchmarks/include/BenchmarkRunner.h`) now returns

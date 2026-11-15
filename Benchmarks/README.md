@@ -135,14 +135,22 @@ The default suite (`run_benchmarks`) runs **four** problems — Coupled Oscillat
 > (Van der Pol, n=2, the most); figures in this file are post-fix.
 
 ### Performance Metrics
-- **Average Step Time**: Computational cost per filter step
-- **Total Execution Time**: End-to-end runtime
+Timing is a separate pass from accuracy. After the (untimed) accuracy run, each
+filter is rebuilt and replayed over the same trajectory **1 warmup + N measured
+times** (N = 5, override with `NLF_BENCH_REPS=<1..1000>`), with **one
+`steady_clock` pair around the whole step loop** and nothing else inside it (no
+per-step clock reads, no state/covariance recording).
+- **Total_Time_ms**: median over the N reps of the step-loop wall time
+- **Avg_Step_Time_ms**: `Total_Time_ms / steps`
+- **Step_Time_Min_ms / Step_Time_Max_ms**: per-step time of the fastest / slowest rep
+- Each timed run must reproduce the accuracy run's final state exactly; the
+  regression gate fails otherwise.
 
 > ⚠️ Timing figures are **host-specific** and must never be quoted without naming
 > the machine that produced them (see [Measured Results](#measured-results)). The
-> timing loop also has no warmup and no repetitions, and takes its `chrono`
-> readings inside the measured region, which inflates the smallest step times by
-> ~5%. Treat sub-microsecond per-step numbers as indicative only.
+> host-A step times in the tables below were taken with the **previous** harness
+> (single cold run, two clock reads per step inside the measured region) and have
+> not been re-measured there.
 
 ### Convergence Metrics
 - **Convergence Time**: first time the state error norm stays below an absolute
@@ -230,7 +238,7 @@ This will:
   The schema is exactly:
 
 ```
-Filter,Problem,RMSE_Overall,RMSE_Smoothed_Overall,Median_NEES,Pct_In_Bounds,NEES_Valid,NEES_Total,Avg_Step_Time_ms,Total_Time_ms,Convergence_Time,Num_Divergences
+Filter,Problem,RMSE_Overall,RMSE_Smoothed_Overall,Median_NEES,Pct_In_Bounds,NEES_Valid,NEES_Total,Avg_Step_Time_ms,Total_Time_ms,Convergence_Time,Num_Divergences,Timing_Reps,Step_Time_Min_ms,Step_Time_Max_ms
 ```
 
   `RMSE_Smoothed_Overall` is `0` for filter-only rows. `Convergence_Time` is an
@@ -276,7 +284,8 @@ any host** (see "Backend independence" above). **Timing figures are host-specifi
 > tier on this machine. Reproduce on your own hardware rather than quoting these
 > numbers — they will not transfer.
 
-Full suite: **13 rows, ~1.8 s wall** on the timing host above. Accuracy and
+Full suite: **13 rows, ~1.8 s wall** on the timing host above with the previous
+single-run harness (the 1 + 5 rep timing pass now multiplies filter time by ~6). Accuracy and
 consistency columns are **deterministic** — byte-identical across 5 consecutive
 runs.
 
@@ -309,8 +318,10 @@ Bearing-Only ~0.014 s (300 steps), Reentry ~0.020 s (300 steps).
   5 of 5 repeat runs, non-overlapping ranges) — consistent with the expected
   QR-decomposition overhead. For Coupled Oscillators, Van der Pol and Bearing-Only,
   **no conclusion** is drawn: the gaps are small relative to what this harness can
-  measure (no warmup, no repetitions, in-loop `chrono` reads, and step times down
-  to ~0.7 µs). Do not quote a percentage for those three.
+  measure with the harness these figures came from (no warmup, no repetitions,
+  in-loop `chrono` reads, and step times down to ~0.7 µs; since replaced — see
+  Performance Metrics — but not yet re-run on this host). Do not quote a
+  percentage for those three.
   - ⚠️ **Do not expect SRUKF to be faster than UKF.** Earlier revisions of
     [COMPARISON_RESULTS.md](../COMPARISON_RESULTS.md) advertised SRUKF as "43-47%
     faster on all problems". That claim came from a single unattributed machine,

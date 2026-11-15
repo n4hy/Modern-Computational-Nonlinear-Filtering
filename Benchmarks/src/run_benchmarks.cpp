@@ -6,6 +6,9 @@
 #include <Eigen/Dense>
 #include <string>
 #include <cmath>
+#include <cstdlib>
+#include <algorithm>
+#include <memory>
 #include "FilterMath.h"
 #include "TestCheck.h"
 
@@ -129,6 +132,90 @@ auto generate_trajectory(Model& model,
     return data;
 }
 
+// ============================================================================
+//  Timing protocol
+// ============================================================================
+// Accuracy and timing are measured in SEPARATE passes over the same trajectory:
+//
+//   1. Accuracy pass: one run that records every filtered/smoothed state and
+//      covariance. Not timed.
+//   2. Timing pass: kTimingWarmup discarded runs, then timing_reps() measured
+//      runs, each on a freshly constructed and initialised filter driven by the
+//      SAME step function as the accuracy pass. Each run is timed with ONE clock
+//      pair around the whole step loop; nothing else is inside the timed region.
+//
+// The previous loop read the clock twice per step (two vDSO calls inside the
+// measured region, a fixed cost comparable to the 0.3-0.5 us steps of the
+// smallest problems) and its total also included the per-step push_back of a
+// heap-allocated MatrixXf covariance. It ran once, cold. Reported now:
+//   Total_Time_ms     = median over reps of the step-loop wall time
+//   Avg_Step_Time_ms  = Total_Time_ms / steps
+//   Step_Time_Min_ms / Step_Time_Max_ms = per-step time of the fastest / slowest rep
+// The final filter state of every timed run is returned so the caller can check
+// it against the accuracy pass (same inputs, same code: it must agree).
+//
+// Repetitions default to 5; override with NLF_BENCH_REPS=<1..1000>.
+constexpr int kTimingWarmup = 1;
+
+inline int timing_reps() {
+    if (const char* s = std::getenv("NLF_BENCH_REPS")) {
+        char* end = nullptr;
+        const long v = std::strtol(s, &end, 10);
+        if (end != s && *end == '\0' && v >= 1 && v <= 1000) return static_cast<int>(v);
+        std::cerr << "NLF_BENCH_REPS='" << s << "' ignored (need an integer in 1..1000)\n";
+    }
+    return 5;
+}
+
+template<typename State>
+struct TimingResult {
+    double median_total_ms = 0.0;
+    double min_total_ms = 0.0;
+    double max_total_ms = 0.0;
+    int reps = 0;
+    State final_state;   // final filtered state of the last timed run
+};
+
+template<typename State, typename MakeFilter, typename Step, typename Probe>
+TimingResult<State> time_filter_loop(MakeFilter make_filter, Step step, Probe final_state,
+                                     size_t n_steps) {
+    using Clock = std::chrono::steady_clock;
+    TimingResult<State> out;
+    out.reps = timing_reps();
+    std::vector<double> totals;
+    totals.reserve(static_cast<size_t>(out.reps));
+
+    for (int r = -kTimingWarmup; r < out.reps; ++r) {
+        auto filter = make_filter();               // construction + initialize: not timed
+        const auto t0 = Clock::now();
+        for (size_t i = 0; i < n_steps; ++i) step(*filter, i);
+        const auto t1 = Clock::now();
+        // Reading the final state after the clock stops keeps the loop observable
+        // (it depends on every step), so it cannot be elided.
+        out.final_state = final_state(*filter);
+        if (r >= 0) totals.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+    }
+
+    std::sort(totals.begin(), totals.end());
+    const size_t m = totals.size() / 2;
+    out.median_total_ms = (totals.size() % 2) ? totals[m] : 0.5 * (totals[m - 1] + totals[m]);
+    out.min_total_ms = totals.front();
+    out.max_total_ms = totals.back();
+    return out;
+}
+
+template<typename State>
+void apply_timing(const TimingResult<State>& t, size_t n_steps, const State& accuracy_final,
+                  BenchmarkMetrics& metrics) {
+    const double n = static_cast<double>(n_steps);
+    metrics.total_time_ms = static_cast<float>(t.median_total_ms);
+    metrics.avg_step_time_ms = static_cast<float>(t.median_total_ms / n);
+    metrics.step_time_min_ms = static_cast<float>(t.min_total_ms / n);
+    metrics.step_time_max_ms = static_cast<float>(t.max_total_ms / n);
+    metrics.timing_reps = t.reps;
+    metrics.timing_matches_accuracy = (t.final_state == accuracy_final);
+}
+
 /**
  * Run UKF on a trajectory
  */
@@ -147,34 +234,36 @@ BenchmarkMetrics run_ukf_benchmark(Model& model,
     metrics.filter_name = "UKF";
     metrics.problem_name = problem_name;
 
-    UKFCore::UKF<NX, NY> filter(model);
-    filter.initialize(x0, P0);
-
     State u = State::Zero();
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // See "Timestep alignment" above generate_trajectory(): no propagation on
+    // iteration 0 (the estimate is already at times[0]), and predict() takes
+    // the time the state is currently AT, hence times[i-1].
+    auto step = [&](UKFCore::UKF<NX, NY>& f, size_t i) {
+        if (i > 0) f.predict(data.times[i - 1], u);
+        f.update(data.times[i], data.measurements[i]);
+    };
+    auto make_filter = [&] {
+        auto f = std::make_unique<UKFCore::UKF<NX, NY>>(model);
+        f->initialize(x0, P0);
+        return f;
+    };
 
-    for (size_t i = 0; i < data.times.size(); ++i) {
-        auto step_start = std::chrono::high_resolution_clock::now();
-
-        // See "Timestep alignment" above generate_trajectory(): no propagation on
-        // iteration 0 (the estimate is already at times[0]), and predict() takes
-        // the time the state is currently AT, hence times[i-1].
-        if (i > 0) filter.predict(data.times[i - 1], u);
-        filter.update(data.times[i], data.measurements[i]);
-
-        auto step_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> step_duration = step_end - step_start;
-        metrics.avg_step_time_ms += step_duration.count();
-
-        data.filtered_states.push_back(filter.getState());
-        data.filtered_covs.push_back(filter.getCovariance());
+    // Accuracy pass (untimed).
+    {
+        auto filter = make_filter();
+        for (size_t i = 0; i < data.times.size(); ++i) {
+            step(*filter, i);
+            data.filtered_states.push_back(filter->getState());
+            data.filtered_covs.push_back(filter->getCovariance());
+        }
     }
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<float, std::milli> duration = end_time - start_time;
-    metrics.total_time_ms = duration.count();
-    metrics.avg_step_time_ms /= data.times.size();
+    // Timing pass (see "Timing protocol" above).
+    const auto timing = time_filter_loop<State>(
+        make_filter, step, [](const UKFCore::UKF<NX, NY>& f) { return State(f.getState()); },
+        data.times.size());
+    apply_timing(timing, data.times.size(), data.filtered_states.back(), metrics);
 
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
@@ -206,34 +295,36 @@ BenchmarkMetrics run_srukf_benchmark(Model& model,
     metrics.filter_name = "SRUKF";
     metrics.problem_name = problem_name;
 
-    UKFCore::SRUKF<NX, NY> filter(model);
-    filter.initialize(x0, P0);
-
     State u = State::Zero();
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // See "Timestep alignment" above generate_trajectory(): no propagation on
+    // iteration 0 (the estimate is already at times[0]), and predict() takes
+    // the time the state is currently AT, hence times[i-1].
+    auto step = [&](UKFCore::SRUKF<NX, NY>& f, size_t i) {
+        if (i > 0) f.predict(data.times[i - 1], u);
+        f.update(data.times[i], data.measurements[i]);
+    };
+    auto make_filter = [&] {
+        auto f = std::make_unique<UKFCore::SRUKF<NX, NY>>(model);
+        f->initialize(x0, P0);
+        return f;
+    };
 
-    for (size_t i = 0; i < data.times.size(); ++i) {
-        auto step_start = std::chrono::high_resolution_clock::now();
-
-        // See "Timestep alignment" above generate_trajectory(): no propagation on
-        // iteration 0 (the estimate is already at times[0]), and predict() takes
-        // the time the state is currently AT, hence times[i-1].
-        if (i > 0) filter.predict(data.times[i - 1], u);
-        filter.update(data.times[i], data.measurements[i]);
-
-        auto step_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> step_duration = step_end - step_start;
-        metrics.avg_step_time_ms += step_duration.count();
-
-        data.filtered_states.push_back(filter.getState());
-        data.filtered_covs.push_back(filter.getCovariance());
+    // Accuracy pass (untimed).
+    {
+        auto filter = make_filter();
+        for (size_t i = 0; i < data.times.size(); ++i) {
+            step(*filter, i);
+            data.filtered_states.push_back(filter->getState());
+            data.filtered_covs.push_back(filter->getCovariance());
+        }
     }
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<float, std::milli> duration = end_time - start_time;
-    metrics.total_time_ms = duration.count();
-    metrics.avg_step_time_ms /= data.times.size();
+    // Timing pass (see "Timing protocol" above).
+    const auto timing = time_filter_loop<State>(
+        make_filter, step, [](const UKFCore::SRUKF<NX, NY>& f) { return State(f.getState()); },
+        data.times.size());
+    apply_timing(timing, data.times.size(), data.filtered_states.back(), metrics);
 
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
@@ -267,38 +358,41 @@ BenchmarkMetrics run_ukf_smoother_benchmark(Model& model,
     metrics.problem_name = problem_name;
 
     data.smoother_lag = lag;
-    UKFCore::UnscentedFixedLagSmoother<NX, NY> smoother(model, lag);
-    smoother.initialize(x0, P0);
-
     State u = State::Zero();
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
+    // y_0 where the estimate already is; from then on we propagate from
+    // times[i-1] to times[i] and fuse the measurement taken at times[i].
+    // The fixed-lag backward pass runs inside step(), so timing step() times it.
+    auto step = [&](UKFCore::UnscentedFixedLagSmoother<NX, NY>& s, size_t i) {
+        if (i == 0) s.observe_initial(data.times[0], data.measurements[0]);
+        else        s.step(data.times[i - 1], data.times[i], data.measurements[i], u);
+    };
+    auto make_filter = [&] {
+        auto s = std::make_unique<UKFCore::UnscentedFixedLagSmoother<NX, NY>>(model, lag);
+        s->initialize(x0, P0);
+        return s;
+    };
 
-    for (size_t i = 0; i < data.times.size(); ++i) {
-        auto step_start = std::chrono::high_resolution_clock::now();
-
-        // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
-        // y_0 where the estimate already is; from then on we propagate from
-        // times[i-1] to times[i] and fuse the measurement taken at times[i].
-        if (i == 0) smoother.observe_initial(data.times[0], data.measurements[0]);
-        else        smoother.step(data.times[i - 1], data.times[i], data.measurements[i], u);
-
-        auto step_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> step_duration = step_end - step_start;
-        metrics.avg_step_time_ms += step_duration.count();
-
-        data.filtered_states.push_back(smoother.get_filtered_state());
-        data.filtered_covs.push_back(smoother.get_filtered_covariance());
-
-        // Get smoothed estimate (lag steps back)
-        data.smoothed_states.push_back(smoother.get_smoothed_state(lag));
-        data.smoothed_covs.push_back(smoother.get_smoothed_covariance(lag));
+    // Accuracy pass (untimed).
+    {
+        auto smoother = make_filter();
+        for (size_t i = 0; i < data.times.size(); ++i) {
+            step(*smoother, i);
+            data.filtered_states.push_back(smoother->get_filtered_state());
+            data.filtered_covs.push_back(smoother->get_filtered_covariance());
+            // Smoothed estimate for time i-lag.
+            data.smoothed_states.push_back(smoother->get_smoothed_state(lag));
+            data.smoothed_covs.push_back(smoother->get_smoothed_covariance(lag));
+        }
     }
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<float, std::milli> duration = end_time - start_time;
-    metrics.total_time_ms = duration.count();
-    metrics.avg_step_time_ms /= data.times.size();
+    // Timing pass (see "Timing protocol" above).
+    const auto timing = time_filter_loop<State>(
+        make_filter, step,
+        [](const UKFCore::UnscentedFixedLagSmoother<NX, NY>& s) { return State(s.get_filtered_state()); },
+        data.times.size());
+    apply_timing(timing, data.times.size(), data.filtered_states.back(), metrics);
 
     // Compute filtered metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
@@ -342,38 +436,41 @@ BenchmarkMetrics run_srukf_smoother_benchmark(Model& model,
     metrics.problem_name = problem_name;
 
     data.smoother_lag = lag;
-    UKFCore::SRUKFFixedLagSmoother<NX, NY> smoother(model, lag);
-    smoother.initialize(x0, P0);
-
     State u = State::Zero();
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
+    // y_0 where the estimate already is; from then on we propagate from
+    // times[i-1] to times[i] and fuse the measurement taken at times[i].
+    // The fixed-lag backward pass runs inside step(), so timing step() times it.
+    auto step = [&](UKFCore::SRUKFFixedLagSmoother<NX, NY>& s, size_t i) {
+        if (i == 0) s.observe_initial(data.times[0], data.measurements[0]);
+        else        s.step(data.times[i - 1], data.times[i], data.measurements[i], u);
+    };
+    auto make_filter = [&] {
+        auto s = std::make_unique<UKFCore::SRUKFFixedLagSmoother<NX, NY>>(model, lag);
+        s->initialize(x0, P0);
+        return s;
+    };
 
-    for (size_t i = 0; i < data.times.size(); ++i) {
-        auto step_start = std::chrono::high_resolution_clock::now();
-
-        // See "Timestep alignment" above generate_trajectory(). Iteration 0 fuses
-        // y_0 where the estimate already is; from then on we propagate from
-        // times[i-1] to times[i] and fuse the measurement taken at times[i].
-        if (i == 0) smoother.observe_initial(data.times[0], data.measurements[0]);
-        else        smoother.step(data.times[i - 1], data.times[i], data.measurements[i], u);
-
-        auto step_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> step_duration = step_end - step_start;
-        metrics.avg_step_time_ms += step_duration.count();
-
-        data.filtered_states.push_back(smoother.get_filtered_state());
-        data.filtered_covs.push_back(smoother.get_filtered_covariance());
-
-        // Get smoothed estimate
-        data.smoothed_states.push_back(smoother.get_smoothed_state(lag));
-        data.smoothed_covs.push_back(smoother.get_smoothed_covariance(lag));
+    // Accuracy pass (untimed).
+    {
+        auto smoother = make_filter();
+        for (size_t i = 0; i < data.times.size(); ++i) {
+            step(*smoother, i);
+            data.filtered_states.push_back(smoother->get_filtered_state());
+            data.filtered_covs.push_back(smoother->get_filtered_covariance());
+            // Smoothed estimate for time i-lag.
+            data.smoothed_states.push_back(smoother->get_smoothed_state(lag));
+            data.smoothed_covs.push_back(smoother->get_smoothed_covariance(lag));
+        }
     }
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<float, std::milli> duration = end_time - start_time;
-    metrics.total_time_ms = duration.count();
-    metrics.avg_step_time_ms /= data.times.size();
+    // Timing pass (see "Timing protocol" above).
+    const auto timing = time_filter_loop<State>(
+        make_filter, step,
+        [](const UKFCore::SRUKFFixedLagSmoother<NX, NY>& s) { return State(s.get_filtered_state()); },
+        data.times.size());
+    apply_timing(timing, data.times.size(), data.filtered_states.back(), metrics);
 
     // Compute metrics
     metrics.rmse_overall = compute_rmse(data.true_states, data.filtered_states);
@@ -670,8 +767,9 @@ int main() {
     // ------------------------------------------------------------------
     // Gates on ACCURACY and CONSISTENCY only, never on step time. RMSE/NEES are
     // backend- and host-independent, so they mean the same thing on every machine;
-    // wall-clock does not, and this suite has no warmup or repetitions, so a timing
-    // gate would just flake on any loaded or slower box.
+    // wall-clock does not (even with the warmup + median-of-reps protocol above,
+    // absolute step time is a property of the host), so a timing gate would just
+    // flake on any loaded or slower box.
     //
     // RMSE is gated against a per-(filter, problem) baseline with a two-sided
     // relative band, NOT a loose ceiling. Every RMSE/NEES figure here is
@@ -720,6 +818,10 @@ int main() {
                   ("filtered RMSE is finite and positive: " + tag).c_str());
         NLF_CHECK(m.num_divergences == 0,
                   ("filter did not diverge: " + tag).c_str());
+        // The timed runs replay the accuracy run (same inputs, same step function).
+        // If their final state differs, the timings describe a different computation.
+        NLF_CHECK(m.timing_matches_accuracy,
+                  ("timed runs reproduce the accuracy run's final state: " + tag).c_str());
 
         // A smoother that does not improve on the filter it smooths is broken.
         if (m.rmse_smoothed_overall > 0.0f) {

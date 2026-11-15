@@ -145,8 +145,9 @@ separable in a single 5-run set:
   0.0256, erasing the gap. An effect that a bit of CPU contention can delete is
   not a property of the algorithm.
 - **Van der Pol** measures SRUKF ~26% *faster*, consistently — but this is exactly
-  the shape of the claim retracted above, and at 0.7-1.0 µs/step the harness (no
-  warmup, no repetitions, `chrono` reads inside the measured region) is at its
+  the shape of the claim retracted above, and at 0.7-1.0 µs/step the harness these
+  runs used (no warmup, no repetitions, `chrono` reads inside the measured region;
+  since replaced, not yet re-run on this host) is at its
   least trustworthy. There is a plausible mechanism (SRUKF special-cases NY==1 and
   skips the QR — see Bug #3), so this may well be real; it needs a proper
   benchmarking harness to establish, and until then it is not published as a
@@ -286,8 +287,9 @@ text follows for the record.
 - UKF: 14 divergences
 - ~~SRUKF **37% faster** (0.0035 ms vs 0.0056 ms)~~ — **RETRACTED**. Current
   per-step times for this problem (~0.7-1.0 µs, means of 5 runs: UKF 0.000984 ms,
-  SRUKF 0.000725 ms) are small enough that this suite's timing harness — no warmup,
-  no repetitions, `chrono` reads inside the measured region — cannot support a
+  SRUKF 0.000725 ms) are small enough that the timing harness they came from — no
+  warmup, no repetitions, `chrono` reads inside the measured region; since
+  replaced, not yet re-run on this host — cannot support a
   filter-vs-filter claim in either direction. SRUKF does measure faster here and
   there is a plausible mechanism (the NY==1 path skips the QR, see Bug #3), but
   establishing that needs a real benchmarking harness, not this one.
@@ -431,7 +433,7 @@ when filters were producing NaN values.
 - [x] ~~Fix RMSE computation for high-dimensional problems~~ (done — no NaN in the current suite)
 - [x] ~~Fix the one-timestep predict/update alignment in the benchmark loop~~ (done in `3dbbf4c`: no `predict()` on iteration 0; `predict()` now takes the propagate-from time; smoother `step()` split into `step(t_prev, t_k, y_k, u_k)` plus `observe_initial(t0, y0)`)
 - [x] ~~Replace `chi2_quantile`'s Wilson-Hilferty approximation with exact quantiles~~ (done — inverse regularized incomplete gamma, pinned against scipy by CTest `Chi2_Quantile`; `Pct_In_Bounds` moved −0.02 to −1.1 points, Van der Pol most)
-- [ ] Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region (~5% bias on the smallest step times)
+- [x] ~~Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region~~ (done — separate timing pass: 1 warmup + 5 reps (`NLF_BENCH_REPS`), one clock pair per rep, median reported; figures in this document predate it and are not re-measured on host A)
 - [ ] Add adaptive Q tuning for SRUKF
 - [ ] Implement multi-hypothesis initialization for bearing-only
 - [ ] Add consistency checks (NEES monitoring) with warnings

@@ -42,9 +42,14 @@ struct BenchmarkMetrics {
     int nees_valid = 0;           // Steps with well-conditioned P
     int nees_total = 0;           // Total steps evaluated (post burn-in)
 
-    // Performance metrics
-    float avg_step_time_ms = 0.0f;
-    float total_time_ms = 0.0f;
+    // Performance metrics (run_benchmarks.cpp "Timing protocol": 1 warmup run,
+    // then timing_reps measured runs of the bare step loop, one clock pair each)
+    float avg_step_time_ms = 0.0f;   // total_time_ms / steps
+    float total_time_ms = 0.0f;      // median over reps of the step-loop wall time
+    float step_time_min_ms = 0.0f;   // per-step time of the fastest rep
+    float step_time_max_ms = 0.0f;   // per-step time of the slowest rep
+    int timing_reps = 0;
+    bool timing_matches_accuracy = false;  // timed runs reproduced the accuracy run
 
     // Convergence metrics
     //
@@ -81,7 +86,9 @@ struct BenchmarkMetrics {
         }
         std::cout << std::defaultfloat << std::setprecision(6) << std::endl;
 
-        std::cout << "Avg Step Time: " << avg_step_time_ms << " ms" << std::endl;
+        std::cout << "Avg Step Time: " << avg_step_time_ms << " ms"
+                  << "  (median of " << timing_reps << " reps; range "
+                  << step_time_min_ms << " - " << step_time_max_ms << " ms)" << std::endl;
         std::cout << "Total Time: " << total_time_ms << " ms" << std::endl;
         std::cout << "Convergence Time: ";
         if (converged()) std::cout << convergence_time << " s" << std::endl;
@@ -104,7 +111,10 @@ struct BenchmarkMetrics {
         // Empty cell rather than a number when the filter never converged: pandas
         // and every spreadsheet read it as missing, which is what it is.
         if (converged()) file << convergence_time;
-        file << "," << num_divergences << std::endl;
+        file << "," << num_divergences
+             << "," << timing_reps
+             << "," << step_time_min_ms
+             << "," << step_time_max_ms << std::endl;
     }
 
     /** Write the CSV column header row for benchmark results. */
@@ -113,7 +123,8 @@ struct BenchmarkMetrics {
              << "RMSE_Smoothed_Overall,"
              << "Median_NEES,Pct_In_Bounds,NEES_Valid,NEES_Total,"
              << "Avg_Step_Time_ms,Total_Time_ms,"
-             << "Convergence_Time,Num_Divergences" << std::endl;
+             << "Convergence_Time,Num_Divergences,"
+             << "Timing_Reps,Step_Time_Min_ms,Step_Time_Max_ms" << std::endl;
     }
 };
 

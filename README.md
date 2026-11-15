@@ -197,7 +197,7 @@ python3 ../scripts/plot_benchmarks.py .                  # writes the PNGs shown
 `benchmark_results.csv` columns (one header row):
 
 ```
-Filter,Problem,RMSE_Overall,RMSE_Smoothed_Overall,Median_NEES,Pct_In_Bounds,NEES_Valid,NEES_Total,Avg_Step_Time_ms,Total_Time_ms,Convergence_Time,Num_Divergences
+Filter,Problem,RMSE_Overall,RMSE_Smoothed_Overall,Median_NEES,Pct_In_Bounds,NEES_Valid,NEES_Total,Avg_Step_Time_ms,Total_Time_ms,Convergence_Time,Num_Divergences,Timing_Reps,Step_Time_Min_ms,Step_Time_Max_ms
 ```
 
 `Convergence_Time` is left **empty** when the filter never met the convergence
