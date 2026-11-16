@@ -58,3 +58,19 @@ add_executable(test_srukf_initialize tests/test_srukf_initialize.cpp)
 target_link_libraries(test_srukf_initialize Eigen3::Eigen OptMathKernels)
 enable_lto_if_supported(test_srukf_initialize)
 nlf_add_warning_flags(test_srukf_initialize)
+
+# 2026-11-15 audit: one check per demonstrated defect (Wc0 floor, pivot-aware
+# LDLT sqrt, NaN measurement, angular wrap, smoother time convention, fixed-lag
+# re-init, non-finite rollback, SRUKF kappa sentinel).
+add_executable(test_audit_regressions tests/test_audit_regressions.cpp)
+target_link_libraries(test_audit_regressions Eigen3::Eigen OptMathKernels)
+enable_lto_if_supported(test_audit_regressions)
+nlf_add_warning_flags(test_audit_regressions)
+
+# Iterated smoothers (2026-11-16): IEKS (EKF) and IPLS (UKF/SRUKF) vs an exact
+# double RTS on a linear model, MAP stationarity, UKF/SRUKF agreement, angular wrap.
+add_executable(test_iterated_smoothers tests/test_iterated_smoothers.cpp ${CMAKE_SOURCE_DIR}/EKF/src/EKF.cpp)
+target_include_directories(test_iterated_smoothers PRIVATE ${CMAKE_SOURCE_DIR}/EKF/include)
+target_link_libraries(test_iterated_smoothers Eigen3::Eigen OptMathKernels)
+enable_lto_if_supported(test_iterated_smoothers)
+nlf_add_warning_flags(test_iterated_smoothers)

@@ -796,13 +796,13 @@ int main() {
         {"SRUKF",          "CoupledOscillators10D",   1.45655f,   0.0f},
         {"UKF+Smoother",   "CoupledOscillators10D",   1.45655f,   1.14768f},
         {"SRUKF+Smoother", "CoupledOscillators10D",   1.45655f,   1.14768f},
-        {"UKF",            "VanDerPol2D",             0.468888f,  0.0f},
+        {"UKF",            "VanDerPol2D",             0.468783f,  0.0f},  // post Wc0-floor fix (was 0.468888)
         {"SRUKF",          "VanDerPol2D",             0.467096f,  0.0f},
         {"SRUKF+Smoother", "VanDerPol2D",             0.467096f,  0.430381f},
-        {"UKF",            "BearingOnly4D",          63.4902f,    0.0f},
+        {"UKF",            "BearingOnly4D",          63.4926f,    0.0f},  // post Wc0-floor fix (was 63.4902)
         {"SRUKF",          "BearingOnly4D",          63.8392f,    0.0f},
         {"SRUKF+Smoother", "BearingOnly4D",          63.8392f,   51.6818f},
-        {"UKF",            "ReentryVehicle6D",      366.868f,     0.0f},
+        {"UKF",            "ReentryVehicle6D",      367.115f,     0.0f},  // post Wc0-floor fix (was 366.868)
         {"SRUKF",          "ReentryVehicle6D",      367.115f,     0.0f},
         {"SRUKF+Smoother", "ReentryVehicle6D",      367.115f,   236.251f},
     };

@@ -15,10 +15,22 @@
  * via add_test() must therefore return non-zero when its invariants break, which
  * is what this macro does.
  *
- * Only usable inside a function returning int (i.e. main()).
+ * NLF_CHECK is only usable inside a function returning int (i.e. main()).
+ * NLF_REQUIRE is the same check for any function (e.g. void test_xxx()): it
+ * exits the process with status 1 instead of returning.
  */
 
 #include <cstdio>
+#include <cstdlib>
+
+#define NLF_REQUIRE(cond, msg)                                                 \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::fprintf(stderr, "FAIL: %s\n    (%s)\n    at %s:%d\n",         \
+                         (msg), #cond, __FILE__, __LINE__);                    \
+            std::exit(1);                                                      \
+        }                                                                      \
+    } while (0)
 
 #define NLF_CHECK(cond, msg)                                                   \
     do {                                                                       \

@@ -49,3 +49,10 @@ add_executable(test_rbpf_logdet tests/test_rbpf_logdet.cpp)
 target_link_libraries(test_rbpf_logdet PRIVATE rbpf_core OptMathKernels)
 enable_lto_if_supported(test_rbpf_logdet)
 nlf_add_warning_flags(test_rbpf_logdet)
+
+# Fixed-lag smoothed linear mean (2026-11-16): RTS along ancestral paths vs an
+# exact double KF + RTS on a fixed nonlinear path; RMSE gain on a random path.
+add_executable(test_rbpf_smoother tests/test_rbpf_smoother.cpp)
+target_link_libraries(test_rbpf_smoother PRIVATE rbpf_core OptMathKernels)
+enable_lto_if_supported(test_rbpf_smoother)
+nlf_add_warning_flags(test_rbpf_smoother)

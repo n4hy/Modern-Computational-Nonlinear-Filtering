@@ -28,7 +28,7 @@ Modern-Computational-Nonlinear-Filtering/
 |   +-- tests/                  # 5 regression tests (see Testing below)
 +-- PKF/                        # Particle Filter module (header-only lib)
 |   +-- CMakeLists.txt
-|   +-- include/                # particle_filter.hpp, resampling.hpp, GPU accel
+|   +-- include/                # particle_filter.hpp, resampling.hpp
 |   +-- src/                    # example_main.cpp (pkf_example)
 |   +-- tests/                  # test_particle.cpp, test_particle_const.cpp
 +-- RBPKF/                      # Rao-Blackwellized Particle Filter
@@ -124,9 +124,9 @@ target of its own.
   - `tests/` -- five regression tests (angular wrap, smoother, numerical, init,
     UKF smoother).
 
-**`PKF/`:** Bootstrap particle filter (SIR) with GPU / Vulkan / OpenMP acceleration.
+**`PKF/`:** Bootstrap particle filter (SIR), OpenMP-parallel (CPU only).
 
-- Purpose: general non-Gaussian particle filter, GPU-capable.
+- Purpose: general non-Gaussian particle filter.
 - Contains: header-only `.hpp` files, plus example / test drivers.
 - Key files:
   - `include/state_space_model.hpp` -- `template<int NX, int NY>
@@ -136,8 +136,6 @@ target of its own.
   - `include/particle_filter.hpp` (437 lines) -- `PKF::ParticleFilter<NX, NY>`
     with OpenMP parallel propagation, systematic resampling, Vulkan
     vector-add acceleration.
-  - `include/particle_filter_gpu.hpp` -- `GPUParticleContext<NX>` for CUDA
-    weight normalization, ESS, resampling, mean/cov reduction.
   - `include/particle_fixed_lag.hpp` -- backward-simulation smoother.
   - `include/resampling.hpp` -- systematic / stratified resampling with
     `double`-accumulated cumulative sums.
@@ -316,8 +314,8 @@ scripts. Auto-created by CMake when `NLF_BUILD_PYTHON_VENV=ON` (default).
    |        |            |                     |                     |
    UKF.h    SRUKF.h      EKF.h                 particle_filter.hpp   rbpf_core.hpp
    |        |            EKFFixedLag.h         resampling.hpp        kalman_filter.hpp
-   UKFSmoother.h ...     EKFSmoother.h         particle_filter_gpu   (per-particle KF)
-   |        |            |                     particle_fixed_lag    |
+   UKFSmoother.h ...     EKFSmoother.h         particle_fixed_lag    (per-particle KF)
+   |        |            |                                           |
    +--------+------------+---------------------+---------------------+
                                 |
                         Benchmarks/  (depends on UKF, SRUKF, Common)

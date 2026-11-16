@@ -302,7 +302,6 @@ Note: `RMSE_Position` / `RMSE_Velocity` columns were **removed** in v3.4.1 (`c8d
 | `UKFModel` | Base classes for UKF/SRUKF models | `Common/include/StateSpaceModel.h` |
 | `PKF` | Particle filter, its models, resampling | `PKF/include/*.hpp` |
 | `PKF::Resampling` | Systematic/stratified resamplers | `PKF/include/resampling.hpp` |
-| `PKF::gpu` | GPU particle context | `PKF/include/particle_filter_gpu.hpp` |
 | `rbpf` | Rao-Blackwellized particle filter | `RBPKF/include/rbpf/*.hpp` |
 | `filtermath` | Dispatch layer (GEMM, Cholesky, kalman_gain) | `Common/include/FilterMath.h` |
 | `filtermath::config` | Runtime enable toggle for CUDA | `Common/include/FilterMath.h` l. 63-71 |

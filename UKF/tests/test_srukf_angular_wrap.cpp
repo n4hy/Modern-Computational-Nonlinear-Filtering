@@ -7,13 +7,9 @@
 // This standalone test installs a minimal model whose single observation IS an
 // angle and verifies the wrap directly.
 //
-// Build (standalone, mirrors IPNT setup.py flags):
-//   NLF=~/Modern-Computational-Nonlinear-Filtering
-//   g++ -std=c++20 -O3 -I"$NLF/Common/include" -I"$NLF/UKF/include" \
-//       -I"$NLF/build/_deps/optimizedkernels-src/include" -I/usr/include/eigen3 \
-//       UKF/tests/test_srukf_angular_wrap.cpp \
-//       -L"$NLF/build/_deps/optimizedkernels-build/src" -lOptMathKernels \
-//       -o /tmp/test_srukf_angular_wrap && /tmp/test_srukf_angular_wrap
+// Build and run (CMake carries the OptMath include/link flags, which vary by host):
+//   cmake --build build --target srukf_angular_wrap_test
+//   ctest --test-dir build -R SRUKF_AngularWrap --output-on-failure
 // =============================================================================
 #include <cstdio>
 #include <cmath>

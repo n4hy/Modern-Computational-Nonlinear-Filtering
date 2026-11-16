@@ -55,18 +55,20 @@ namespace Resampling {
 
         std::vector<size_t> parents(N);
 
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f / static_cast<float>(N));
-        float u0 = dist(rng);
+        std::uniform_real_distribution<double> dist(0.0, 1.0 / static_cast<double>(N));
+        const double u0 = dist(rng);
 
         // Accumulate the cumulative weight sum in double even though the weights
         // are float: for large N with skewed weights a float running sum drifts
-        // enough to misplace parents. Matches the double-weight overloads and the
-        // RBPF Kahan-summed path. (u stays float; the comparison promotes it.)
+        // enough to misplace parents. Matches the double-weight overloads.
+        // (u and the running sum are both double: a float u has a spacing of ~6e-8
+        // near 1, coarser than 1/N for N > ~1e7 and within a few ulps of it at
+        // N ~ 1e6, so strata collapse -- measured 7.7% of particles lost at N = 4e6.)
         double csum = weights[0];
         size_t k = 0;
 
         for (size_t i = 0; i < N; ++i) {
-            float u = u0 + static_cast<float>(i) / static_cast<float>(N);
+            const double u = u0 + static_cast<double>(i) / static_cast<double>(N);
 
             while (u > csum && k < N - 1) {
                 k++;
@@ -123,14 +125,16 @@ namespace Resampling {
 
         // Accumulate the cumulative weight sum in double even though the weights
         // are float: for large N with skewed weights a float running sum drifts
-        // enough to misplace parents. Matches the double-weight overloads and the
-        // RBPF Kahan-summed path. (u stays float; the comparison promotes it.)
+        // enough to misplace parents. Matches the double-weight overloads.
+        // (u and the running sum are both double: a float u has a spacing of ~6e-8
+        // near 1, coarser than 1/N for N > ~1e7 and within a few ulps of it at
+        // N ~ 1e6, so strata collapse -- measured 7.7% of particles lost at N = 4e6.)
         double csum = weights[0];
         size_t k = 0;
 
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
         for (size_t i = 0; i < N; ++i) {
-            float u = (static_cast<float>(i) + dist(rng)) / static_cast<float>(N);
+            const double u = (static_cast<double>(i) + dist(rng)) / static_cast<double>(N);
 
             while (u > csum && k < N - 1) {
                 k++;

@@ -2,7 +2,9 @@
 #define UKF_H
 
 #include <Eigen/Dense>
+#include <cmath>
 #include <iostream>
+#include <numbers>
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
 #include "FilterMath.h"
@@ -53,21 +55,18 @@ public:
              X_pred.col(i) = model_.f(sigmas.X.col(i), t_k, u_k);
         }
 
-        // 3. Compute Predicted Mean
-        State x_pred_mean = State::Zero();
-        for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            x_pred_mean += sigmas.Wm(i) * X_pred.col(i);
-        }
+        // 3. Compute Predicted Mean (circular for angular states, as in SRUKF)
+        const State x_pred_mean = weighted_mean_state(X_pred, sigmas.Wm);
 
         // 4. Compute Predicted Covariance & Cross Covariance via GEMM
         StateMat Q = model_.Q(t_k);
 
         Eigen::Matrix<float, NX, SigmaPts::NSIG> Dp_w, Dp, Dx_w;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            State diff_x_pred = X_pred.col(i) - x_pred_mean;
+            const State diff_x_pred = wrap_state(X_pred.col(i) - x_pred_mean);
             Dp.col(i) = diff_x_pred;
             Dp_w.col(i) = sigmas.Wc(i) * diff_x_pred;
-            Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+            Dx_w.col(i) = sigmas.Wc(i) * wrap_state(sigmas.X.col(i) - x_);
         }
         StateMat P_pred = filtermath::gemm(Dp_w, Dp.transpose());
         StateMat P_cross = filtermath::gemm(Dx_w, Dp.transpose());
@@ -88,6 +87,10 @@ public:
      * Update Step (Measurement Update)
      */
     void update(float t_k, const Observation& y_k) {
+        // A non-finite measurement is treated as missed: skip the update and
+        // keep the prediction. Fusing it would turn x_ and P_ into NaN.
+        if (!y_k.allFinite()) return;
+
         // 1. Generate Sigma Points from predicted state
         SigmaPts sigmas;
         generate_sigma_points<NX>(x_, P_, alpha, beta, kappa, sigmas);
@@ -99,11 +102,8 @@ public:
             Y_pred.col(i) = model_.h(sigmas.X.col(i), t_k);
         }
 
-        // 3. Compute Predicted Measurement Mean
-        Observation y_hat = Observation::Zero();
-        for (int i = 0; i < SigmaPts::NSIG; ++i) {
-            y_hat += sigmas.Wm(i) * Y_pred.col(i);
-        }
+        // 3. Compute Predicted Measurement Mean (circular for angular observations)
+        const Observation y_hat = weighted_mean_obs(Y_pred, sigmas.Wm);
 
         // 4. Compute Innovation Covariance S and Cross Covariance Pxy via GEMM
         ObsMat R = model_.R(t_k);
@@ -111,10 +111,10 @@ public:
         Eigen::Matrix<float, NY, SigmaPts::NSIG> Dy_w, Dy;
         Eigen::Matrix<float, NX, SigmaPts::NSIG> Dx_w;
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
-             Observation diff_y = Y_pred.col(i) - y_hat;
+             const Observation diff_y = wrap_obs(Y_pred.col(i) - y_hat);
              Dy.col(i) = diff_y;
              Dy_w.col(i) = sigmas.Wc(i) * diff_y;
-             Dx_w.col(i) = sigmas.Wc(i) * (sigmas.X.col(i) - x_);
+             Dx_w.col(i) = sigmas.Wc(i) * wrap_state(sigmas.X.col(i) - x_);
         }
         ObsMat S = filtermath::gemm(Dy_w, Dy.transpose());
         CrossMat Pxy = filtermath::gemm(Dx_w, Dy.transpose());
@@ -124,7 +124,7 @@ public:
         Eigen::Matrix<float, NX, NY> K = filtermath::kalman_gain(
             Eigen::MatrixXf(Pxy), Eigen::MatrixXf(S));
 
-        Observation y_diff = y_k - y_hat;
+        const Observation y_diff = wrap_obs(y_k - y_hat);
 
         // State update
         x_ = x_ + K * y_diff;
@@ -163,16 +163,16 @@ public:
                 // LDLT reconstruction (rebuild PSD approximant from spectrum).
                 Eigen::LDLT<StateMat> ldlt(P_jitter);
                 if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
-                    StateMat L = ldlt.matrixL();
-                    Eigen::VectorXf D = ldlt.vectorD();
-                    for (int i = 0; i < NX; ++i) {
-                        D(i) = std::sqrt(std::max(D(i), 1e-10f));
-                    }
-                    StateMat sqrtP = L * D.asDiagonal();
+                    const StateMat sqrtP = ldlt_sqrt_factor<NX>(ldlt);  // pivot-aware
                     P_ = sqrtP * sqrtP.transpose();
                 } else {
-                    // Last-resort clamp: preserve diagonal, discard off-diagonals.
-                    P_ = P_.diagonal().cwiseMax(1e-10f).asDiagonal();
+                    // Last-resort clamp: keep the (pre-update, hence conservative)
+                    // predicted variances, discard off-diagonals. The diagonal is
+                    // copied out first: `P_ = P_.diagonal()...asDiagonal()` aliases
+                    // -- Eigen zeroes P_ before reading its diagonal, yielding
+                    // 1e-10 * I instead of diag(P_).
+                    const State d = P_.diagonal().cwiseMax(1e-10f);
+                    P_ = d.asDiagonal();
                 }
             }
         }
@@ -190,6 +190,46 @@ private:
     Model& model_;
     State x_;
     StateMat P_;
+
+    // ---- angular handling (model_.isAngularState / isAngularObservation) ----
+    // Mirrors SRUKF: circular weighted means and deviations wrapped to [-pi, pi].
+    // All four are identities for models that flag nothing as angular.
+    static constexpr float kTwoPi = 2.0f * std::numbers::pi_v<float>;
+
+    State wrap_state(State d) const {
+        for (int j = 0; j < NX; ++j)
+            if (model_.isAngularState(j)) d(j) = std::remainder(d(j), kTwoPi);
+        return d;
+    }
+    Observation wrap_obs(Observation d) const {
+        for (int j = 0; j < NY; ++j)
+            if (model_.isAngularObservation(j)) d(j) = std::remainder(d(j), kTwoPi);
+        return d;
+    }
+    template<int ROWS, typename IsAngular>
+    static Eigen::Matrix<float, ROWS, 1> weighted_mean(
+            const Eigen::Matrix<float, ROWS, SigmaPts::NSIG>& X,
+            const typename SigmaPts::Weights& W, IsAngular is_angular) {
+        Eigen::Matrix<float, ROWS, 1> m = X * W;
+        for (int j = 0; j < ROWS; ++j) {
+            if (!is_angular(j)) continue;
+            float s = 0.0f, c = 0.0f;
+            for (int i = 0; i < SigmaPts::NSIG; ++i) {
+                s += W(i) * std::sin(X(j, i));
+                c += W(i) * std::cos(X(j, i));
+            }
+            m(j) = std::atan2(s, c);
+        }
+        return m;
+    }
+    State weighted_mean_state(const typename SigmaPts::SigmaMat& X,
+                              const typename SigmaPts::Weights& W) const {
+        return weighted_mean<NX>(X, W, [this](int j) { return model_.isAngularState(j); });
+    }
+    Observation weighted_mean_obs(const Eigen::Matrix<float, NY, SigmaPts::NSIG>& Y,
+                                  const typename SigmaPts::Weights& W) const {
+        return weighted_mean<NY>(Y, W, [this](int j) { return model_.isAngularObservation(j); });
+    }
 };
 
 } // namespace UKFCore

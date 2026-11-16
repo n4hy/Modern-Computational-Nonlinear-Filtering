@@ -295,15 +295,19 @@ runs.
 | SRUKF | CoupledOscillators10D | 1.45655 | — | 9.892 | 94.5% | 0.0251 | 21.8404 s | 0 |
 | UKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.0975 | 21.8404 s | 0 |
 | SRUKF+Smoother | CoupledOscillators10D | 1.45655 | 1.14768 | 9.892 | 94.5% | 0.1433 | 21.8404 s | 0 |
-| UKF | VanDerPol2D | 0.468888 | — | 1.134 | 94.8% | 0.000965 | 0.839999 s | 0 |
+| UKF | VanDerPol2D | 0.468783‡ | — | 1.135 | 94.8% | 0.000965 | 0.839999 s | 0 |
 | SRUKF | VanDerPol2D | 0.467096 | — | 1.135 | 94.8% | 0.000718 | 0.839999 s | 0 |
 | SRUKF+Smoother | VanDerPol2D | 0.467096 | 0.430381 | 1.135 | 94.8% | 0.0234 | 0.839999 s | 0 |
-| UKF | BearingOnly4D | 63.4902 | — | 3.714 | 99.3% | 0.00121 | did not converge | 0 |
+| UKF | BearingOnly4D | 63.4926‡ | — | 3.714 | 99.3% | 0.00121 | did not converge | 0 |
 | SRUKF | BearingOnly4D | 63.8392 | — | 3.723 | 99.3% | 0.00138 | did not converge | 0 |
 | SRUKF+Smoother | BearingOnly4D | 63.8392 | 51.6818 | 3.723 | 99.3% | 0.0433 | did not converge | 0 |
-| UKF | ReentryVehicle6D | 366.868 | — | 4.986 | 95.6% | 0.00468 | did not converge | 0 |
+| UKF | ReentryVehicle6D | 367.115‡ | — | 4.986 | 95.6% | 0.00468 | did not converge | 0 |
 | SRUKF | ReentryVehicle6D | 367.115 | — | 4.986 | 95.6% | 0.00491 | did not converge | 0 |
 | SRUKF+Smoother | ReentryVehicle6D | 367.115 | 236.251 | 4.986 | 95.6% | 0.0566 | did not converge | 0 |
+
+‡ Plain-UKF rows re-measured on x86_64 after the 2026-11-15 sigma-weight fix
+(`Wc0` under the spread floor; see DEVELOPMENT_NOTES). The fix moves only the
+plain UKF on nonlinear problems (≤0.067%); other rows are unchanged.
 
 Per-problem wall time on the timing host (summed across that problem's filters):
 Coupled Oscillators ~1.46 s (5001 steps), Van der Pol ~0.05 s (2000 steps),

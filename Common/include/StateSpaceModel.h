@@ -25,11 +25,18 @@ public:
     virtual ~StateSpaceModel() = default;
 
     /**
-     * Nonlinear State Transition Function: x_k = f(x_{k-1}, t_k, u_k) + w_k
+     * Nonlinear State Transition Function: x_k = f(x_{k-1}, t_{k-1}, u_k) + w_k
+     *
+     * TIME CONVENTION: the time argument is the time the state is propagated
+     * FROM (t_{k-1}, where x_prev lives), not the measurement time. Every filter
+     * and smoother in UKFCore calls predict(t_prev, u) -> f(x, t_prev, u) and
+     * Q(t_prev); a model integrating over [t, t + dt] relies on this (see the
+     * "Timestep alignment" note in Benchmarks/src/run_benchmarks.cpp, commit
+     * 3dbbf4c). This comment previously said t_k, the opposite.
      * Note: Process noise w_k is handled via Q().
      */
     virtual State f(const State& x_prev,
-                    float t_k,
+                    float t_prev,
                     const Eigen::Ref<const State>& u_k) const = 0;
 
     /**
@@ -40,9 +47,10 @@ public:
                           float t_k) const = 0;
 
     /**
-     * Process Noise Covariance Matrix Q_k
+     * Process Noise Covariance Matrix for the step starting at t_prev (same
+     * time argument as f()).
      */
-    virtual StateMat Q(float t_k) const = 0;
+    virtual StateMat Q(float t_prev) const = 0;
 
     /**
      * Measurement Noise Covariance Matrix R_k
@@ -54,14 +62,14 @@ public:
      * Default implementation returns false for all states.
      * Override for models with angular states (e.g., attitude).
      */
-    virtual bool isAngularState(int i) const { return false; }
+    virtual bool isAngularState(int /*i*/) const { return false; }
 
     /**
      * Returns true if observation index i is an angular observation.
      * Default implementation returns false for all observations.
      * Override for models with angular observations (e.g., AOA measurements).
      */
-    virtual bool isAngularObservation(int i) const { return false; }
+    virtual bool isAngularObservation(int /*i*/) const { return false; }
 };
 
 } // namespace UKFModel

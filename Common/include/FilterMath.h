@@ -70,6 +70,40 @@ namespace config {
 }
 }
 
+#if FILTERMATH_HAS_CUDA
+namespace filtermath {
+namespace detail {
+/**
+ * True once the OptMath CUDA context is genuinely usable, evaluated once
+ * (C++11 magic static: thread-safe, so concurrent first calls from OpenMP
+ * regions cannot double-initialise the cuBLAS handles).
+ *
+ * Two defects this closes, both measured on an RTX 5090 host:
+ *  1. optmath::cuda::is_available() only counts devices. If init() then fails
+ *     (cublasCreate error, SM unsupported by the toolkit), cuda_mat_mul ignores
+ *     the failure and returns an unwritten device buffer -- gemm(I, 2*ones)
+ *     came back as zeros. Requiring init() == true here routes every such
+ *     call to the CPU path instead.
+ *  2. init() enables CUBLAS_TF32_TENSOR_OP_MATH on SM >= 8.0, an 11-bit
+ *     significand: gemm relative error ~2.9e-4 vs ~1.4e-7 for Eigen fp32, and
+ *     F P F^T of a well-conditioned SPD P (min eig 1e-6) came back indefinite
+ *     (min eig -6.7e-5). Covariance arithmetic needs full FP32, so the mode is
+ *     pinned to FP32 (CUBLAS_DEFAULT_MATH) here.
+ */
+inline bool cuda_ready() {
+    static const bool ready = [] {
+        if (!optmath::cuda::is_available()) return false;
+        auto& ctx = optmath::cuda::CudaContext::get();
+        if (!ctx.is_initialized() && !ctx.init()) return false;
+        ctx.set_precision_mode(optmath::cuda::CudaContext::PrecisionMode::FP32);
+        return ctx.is_initialized();
+    }();
+    return ready;
+}
+}  // namespace detail
+}  // namespace filtermath
+#endif
+
 namespace filtermath {
 
 // ========================================================================
@@ -87,7 +121,7 @@ inline Eigen::MatrixXf gemm(const Eigen::MatrixXf& A, const Eigen::MatrixXf& B) 
     // GPU dispatch for large matrices (amortizes PCIe transfer)
     if (config::cuda_enabled() &&
         min_dim >= FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_gemm(A, B);
     }
 #endif
@@ -149,7 +183,7 @@ inline Eigen::VectorXf mat_vec_mul(const Eigen::MatrixXf& A, const Eigen::Vector
     // GPU gemv for large matrices
     if (config::cuda_enabled() &&
         n >= FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_mat_vec_mul(A, v);
     }
 #endif
@@ -348,6 +382,13 @@ inline Eigen::VectorXf trsv_upper(const Eigen::MatrixXf& U, const Eigen::VectorX
  */
 inline Eigen::MatrixXf kalman_gain(const Eigen::MatrixXf& PHt,
                                     const Eigen::MatrixXf& S) {
+    // Non-finite inputs: no solve can succeed, and the SVD fallback below then
+    // builds blocks from a NaN-derived rank (an Eigen assertion in Debug,
+    // out-of-bounds access in Release). Return a zero gain -- the measurement
+    // is not fused -- and leave non-finite detection to the caller's guards.
+    if (!S.allFinite() || !PHt.allFinite())
+        return Eigen::MatrixXf::Zero(PHt.rows(), S.rows());
+
     // Solve S * K^T = PHt^T  →  K^T = S^{-1} * PHt^T  →  K = PHt * S^{-1}
     // More stable: solve column-by-column or use LDLT
     Eigen::MatrixXf K_T = solve_spd_mat(S, PHt.transpose());
@@ -370,7 +411,7 @@ inline Eigen::MatrixXf kalman_gain(const Eigen::MatrixXf& PHt,
 /** Return true if a CUDA GPU is both present and enabled at runtime. */
 inline bool gpu_available() {
 #if FILTERMATH_HAS_CUDA
-    return config::cuda_enabled() && optmath::cuda::is_available();
+    return config::cuda_enabled() && detail::cuda_ready();
 #else
     return false;
 #endif
@@ -382,7 +423,7 @@ inline bool gpu_available() {
 /** Block until all pending CUDA operations complete. No-op when CUDA is absent. */
 inline void gpu_sync() {
 #if FILTERMATH_HAS_CUDA
-    if (optmath::cuda::is_available()) {
+    if (detail::cuda_ready()) {
         optmath::cuda::CudaContext::get().synchronize();
     }
 #endif
@@ -396,7 +437,7 @@ inline float reduce_sum(const Eigen::VectorXf& v) {
 #if FILTERMATH_HAS_CUDA
     if (config::cuda_enabled() &&
         v.size() >= FILTERMATH_CUDA_MIN_DIM * FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_reduce_sum(v);
     }
 #endif
@@ -408,7 +449,7 @@ inline float reduce_max(const Eigen::VectorXf& v) {
 #if FILTERMATH_HAS_CUDA
     if (config::cuda_enabled() &&
         v.size() >= FILTERMATH_CUDA_MIN_DIM * FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_reduce_max(v);
     }
 #endif
@@ -423,7 +464,7 @@ inline Eigen::VectorXf vec_exp(const Eigen::VectorXf& v) {
 #if FILTERMATH_HAS_CUDA
     if (config::cuda_enabled() &&
         v.size() >= FILTERMATH_CUDA_MIN_DIM * FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_exp(v);
     }
 #endif
@@ -438,7 +479,7 @@ inline Eigen::VectorXf vec_log(const Eigen::VectorXf& v) {
 #if FILTERMATH_HAS_CUDA
     if (config::cuda_enabled() &&
         v.size() >= FILTERMATH_CUDA_MIN_DIM * FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         return optmath::cuda::cuda_log(v);
     }
 #endif
@@ -466,7 +507,7 @@ inline Eigen::MatrixXf weighted_outer_sum(
     // GPU implementation: scale columns, then GEMM: (W.*R) * R^T
     if (config::cuda_enabled() &&
         n >= FILTERMATH_CUDA_MIN_DIM &&
-        optmath::cuda::is_available()) {
+        detail::cuda_ready()) {
         // Create weighted residual matrix
         Eigen::MatrixXf weighted_res(n, m);
         for (int j = 0; j < m; ++j) {

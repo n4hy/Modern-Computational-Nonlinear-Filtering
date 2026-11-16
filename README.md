@@ -37,7 +37,7 @@ This repository provides nonlinear filtering implementations in **portable C++20
 ### What's Included
 
 - **5 Filtering Methods**: EKF, UKF, SRUKF, PKF, RBPKF
-- **Smoothers**: fixed-lag RTS, full-interval (batch) RTS with optional iteration (an IEKS for the EKF), and ancestry-based particle smoothing
+- **Smoothers**: fixed-lag RTS; full-interval (batch) RTS with optional iteration — Gauss-Newton IEKS for the EKF, iterated posterior linearisation (IPLS) for the UKF/SRUKF; ancestry-based particle smoothing, with an exact RTS pass for the RBPF linear sub-state
 - **Comprehensive Benchmarks**: 4 test problems in the default suite with full metrics (10D coupled oscillators, Van der Pol, bearing-only tracking, reentry vehicle)
 - **Optional Acceleration**: NEON/SVE2 dense linear algebra, Vulkan compute, and CUDA via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA) (OptMathKernels), consumed as a sibling source tree built with `add_subdirectory` (currently **v0.6.3**; no pinned release tag)
 
@@ -66,8 +66,8 @@ Eigen fallback path` and the build proceeds normally.
 | **Eigen** (baseline) | every C++20 target | always | The fallback. Correct and complete on its own — no other tier is required. |
 | **NEON** | ARM (`aarch64`/`armv8`, `arm`) | ON for ARM targets | Cholesky, GEMM, mat-vec, SPD solve. `-DNLF_ENABLE_NEON=OFF` to disable. |
 | **SVE2** | ARM CPUs that implement SVE2 (Cortex-A720+, e.g. Orange Pi 5/6) | ON for ARM targets | Cache-blocked GEMM with FCMA/I8MM. Sources are skipped on ARM CPUs without SVE2 (such as the Pi 5's Cortex-A76), so leaving it ON on a non-SVE2 ARM board is harmless. |
-| **Vulkan** | any target with a Vulkan 1.2+ SDK/driver | ON, auto-skipped with no SDK | Compute backend in OptMathKernels. See the note under [Features](#hardware-optimization) about which operations actually reach the GPU. |
-| **CUDA** | NVIDIA GPUs, SM 75–120 | auto-detected via `nvcc` | cuBLAS GEMM + GPU particle filter. CUDA 12.x = SM 75–90; 13.x adds Blackwell (SM 100/120). |
+| **Vulkan** | any target with a Vulkan 1.2+ SDK/driver | ON, auto-skipped with no SDK | Compute backend in OptMathKernels. No filter in this repo dispatches to it since the PKF Vulkan noise-add was removed (2026-11-16); it is built and tested as OptMath infrastructure. |
+| **CUDA** | NVIDIA GPUs, SM 75–120 | auto-detected via `nvcc` | cuBLAS GEMM (full FP32). CUDA 12.x = SM 75–90; 13.x adds Blackwell (SM 100/120). |
 
 ### Verified: the library does not need a SIMD backend
 
@@ -100,7 +100,7 @@ of the backend; **only wall-clock timings change.**
 
 - **Method**: First-order Taylor series approximation
 - **Requirements**: Explicit Jacobian matrices
-- **Smoothing**: RTS fixed-lag backward pass (`EKF/include/EKFFixedLag.h`) + full-interval iterated RTS / IEKS (`EKF/include/EKFSmoother.h`)
+- **Smoothing**: RTS fixed-lag backward pass (`EKF/include/EKFFixedLag.h`) + full-interval RTS with Gauss-Newton IEKS iterations (`EKF/include/EKFSmoother.h`)
 - **Best For**: Mildly nonlinear systems, fast prototyping
 - **Location**: `EKF/`
 
@@ -110,7 +110,7 @@ of the backend; **only wall-clock timings change.**
 
 - **Method**: Deterministic sampling via Merwe scaled unscented transform
 - **Parameters**: Dimension-adaptive (alpha=1.0, beta=2.0, kappa=3-n)
-- **Smoothing**: RTS with cross-covariance tracking — fixed-lag (`UKF/include/UnscentedFixedLagSmoother.h`) + full-interval iterated (`UKF/include/UKFSmoother.h`)
+- **Smoothing**: RTS with cross-covariance tracking — fixed-lag (`UKF/include/UnscentedFixedLagSmoother.h`) + full-interval URTS with IPLS iterations (`UKF/include/UKFSmoother.h`, `UKF/include/PosteriorLinearization.h`)
 - **Best For**: Highly nonlinear systems where Jacobians are unavailable or expensive
 - **Location**: `UKF/`
 - **Optimization**: GEMM, Cholesky and SPD solve go through the FilterMath dispatch — SVE2/NEON where present, Eigen otherwise
@@ -126,7 +126,7 @@ of the backend; **only wall-clock timings change.**
   - Innovation gating prevents catastrophic updates
   - Safe Cholesky downdate with automatic fallback to full recomputation
 - **Best For**: Mission-critical, long-duration, weak observability systems
-- **Location**: `UKF/include/SRUKF.h`; smoothers in `UKF/include/SRUKFFixedLagSmoother.h` (fixed-lag) and `UKF/include/SRUKFSmoother.h` (full-interval, iterated)
+- **Location**: `UKF/include/SRUKF.h`; smoothers in `UKF/include/SRUKFFixedLagSmoother.h` (fixed-lag) and `UKF/include/SRUKFSmoother.h` (full-interval SR-URTS with IPLS iterations)
 
 ### 4. Particle Filter (PKF)
 
@@ -137,7 +137,7 @@ of the backend; **only wall-clock timings change.**
 - **Smoothing**: Ancestry-based fixed-lag trajectory reconstruction
 - **Best For**: Non-Gaussian noise, multimodal distributions
 - **Location**: `PKF/`
-- **Optimization**: OpenMP parallel propagation; CUDA particle context auto-enabled at N >= 256 when built with CUDA. A Vulkan noise-addition path exists but rarely engages — see the [Vulkan note](#hardware-optimization) under Features.
+- **Optimization**: OpenMP: propagation, noise and weighting fused into one parallel region (serial below 2048 particles), parallel mean/covariance sums from 16384 particles. CPU only.
 
 ### 5. Rao-Blackwellized Particle Filter (RBPKF)
 
@@ -171,10 +171,12 @@ Four problems tested with UKF, SRUKF, and fixed-lag smoothers. Benchmarks run th
 | **B** — ARM aarch64 | Raspberry Pi 5 (Cortex-A76, 4 cores), NEON + Vulkan (V3D), no CUDA, no SVE2 | accuracy re-verification, portability comparison (run 14 July 2026) |
 
 Accuracy figures below were produced on host A and re-verified unchanged on host B.
-CTest passes on both. This repo registers **16** filter/benchmark tests
-(the original 12 plus `EKF_Smoother`, `UKF_Smoother`, `UKF_Numerical`,
-`SRUKF_Initialize`, `PKF_ParticleConst`, `RBPF_LogDet` — the smoother
-regressions and the four audit-remediation regressions); OptimizedKernels
+CTest passed on both. At the time of those runs this repo registered **16**
+filter/benchmark tests (the original 12 plus `EKF_Smoother`, `UKF_Smoother`,
+`UKF_Numerical`, `SRUKF_Initialize`, `PKF_ParticleConst`, `RBPF_LogDet`). It
+now registers **21**: those plus `Chi2_Quantile`, `UKF_AuditRegressions`,
+`PKF_AuditRegressions`, `Iterated_Smoothers` and `RBPF_Smoother` (host A on
+2026-11-16: 39/39 = 21 filter + 18 OptMath). OptimizedKernels
 adds 17–20 more, depending on what the build detects (17 base +
 `test_cuda_kernels` on CUDA hosts, `test_neon_fp16` on FP16-capable ARM
 CPUs, `test_sve2_kernels` on SVE2-capable ARM CPUs). Host A gets **34/34**
@@ -240,7 +242,7 @@ host-independent; **Avg step** and **Total** are from **host A**:
 | Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.3% | 0.00052 ms | 0.16 ms | 0 |
 | Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.3% | 0.00046 ms | 0.15 ms | 0 |
 | Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.3% | 0.0108 ms | 3.25 ms | 0 |
-| Reentry 6D | UKF | 366.9 | — | 4.99 | 95.6% | 0.0024 ms | 0.72 ms | 0 |
+| Reentry 6D | UKF | 367.1 | — | 4.99 | 95.6% | 0.0024 ms | 0.72 ms | 0 |
 | Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.6% | 0.0024 ms | 0.73 ms | 0 |
 | Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.6% | 0.0176 ms | 5.30 ms | 0 |
 
@@ -468,26 +470,12 @@ Before deploying any Kalman filter, verify:
   - **Cholesky / Inverse / Solve**: NEON accelerated → Eigen LDLT fallback
   - **Kalman Gain**: SPD solve (avoids explicit matrix inverse for O(n²) vs O(n³))
   - **Any platform with no backend**: falls through to Eigen — always available, always correct
-- **Particle Filter GPU** (`PKF/include/particle_filter_gpu.hpp`): CUDA particle filter:
-  - **GPUParticleContext\<NX\>**: Manages particles/weights on GPU
-  - GPU log-sum-exp weight normalization
-  - GPU systematic/stratified resampling
-  - Auto-enable for N >= 256 particles (CUDA builds only; a no-CUDA build always uses the CPU path)
+- **Particle filter**: CPU only, OpenMP across particles. The former CUDA particle context and Vulkan noise-add path were removed on 2026-11-16: the model's `propagate` / `observation_loglik` are virtual host calls, so neither path ran the filter on the device, and the CUDA path was slower than the CPU path at every N measured (N = 200k: 427 vs 226 ms per 50 steps).
 - **ARM NEON Dense Linear Algebra**: Cholesky, GEMM, mat-vec multiply, SPD solve via [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 - **ARM SVE2**: Cache-blocked GEMM with FCMA and I8MM on Cortex-A720+ (e.g. Orange Pi 5/6). Not present on the Cortex-A76 (Raspberry Pi 5), where the SVE2 sources are simply skipped.
 - **Vulkan Compute**: Device selection prefers a **discrete GPU with a compute queue** over integrated/CPU fallbacks, and logs the choice at init.
 - **Graceful Fallback**: CUDA → SVE2 → NEON → Eigen with jitter + retry for numerical robustness
 - **Single Precision**: Consistent use of `float`, which vectorizes well where SIMD is available
-
-> **Vulkan reality check**: the particle filter contains a Vulkan noise-addition path
-> (gated at `N > 100` in `PKF/include/particle_filter.hpp`), but OptMathKernels routes
-> elementwise operations below **2^20 elements** to the CPU
-> (`OPTMATH_VK_ELTWISE_MIN`, `src/vulkan/vulkan_backend.cpp`). The flattened buffer is
-> `N*NX` floats, so a 3-state model would need ~350,000 particles before anything
-> reaches the GPU. At realistic particle counts this path computes on the CPU. The
-> threshold is deliberate: on the tested integrated GPUs, dispatch overhead exceeds the
-> work for memory-bound elementwise kernels. Treat Vulkan here as available
-> infrastructure, not as an active accelerator for typical particle counts.
 
 > **CUDA Status**: Active for SM 75–90 (CUDA 12.x) and SM 75–120 incl. Blackwell RTX 50-series (CUDA 13.x). See [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md).
 
@@ -514,7 +502,7 @@ Before deploying any Kalman filter, verify:
 
 - **ARM NEON/SVE2**: Enabled by default on ARM targets only (`NLF_ENABLE_NEON` / `NLF_ENABLE_SVE2`); never forced onto a non-ARM target
 - **Vulkan SDK + glslang-tools**: For the Vulkan compute backend (**Vulkan 1.2+** — the backend requests `VK_API_VERSION_1_2`); `glslang-tools` provides `glslangValidator` to compile GLSL shaders to SPIR-V. Auto-skipped when no SDK is found.
-- **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM and particle filter (12.x supports SM 75–90; 13.x adds Blackwell, incl. RTX 50-series SM 120). Ensure `nvcc` is on `PATH` (e.g. `export PATH=/usr/local/cuda/bin:$PATH`) so CMake detects it.
+- **NVIDIA CUDA Toolkit**: For GPU-accelerated GEMM (12.x supports SM 75–90; 13.x adds Blackwell, incl. RTX 50-series SM 120). Ensure `nvcc` is on `PATH` (e.g. `export PATH=/usr/local/cuda/bin:$PATH`) so CMake detects it.
 - **OpenMP**: For parallel particle filter
 
 ### Installation (Ubuntu/Debian)
@@ -642,6 +630,11 @@ ctest --output-on-failure
 ./UKF/test_srukf_initialize
 ./PKF/test_particle_const
 ./RBPKF/test_rbpf_logdet
+./Benchmarks/test_chi2_quantile
+./UKF/test_audit_regressions
+./PKF/test_pkf_audit
+./UKF/test_iterated_smoothers
+./RBPKF/test_rbpf_smoother
 
 # Run benchmarks
 ./Benchmarks/run_benchmarks
@@ -696,8 +689,13 @@ python3 ../scripts/plot_benchmarks.py .
 | `Benchmarks/run_benchmarks` | Full benchmark suite (4 problems, 4 filters) |
 | `UKF/test_ukf_numerical` | Audit-remediation regression: Joseph-form P update + LLT/LDLT recovery ladder |
 | `UKF/test_srukf_initialize` | Audit-remediation regression: `SRUKF::initialize()` throws on NaN/Inf/asymmetric/non-PSD P0 |
-| `PKF/test_particle_const` | Audit-remediation regression: `get_mean` / `get_covariance` are non-const (GPU state may mutate) |
-| `RBPKF/test_rbpf_logdet` | Audit-remediation regression: log-det via LDLT-only path is numerically stable at cond ~1e12 |
+| `PKF/test_particle_const` | `get_mean` / `get_covariance` / `compute_mean_cpu` are const-callable and agree |
+| `RBPKF/test_rbpf_logdet` | RBPF predictive log-likelihood vs a double reference; failed/indefinite S gets zero weight, never a bonus |
+| `Benchmarks/test_chi2_quantile` | Exact chi-squared quantiles for the NEES bounds |
+| `UKF/test_audit_regressions` | 2026-11-15 audit: sigma weights, LDLT square root, NaN measurements, angular means, smoother time convention, rollback |
+| `PKF/test_pkf_audit` | 2026-11-15 audit: exact moments after init / all-dead reset; resampling precision at N = 4e6 |
+| `UKF/test_iterated_smoothers` | IEKS / IPLS = exact RTS on a linear model at every iteration count; IEKS MAP stationarity; UKF = SRUKF; angular wrap invariance |
+| `RBPKF/test_rbpf_smoother` | RBPF smoothed linear mean = exact RTS on a fixed nonlinear path; RMSE gain on random paths |
 
 ---
 
@@ -831,6 +829,7 @@ Modern-Computational-Nonlinear-Filtering/
 ├── Common/                     # Shared interfaces
 │   └── include/
 │       ├── FilterMath.h        # CUDA/SVE2/NEON/Eigen dispatch layer
+│       ├── AffineRTS.h         # exact affine KF + RTS (inner solve of the iterated smoothers)
 │       ├── StateSpaceModel.h   # Base model for UKF/SRUKF
 │       ├── SystemModel.h       # Base model for EKF
 │       └── FileUtils.h         # File I/O utilities
@@ -839,7 +838,7 @@ Modern-Computational-Nonlinear-Filtering/
 │   ├── include/
 │   │   ├── EKF.h
 │   │   ├── EKFFixedLag.h       # fixed-lag RTS
-│   │   ├── EKFSmoother.h       # full-interval RTS / iterated (IEKS)
+│   │   ├── EKFSmoother.h       # full-interval RTS / Gauss-Newton IEKS
 │   │   ├── BallTossModel.h
 │   │   └── NonlinearOscillator.h
 │   ├── src/
@@ -856,8 +855,9 @@ Modern-Computational-Nonlinear-Filtering/
 │   │   ├── SigmaPoints.h       # Sigma point generation
 │   │   ├── UnscentedFixedLagSmoother.h
 │   │   ├── SRUKFFixedLagSmoother.h
-│   │   ├── UKFSmoother.h       # full-interval RTS / iterated
-│   │   ├── SRUKFSmoother.h     # full-interval square-root RTS / iterated
+│   │   ├── UKFSmoother.h       # full-interval URTS / IPLS iterations
+│   │   ├── PosteriorLinearization.h  # IPLS step (UKF + SRUKF)
+│   │   ├── SRUKFSmoother.h     # full-interval square-root RTS / IPLS iterations
 │   │   └── DragBallModel.h     # Example model
 │   ├── tests/
 │   │   ├── test_ukf_smoother.cpp
@@ -869,7 +869,6 @@ Modern-Computational-Nonlinear-Filtering/
 ├── PKF/                        # Particle Filter
 │   ├── include/
 │   │   ├── particle_filter.hpp
-│   │   ├── particle_filter_gpu.hpp  # CUDA GPU particle context
 │   │   ├── particle_fixed_lag.hpp
 │   │   ├── resampling.hpp
 │   │   ├── state_space_model.hpp

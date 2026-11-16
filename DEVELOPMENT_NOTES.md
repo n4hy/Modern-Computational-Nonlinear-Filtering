@@ -10,7 +10,7 @@ Everything below that tier is an **optional accelerator with an Eigen fallback**
 
 | Tier | Requires | Selected by | Fallback |
 |------|----------|-------------|----------|
-| CUDA (cuBLAS GEMM, GPU particle filter) | NVIDIA GPU + toolkit | auto-detect; `OPTMATH_USE_CUDA` | next tier |
+| CUDA (cuBLAS GEMM) | NVIDIA GPU + toolkit | auto-detect; `OPTMATH_USE_CUDA` | next tier |
 | Vulkan compute | Vulkan SDK/loader | `NLF_ENABLE_VULKAN` (default ON, auto-skipped with no SDK) | next tier |
 | SVE2 | ARMv9 CPU that implements it | `NLF_ENABLE_SVE2` (default ON on ARM) | next tier |
 | NEON | ARM (AArch64/ARM32) | `NLF_ENABLE_NEON` (default ON on ARM) | Eigen |
@@ -39,9 +39,9 @@ The optional NEON / SVE2 / Vulkan / CUDA compute backends live in the external
 [OptimizedKernels](https://github.com/n4hy/OptimizedKernelsForRaspberryPi5_NvidiaCUDA)
 (OptMathKernels) project, dispatched to through `Common/include/FilterMath.h`.
 
-> The live GPU dispatch paths are `Common/include/FilterMath.h` (UKF/SRUKF/EKF
-> linear algebra) and `PKF/include/particle_filter_gpu.hpp` (included by
-> `PKF/include/particle_filter.hpp`). The previously-dormant
+> The live GPU dispatch path is `Common/include/FilterMath.h` (UKF/SRUKF/EKF
+> linear algebra). `PKF/include/particle_filter_gpu.hpp` was **removed on
+> 2026-11-16** (see the changelog). The previously-dormant
 > `Common/include/FilterMathGPU.h` (`GPUBufferPool`, `GPUSigmaContext<NX>`) was
 > **removed on 2026-07-23** — it had never been `#include`d by any translation
 > unit across four upstream-audit cycles, so deletion changed no compiled code.
@@ -260,7 +260,8 @@ the next tier (CMake logs `CUDA not found - GPU acceleration disabled`). There i
 nothing to configure either way.
 
 - **On a CUDA host** (e.g. the x86_64 + RTX 5070 Ti reference machine): CUDA
-  (cuBLAS GEMM, GPU particle filter) + Vulkan compute shaders + OpenMP.
+  (cuBLAS GEMM) + OpenMP. (Vulkan is built and tested as OptMath
+  infrastructure; no filter dispatches to it since 2026-11-16.)
 - **On a non-CUDA host** (e.g. the aarch64 Raspberry Pi 5): NEON + Vulkan/V3D +
   OpenMP, or pure Eigen if the SIMD options are off.
 
@@ -270,8 +271,8 @@ into FilterMath's Cholesky dispatch.
 
 ### CUDA Code (commit 397b2d9, active)
 
-- cuBLAS GEMM for matrices >= 32x32
-- GPU particle filter context
+- cuBLAS GEMM for matrices >= 32x32 (pinned to full FP32; only after a successful init)
+- ~~GPU particle filter context~~ — removed 2026-11-16 (no device compute; slower than CPU)
 - Runtime CUDA enable/disable via `filtermath::config::set_cuda_enabled()`
 
 ---
@@ -464,6 +465,204 @@ enabling full GPU acceleration for UKF/SRUKF sigma point operations on CUDA host
 ---
 
 ## Changelog
+
+### Unreleased — 2026-11-16: true iterated smoothers, RBPF smoothing, PKF GPU removed
+
+Resolves open items (a)–(c) of the 2026-11-15 audit.
+
+**(a) Iterated smoothers.** `smooth(n > 0)` no longer re-runs the forward
+filter from the smoothed x₀ (data counted twice). Each iteration now
+relinearises about the previous smoothed estimate and solves the resulting
+affine model exactly from the ORIGINAL prior, every measurement once
+(`Common/include/AffineRTS.h`, double precision):
+- **EKF** — Gauss-Newton IEKS (Bell 1994, SIAM J. Optim. 4): Jacobians at the
+  previous smoothed means. A fixed point is a stationary point of the MAP
+  cost (derived).
+- **UKF / SRUKF** — iterated posterior linearisation smoother (IPLS;
+  García-Fernández, Svensson, Särkkä, IEEE TAC 62(4), 2017): sigma-point
+  statistical linear regression of f and h w.r.t. the smoothed posteriors,
+  shared code in `UKF/include/PosteriorLinearization.h`. The SRUKF draws its
+  sigma points from the smoothed Cholesky factors and re-factors the double
+  covariances. Ω/Λ (SLR residual covariances) are clipped to PSD, since with
+  Wc₀ < 0 the sigma-point joint covariance need not be PSD.
+- `smooth(n)` is idempotent and leaves the forward filtered pass untouched.
+
+Measured (`Iterated_Smoothers`, computed, float filters vs double reference):
+on a linear model with an initial observation and a missed measurement, every
+n ∈ {0, 1, 3, 10} matches exact RTS to ≤ 8.8e-6σ (means) and ≤ 9.4e-6
+(relative covariance). The replaced code was 2.9e-2σ (UKF/SRUKF) / 3.1e-2σ
+(EKF) off after one iteration on the same problem. IEKS MAP gradient relative
+to the largest term: 9.5e-2 (EKS) → 2.6e-5 (30 iterations). IPLS: change per
+iteration 2.6e-2σ (1→2) → 4.7e-6σ (20→21); UKF vs SRUKF 2.2e-4σ. Existing
+smoother tests: iterated RMSE 0.644 / 0.643 / 0.643 m (EKF/UKF/SRUKF) vs
+single-pass 0.717 / 0.675 / 0.680 m.
+
+**UKF URTS angular fix (found by the new test).** The `UKFSmoother` backward
+pass used linear means and unwrapped deviations for angular states. Rotating a
+bearing problem across ±π moved its smoothed bearing by up to 1.4σ, and
+smoothed angles left [−π, π]. It now uses a circular predicted mean and
+wrapped deviations, as `UKF::predict` and `SRUKFSmoother` do: rotation
+invariance 1.25e-5σ.
+
+**(b) RBPF fixed-lag smoothing.** `get_smoothed_mean` now runs an RTS pass back
+along each particle's ancestry (filtered moments and the transition into each
+epoch are stored with the particles), giving the exact conditional smoothed
+linear mean given the nonlinear path (derived), then weights by the current
+weights. `RBPF_Smoother`: on a fixed nonlinear path it equals an independent
+double KF + RTS to 1.35e-5σ (the old filtered-at-k−lag answer: 2.25σ off). On
+random paths with resampling (20 runs × 21 epochs), lag-5 RMSE 0.446 vs
+0.764 for the filtered estimate at the same epoch. The per-particle passes run
+under OpenMP from N = 2048 and are summed serially in particle order.
+
+**(c) PKF GPU removed.** `particle_filter_gpu.hpp` (CUDA `GPUParticleContext`)
+and the aarch64 Vulkan noise-add are deleted. Neither ran the model on the
+device — `propagate` / `observation_loglik` are virtual host calls — so both
+were host loops plus copies, and the CUDA path was slower at every N
+measured (N = 200k: 427 vs 226 ms per 50 steps). API changes: the
+`ParticleFilter` constructor loses its 4th `enable_gpu` argument;
+`is_gpu_active`, `sync_to_gpu`, `sync_from_gpu` are gone; `get_mean`,
+`get_covariance` (and `ParticleFixedLagSmoother::get_filtered_*`) are const
+again. `PKF_ParticleConst` now asserts const-callability.
+
+**CTests:** + `Iterated_Smoothers`, `RBPF_Smoother` → 21 filter tests;
+39/39 on this host (21 + 18 OptMath).
+
+### Unreleased — 2026-11-15 full-repo audit: correctness fixes across all modules
+
+Five module audits (UKF, SRUKF, EKF/FilterMath, PKF, RBPF). Every fix below was
+checked against a failing case first: either the auditor's reproducer, re-run
+before and after the fix, or a derivation. Each one is pinned by a CTest.
+Results are *computed on the stated inputs*, not proofs of general bounds.
+
+**Tests that could not fail.** `test_ukf_numerical`, `test_srukf_initialize`,
+`test_particle_const` and `test_rbpf_logdet` used `assert()`. Release builds
+define `-DNDEBUG`, so their 21 checks were compiled out. They now use the new
+`NLF_REQUIRE` macro in `TestCheck.h`. All four pass with the checks live.
+`test_rbpf_logdet` also tested an in-file copy of the algorithm. It now calls
+the library's `predictive_log_likelihood`.
+
+**UKF / sigma points**
+- **`Wc0` under the spread floor** (`SigmaPoints.h`). The default α = 1e-3
+  trips the n+λ < 0.5 floor. That floor rewrote κ but kept α in `Wc0`, giving
+  `Wc0` ≈ 3 instead of β = 2. *Derived:* for x ~ N(0,1) the UT returns
+  var(x²) = α²κ + β, so the old floor gave 3 against an exact 2. It now raises
+  α (α² = n/(n+κ)) instead of κ, and α = 0 no longer produces NaN. Plain-UKF
+  benchmark RMSE moved ≤0.067% (Reentry 366.868 → 367.115); baselines updated.
+  SRUKF uses α = 1 and is unaffected.
+- **LDLT fallbacks ignored Eigen's pivoting.** Both `SigmaPoints.h` and the
+  UKF update factored P A Pᵀ, which swapped the variances of
+  [[1e4, 2e4], [2e4, 4e4]]. New helper: `ldlt_sqrt_factor`.
+- **Last-resort clamp aliasing** (`UKF.h`). `P_ = P_.diagonal()…asDiagonal()`
+  zeroes `P_` before reading it, so the result was 1e-10·I. The diagonal is
+  now copied out first.
+- **Angular models.** The UKF ignored `isAngularState` and
+  `isAngularObservation`; it now uses circular means and wrapped deviations,
+  as the SRUKF does. The SRUKF itself used a linear ŷ and an unwrapped P_yy:
+  a bearing straddling ±π gave P+ = 0.240 against 0.0345 for the same problem
+  rotated by π. Both filters are now invariant to the branch cut.
+- **Non-finite measurements.** `UKF`, `SRUKF` and `EKF` `update()` now treat
+  a non-finite y as a missed measurement. Previously the state became NaN.
+- **SRUKF κ.** The κ = −1 "unset" sentinel overwrote a caller's κ = −1
+  together with their α and β. The sentinel is now NaN, and only κ is
+  auto-chosen.
+
+**Smoothers (UKF, SRUKF, EKF)**
+- **API change: full-interval time convention.** `UKFSmoother` and
+  `SRUKFSmoother` passed the measurement time to f. They now take
+  `step(t_prev, t_k, y, u)` and gain `observe_initial(t0, y0)`, matching the
+  fixed-lag smoothers (commit 3dbbf4c). Test case: f = x + t gave filtered
+  values off by up to 2.4; it is now exact. `StateSpaceModel.h` documented the
+  opposite convention; the comment is corrected.
+- **Non-finite guards rolled nothing back.** They skipped the history entry but
+  left the filter NaN, so every later step was silently lost. Smoothers now
+  restore the pre-step estimate and throw `std::runtime_error`. Accessors are
+  bounds-checked (`std::out_of_range`).
+- **Fixed-lag re-initialisation.** `initialize()` did not clear the smoothed
+  buffer, so the previous run's estimates were returned (and a fresh object
+  read an empty vector).
+
+**FilterMath (CUDA dispatch)**
+- **Failed CUDA init.** `optmath::cuda::is_available()` only counts devices.
+  When `init()` failed, `cuda_mat_mul` ignored the failure and returned an
+  unwritten buffer: `gemm(I, 2·ones)` gave 0. A new `detail::cuda_ready()`
+  requires `init()` to succeed and is a thread-safe one-time check.
+- **TF32.** OptMath enables `CUBLAS_TF32_TENSOR_OP_MATH` on SM ≥ 8.0. That
+  made gemm relative error ~2.9e-4 instead of 1.4e-7, and F·P·Fᵀ of an SPD P
+  came back indefinite (minimum eigenvalue −6.7e-5 against +1.0e-6). The
+  precision is now pinned to FP32.
+- **`kalman_gain` with non-finite S** fell into an SVD path with a
+  NaN-derived rank: an Eigen assertion in Debug, out-of-bounds access in
+  Release. It now returns a zero gain.
+
+**PKF**
+- **GPU-context moments read a stale buffer.** `get_mean()` returned 0
+  before the first step (exact 0.4995) and the old posterior after an all-dead
+  reset. Weights are now derived from the current log-weights.
+- **Resampling precision.**
+  - GPU resamplers: their float CDF and offsets are now double. At N = 4e6 the
+    last particle had been copied 129,939 times.
+  - Resampling now always uses the double host path. GPU log-weights are float,
+    and float(log w) shifts strata enough that 711k of 4M particles got no
+    offspring.
+  - Float `u` in the float-weight overloads of PKF and RBPF is now double:
+    7.7% of particles were lost at N = 4e6, now 0.5%.
+- **Normalisation precision.** Normalisation no longer round-trips double
+  log-weights through float.
+- **Per-thread RNG overflow (PKF and RBPF).** The RNG pools were sized once
+  from `omp_get_max_threads()`. A later `omp_set_num_threads(8)` indexed past
+  the end, writing out of bounds. The pools now grow before each parallel
+  region.
+
+**RBPF**
+- **The "bad S" sentinel gave the bad particle all the weight.** It set
+  `log_det = -1e10`, so log_lik ≈ +5e9. Test case: 10% of particles with a
+  rounding-indefinite S took weight 23 and pulled the mean from 10 to 204.
+  S is now symmetrised and factored by LLT with a jitter ladder; if that still
+  fails, the particle gets −inf.
+- **NaN log-weights survived normalisation.** ESS became NaN, the filter never
+  resampled again, and the means were NaN. Non-finite log-weights now become
+  −inf, and zero-weight particles are skipped in the means (0·NaN = NaN).
+- **`can_smooth(lag)` accepted lag > fixed_lag** and returned an overwritten
+  epoch (lag 5 gave t = 9). It now rejects any lag outside [0, fixed_lag].
+- **`B·u` was dropped whenever Nnl ≠ Nlin.** B is now sized Nlin × Nnl.
+
+**PKF optimisation (measured, x86_64 Core Ultra 9 285K, 24 threads, default
+libgomp passive wait; ms per 50 steps, before → after):**
+- **`step` fused.** Propagate, noise and weight now run in one parallel region
+  instead of three, and the loop is serial below 2048 particles. Measured:
+  N = 1000: 12–15 → 2.1; N = 16k: 13–17 → 7–9; N = 64k: 52–59 → 26–28;
+  N = 256k: 143–153 → 107–110. The cause, verified by switching the wait
+  policy: each region re-wakes sleeping workers at about 0.7 ms per step,
+  whatever N is; with `OMP_WAIT_POLICY=active` the overhead disappears.
+  N = 4k is within run-to-run noise (5.8–6.7 → 6.6–8.6).
+- **Mean and covariance sums in parallel** from 16384 particles, with per-thread
+  partials added in a fixed order. Covariance: N = 64k 41 → 14, N = 256k
+  161 → 53.
+- **End to end** (`step` + resample + moments, CPU path): N = 20k 41.7 → 21.2
+  with a bit-identical checksum. N = 200k 331 → 226, where the checksum moves
+  9e-6 relative from summation order. Below 2048 particles the RNG stream
+  differs, because the serial path uses thread 0's generator; it is still
+  deterministic.
+- **The GPU-context path** is slower than the CPU path at every N measured
+  (N = 2k 10.6 vs 6.2, 20k 44.6 vs 21.2, 200k 427 vs 226). See open item (c).
+
+**Warnings:** the build is now free of warnings (the `-Wshadow` `alpha` in
+`SRUKF.h`, unused parameters in `StateSpaceModel.h`, and `-Wcomment` from stale
+build snippets that pointed at a removed `_deps` path).
+
+**New CTests:** `UKF_AuditRegressions` and `PKF_AuditRegressions`, plus
+lag-bound checks in `RBPF_Basic`. The suite is now 37/37.
+
+**Open at the time (all three resolved 2026-11-16, see the entry above):**
+- **(a) The iterated smoothers** (`smooth(n > 0)` in EKF, UKF and SRUKF)
+  restart the forward pass from the smoothed x₀ with the original P₀. That
+  counts the data twice. On a linear-Gaussian model the answer moves away from
+  RTS (up to 0.45σ in the EKF test), where a true IEKS would leave it
+  unchanged.
+- **(b) RBPF `get_smoothed_mean` returns the filtered linear state** of the
+  ancestor. There is no backward Kalman pass: 0 where RTS gives 0.952.
+- **(c) The PKF GPU context does no GPU computation** for normalise, resample
+  or moments. Each is a host loop plus PCIe copies.
 
 ### Unreleased — benchmark timing harness: warmup, repetitions, clean timed region
 

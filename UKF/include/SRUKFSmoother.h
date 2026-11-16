@@ -38,11 +38,21 @@
 //      to full-covariance re-Cholesky with the same jitter ladder used
 //      elsewhere in the SRUKF pipeline.
 //
-// Iteration (smooth(n>0)) re-runs the forward filter from the smoothed initial
-// condition (keeping the ORIGINAL prior covariance so the data still dominate)
-// and re-smooths -- the iterated URTS, meant to run "as time is available".
+// smooth(n>0) then runs n iterations of the iterated posterior linearisation
+// smoother (IPLS, PosteriorLinearization.h): sigma points are drawn directly
+// from the current smoothed Cholesky factors, f and h are replaced by their
+// statistical linear regressions, and the affine model is solved exactly from
+// the ORIGINAL prior. That inner solve is in double-precision covariance form
+// (affine_rts) and its covariances are re-factored by Cholesky (double) before
+// returning to float factors, so the float SR guarantees are not weakened.
+// On a linear model every iteration returns the exact RTS answer. The filtered
+// accessors always report the original forward SRUKF pass. (Before 2026-11-16
+// iteration re-ran the forward filter from the smoothed x_0 with covariance
+// P0, counting the data twice.)
 // =============================================================================
 
+#include <optional>
+#include <stdexcept>
 #include <vector>
 #include <cmath>
 #include <numbers>
@@ -51,6 +61,7 @@
 #include "SRUKF.h"
 #include "SigmaPoints.h"
 #include "FilterMath.h"
+#include "PosteriorLinearization.h"
 
 namespace UKFCore {
 
@@ -70,42 +81,77 @@ public:
         x0_ = x0;
         P0_ = P0;
         meas_.clear();
+        init_obs_.reset();
+        smoothed_states_.clear();
+        smoothed_A_.clear();
         reset_forward(x0_, P0_);
     }
 
-    /** Consume one measurement (stored for iteration replay); no smoothing yet. */
-    void step(float t_k, const Observation& y_k, const Eigen::Ref<const State>& u_k) {
-        meas_.push_back(Meas{t_k, y_k, State(u_k)});
-        forward_step(t_k, y_k, u_k);
+    /**
+     * Fuse a measurement taken at the initialisation time t0, without
+     * propagating (same contract as the fixed-lag smoothers). Refines
+     * history_[0] in place; call at most once, before the first step().
+     */
+    void observe_initial(float t0, const Observation& y_0) {
+        init_obs_ = InitObs{t0, y_0};
+        apply_initial_observation();
     }
 
-    /** Backward SR-URTS over the full interval; n_iterations>0 -> iterated smoother. */
+    /**
+     * Consume one measurement (stored for iteration replay); no smoothing yet.
+     * Propagates FROM t_prev (where the estimate is) TO t_k, then fuses y_k,
+     * which observes the state at t_k -- the convention of the fixed-lag
+     * smoothers and the benchmark (commit 3dbbf4c). A non-finite y_k is a
+     * missed measurement (SRUKF::update skips it).
+     * Throws std::runtime_error if the model makes the state non-finite; the
+     * filter is restored to its pre-step state first.
+     */
+    void step(float t_prev, float t_k, const Observation& y_k,
+              const Eigen::Ref<const State>& u_k) {
+        meas_.push_back(Meas{t_prev, t_k, y_k, State(u_k)});
+        forward_step(meas_.back());
+    }
+
+    /**
+     * Backward SR-URTS over the full interval, then n_iterations IPLS
+     * iterations. Idempotent: always starts from the stored forward pass.
+     */
     void smooth(int n_iterations = 0) {
         backward_pass();
         for (int it = 0; it < n_iterations; ++it) {
-            if (smoothed_states_.empty()) break;
-            const State xs0 = smoothed_states_.front();
-            reset_forward(xs0, P0_);                       // keep the ORIGINAL prior
-            for (const auto& m : meas_) forward_step(m.t, m.y, m.u);
-            backward_pass();
+            if (smoothed_states_.size() != meas_.size() + 1) break;
+            const auto r = ipls::iterate<NX, NY>(
+                model_, x0_, P0_, init_obs_, meas_, smoothed_states_,
+                [&](size_t k, SigmaPts& sig) {
+                    generate_sigma_points_from_sqrt<NX>(smoothed_states_[k], smoothed_A_[k],
+                                                        srukf_.alpha, srukf_.beta, srukf_.kappa, sig);
+                });
+            for (size_t k = 0; k < r.m.size(); ++k) {
+                smoothed_states_[k] = r.m[k].template cast<float>();
+                smoothed_A_[k] = sqrt_spd_double(r.P[k]);
+            }
         }
     }
 
     int size() const { return static_cast<int>(history_.size()); }
-    State  filtered_state(int k)      const { return history_[k].x; }
+    // Bounds-checked: an index past size() throws std::out_of_range.
+    State  filtered_state(int k)      const { return history_.at(static_cast<size_t>(k)).x; }
     StateMat filtered_covariance(int k) const {
-        return history_[k].A * history_[k].A.transpose();
+        const StateMat& A = history_.at(static_cast<size_t>(k)).A;
+        return A * A.transpose();
     }
-    State  smoothed_state(int k)      const { return smoothed_states_[k]; }
+    State  smoothed_state(int k)      const { return smoothed_states_.at(static_cast<size_t>(k)); }
     StateMat smoothed_covariance(int k) const {
-        return smoothed_A_[k] * smoothed_A_[k].transpose();
+        const StateMat& A = smoothed_A_.at(static_cast<size_t>(k));
+        return A * A.transpose();
     }
-    const StateMat& smoothed_sqrt_covariance(int k) const { return smoothed_A_[k]; }
-    State  smoothed_initial() const { return smoothed_states_.front(); }
+    const StateMat& smoothed_sqrt_covariance(int k) const { return smoothed_A_.at(static_cast<size_t>(k)); }
+    State  smoothed_initial() const { return smoothed_states_.at(0); }
     State  final_filtered_state() const { return history_.back().x; }
 
 private:
-    struct Meas { float t; Observation y; State u; };
+    struct Meas { float t_prev; float t; Observation y; State u; };
+    struct InitObs { float t; Observation y; };
     struct FilteredSR { State x; StateMat A; };  // A * A^T = P_{k|k}
 
     Model& model_;
@@ -114,10 +160,22 @@ private:
     StateMat P0_;
     std::vector<FilteredSR> history_;         // history_[0]=prior; history_[k>=1]=(m_k,A_k)
     std::vector<Meas> meas_;                  // meas_[j] drives history_[j] -> history_[j+1]
+    std::optional<InitObs> init_obs_;         // replayed on every iteration
     std::vector<State> smoothed_states_;
     std::vector<StateMat> smoothed_A_;        // A_s A_s^T = P_s
 
     // ---- setup / forward pass ----
+
+    // Lower Cholesky factor of a double SPD matrix, as float. Falls back to the
+    // pivot-aware LDLT factor (zero pivots floored) if P is only semidefinite.
+    static StateMat sqrt_spd_double(const Eigen::MatrixXd& P) {
+        const Eigen::LLT<Eigen::MatrixXd> llt(P);
+        if (llt.info() == Eigen::Success) return Eigen::MatrixXd(llt.matrixL()).cast<float>();
+        const Eigen::LDLT<Eigen::MatrixXd> ldlt(P);
+        const Eigen::VectorXd d = ldlt.vectorD().cwiseMax(1e-20).cwiseSqrt();
+        const Eigen::MatrixXd L = ldlt.matrixL();
+        return Eigen::MatrixXd(ldlt.transpositionsP().transpose() * (L * d.asDiagonal())).cast<float>();
+    }
 
     static StateMat sqrt_spd(const StateMat& P) {
         Eigen::MatrixXf L = filtermath::cholesky(P);
@@ -136,14 +194,30 @@ private:
         history_.push_back(FilteredSR{x, sqrt_spd(P)});
     }
 
-    void forward_step(float t_k, const Observation& y_k,
-                      const Eigen::Ref<const State>& u_k) {
+    void apply_initial_observation() {
+        if (!init_obs_ || history_.empty()) return;
+        srukf_.update(init_obs_->t, init_obs_->y);
+        require_finite(history_[0]);
+        history_[0] = FilteredSR{srukf_.getState(), srukf_.getSqrtCovariance()};
+    }
+
+    void forward_step(const Meas& m) {
         if (history_.empty()) return;
-        srukf_.predict(t_k, u_k);      // returned cross-cov is not used by SR-URTS
-        srukf_.update(t_k, y_k);
-        if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite())
-            return;
+        const FilteredSR before{srukf_.getState(), srukf_.getSqrtCovariance()};
+        srukf_.predict(m.t_prev, m.u);  // returned cross-cov is not used by SR-URTS
+        srukf_.update(m.t, m.y);
+        require_finite(before);
         history_.push_back(FilteredSR{srukf_.getState(), srukf_.getSqrtCovariance()});
+    }
+
+    // A non-finite state cannot be skipped: it would desynchronise history_
+    // from meas_ (the old guard returned early but left the SRUKF itself NaN,
+    // so every later step was lost too). Restore and report instead.
+    void require_finite(const FilteredSR& before) {
+        if (srukf_.getState().allFinite() && srukf_.getSqrtCovariance().allFinite()) return;
+        srukf_.restore(before.x, before.A);
+        throw std::runtime_error("SRUKFSmoother: model produced a non-finite state; "
+                                 "filter restored to its pre-step estimate");
     }
 
     // ---- backward pass helpers ----
@@ -369,7 +443,7 @@ private:
         for (int j = N - 2; j >= 0; --j) {
             const State&    m_j   = history_[j].x;
             const StateMat& A_j   = history_[j].A;
-            const float     t_jp1 = meas_[j].t;
+            const float     t_j   = meas_[j].t_prev;  // propagate FROM t_j, as the forward step did
             const State&    u_jp1 = meas_[j].u;
 
             // 1) Sigma points from (m_j, A_j) directly.
@@ -380,13 +454,13 @@ private:
             // 2) Propagate.
             Eigen::Matrix<float, NX, SigmaPts::NSIG> Xp;
             for (int i = 0; i < SigmaPts::NSIG; ++i)
-                Xp.col(i) = model_.f(sig.X.col(i), t_jp1, u_jp1);
+                Xp.col(i) = model_.f(sig.X.col(i), t_j, u_jp1);
 
             // 3) Predicted mean (circular for angular states).
             State m_tilde = weighted_mean_angular(Xp, sig.Wm);
 
             // 4) Predicted factor A_tilde in Cholesky form.
-            const StateMat Q_k = model_.Q(t_jp1);
+            const StateMat Q_k = model_.Q(t_j);
             StateMat A_tilde;
             if (!build_predicted_factor(Xp, m_tilde, sig, Q_k, A_tilde)) {
                 // Cannot form a valid factor; keep the smoothed = filtered here.

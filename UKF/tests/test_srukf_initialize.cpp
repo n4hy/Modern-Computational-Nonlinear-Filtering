@@ -4,7 +4,7 @@
 // several steps into the trajectory, making the failure diagnosis very hard.
 
 #include <iostream>
-#include <cassert>
+#include "TestCheck.h"  // NLF_REQUIRE: survives NDEBUG, unlike assert()
 #include <stdexcept>
 #include <Eigen/Dense>
 #include "SRUKF.h"
@@ -43,7 +43,7 @@ void test_nan_p0_throws() {
     Eigen::Vector2f x0(0.0f, 0.0f);
     Eigen::Matrix2f P0 = Eigen::Matrix2f::Identity();
     P0(0, 0) = std::nanf("");
-    assert(throws_runtime_error([&] { filter.initialize(x0, P0); }));
+    NLF_REQUIRE(throws_runtime_error([&] { filter.initialize(x0, P0); }), "throws_runtime_error([&] { filter.initialize(x0, P0); })");
     std::cout << "  OK" << std::endl;
 }
 
@@ -54,7 +54,7 @@ void test_inf_p0_throws() {
     Eigen::Vector2f x0(0.0f, 0.0f);
     Eigen::Matrix2f P0 = Eigen::Matrix2f::Identity();
     P0(1, 1) = std::numeric_limits<float>::infinity();
-    assert(throws_runtime_error([&] { filter.initialize(x0, P0); }));
+    NLF_REQUIRE(throws_runtime_error([&] { filter.initialize(x0, P0); }), "throws_runtime_error([&] { filter.initialize(x0, P0); })");
     std::cout << "  OK" << std::endl;
 }
 
@@ -66,7 +66,7 @@ void test_asymmetric_p0_throws() {
     Eigen::Matrix2f P0;
     P0 << 1.0f, 0.5f,
           0.0f, 1.0f;   // asymmetric by 0.5 relative
-    assert(throws_runtime_error([&] { filter.initialize(x0, P0); }));
+    NLF_REQUIRE(throws_runtime_error([&] { filter.initialize(x0, P0); }), "throws_runtime_error([&] { filter.initialize(x0, P0); })");
     std::cout << "  OK" << std::endl;
 }
 
@@ -79,7 +79,7 @@ void test_non_psd_p0_throws() {
     Eigen::Matrix2f P0;
     P0 << 1.0f, 2.0f,
           2.0f, 1.0f;
-    assert(throws_runtime_error([&] { filter.initialize(x0, P0); }));
+    NLF_REQUIRE(throws_runtime_error([&] { filter.initialize(x0, P0); }), "throws_runtime_error([&] { filter.initialize(x0, P0); })");
     std::cout << "  OK" << std::endl;
 }
 
@@ -97,7 +97,7 @@ void test_valid_identity_p0_does_not_throw() {
     Eigen::Vector2f y(0.0f, 0.0f);
     filter.update(0.0f, y);
     Eigen::Matrix2f P = filter.getCovariance();
-    assert(P.allFinite());
+    NLF_REQUIRE(P.allFinite(), "P.allFinite()");
     std::cout << "  OK" << std::endl;
 }
 

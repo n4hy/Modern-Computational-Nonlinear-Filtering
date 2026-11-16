@@ -96,6 +96,10 @@ int main() {
         for (int k = 0; k < 5; ++k) f2.step(static_cast<float>(k), y, u);
 
         CHECK(f2.can_smooth(cfg2.fixed_lag));  // enough history accumulated
+        // The circular buffers hold fixed_lag + 1 epochs; a longer lag used to
+        // read overwritten slots and return another epoch with can_smooth() true.
+        CHECK(!f2.can_smooth(cfg2.fixed_lag + 1));
+        CHECK(!f2.can_smooth(-1));
         TestTypes::NonlinearState s_nl;
         TestTypes::LinearState s_lin;
         f2.get_smoothed_mean(cfg2.fixed_lag, s_nl, s_lin);

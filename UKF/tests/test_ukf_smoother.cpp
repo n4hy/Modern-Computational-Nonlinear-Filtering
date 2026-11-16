@@ -15,12 +15,15 @@
 #define CHECK(cond, msg) \
     do { if (!(cond)) { std::fprintf(stderr, "FAIL: %s\n", (msg)); return 1; } } while (0)
 
-// State [pos, vel]; the time argument is the per-step dt.
+// State [pos, vel]; f propagates by a fixed step kDt = 1. The time argument is
+// the absolute time propagated FROM (the repo convention, commit 3dbbf4c); this
+// model is time-invariant, so it is unused.
 class CVNonlinRange : public UKFModel::StateSpaceModel<2, 1> {
 public:
     static constexpr float C = 0.004f;
-    State f(const State& x, float dt, const Eigen::Ref<const State>&) const override {
-        State o; o(0) = x(0) + x(1) * dt; o(1) = x(1); return o;
+    static constexpr float kDt = 1.0f;
+    State f(const State& x, float, const Eigen::Ref<const State>&) const override {
+        State o; o(0) = x(0) + x(1) * kDt; o(1) = x(1); return o;
     }
     Observation h(const State& x, float) const override {
         Observation y; y(0) = x(0) * (1.0f + C * x(0)); return y;
@@ -64,7 +67,7 @@ int main() {
     M model;
     UKFCore::UKFSmoother<2, 1> sm(model);
     sm.initialize(x0, P0);
-    for (int k = 1; k <= N; ++k) sm.step(dt, ys[k], u);
+    for (int k = 1; k <= N; ++k) sm.step((k - 1) * dt, k * dt, ys[k], u);
     CHECK(sm.size() == N + 1, "history size");
     sm.smooth(0);
 
@@ -90,7 +93,7 @@ int main() {
 
     UKFCore::UKFSmoother<2, 1> smit(model);
     smit.initialize(x0, P0);
-    for (int k = 1; k <= N; ++k) smit.step(dt, ys[k], u);
+    for (int k = 1; k <= N; ++k) smit.step((k - 1) * dt, k * dt, ys[k], u);
     smit.smooth(3);
     double iter = rmse([&](int k){ return smit.smoothed_state(k)(0); });
     std::printf("iterated (x3) smoothed RMSE = %.3f m\n", iter);

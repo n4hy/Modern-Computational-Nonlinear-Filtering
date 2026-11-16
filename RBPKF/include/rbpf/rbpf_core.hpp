@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <iostream>
 #include <numbers>
+#include <limits>
 #include "FilterMath.h"
 
 #ifdef _OPENMP
@@ -30,6 +31,13 @@ struct RbpfParticle {
     NonlinearState    x_nl;
     LinearKalmanFilter<Types> kf;
     float             log_weight;
+
+    // The linear transition INTO this epoch, kept for the fixed-lag backward
+    // (RTS) pass: x_lin_k = A_in x_lin_{k-1} + bias + w, and the KF predicted
+    // moments it produced. Written by step(); unused at the initial epoch.
+    typename Types::Matrix_A A_in = Types::Matrix_A::Identity();
+    LinearState       x_pred = LinearState::Zero();
+    LinearCov         P_pred = LinearCov::Identity();
 };
 
 template<typename Types,
@@ -106,6 +114,7 @@ public:
               const Observation& y_k,
               const NonlinearState& u_k) {
 
+        ensure_thread_rngs();
 #ifdef _OPENMP
         #pragma omp parallel for schedule(static)
 #endif
@@ -118,10 +127,13 @@ public:
             // calls below and inside kf.predict()/update() bind to FilterMath's
             // fixed-size fast path (stack, no dispatch, no heap). They still bind
             // to the model's Eigen::Ref<MatrixXf> out-params (a fixed-size,
-            // contiguous matrix is a valid dynamic Ref target). B is left dynamic
-            // because its column count follows the control dimension.
+            // contiguous matrix is a valid dynamic Ref target). B is dynamic and
+            // sized Nlin x Nnl: the control u_k is a NonlinearState (Nnl rows) and
+            // the model's Ref<MatrixXf> cannot resize it. It was Nlin x Nlin, so
+            // B*u_k was silently skipped whenever Nnl != Nlin. Zeroed so a model
+            // that leaves B untouched adds no control term.
             typename Types::Matrix_A A;
-            Eigen::MatrixXf B(Types::Nlin, Types::Nlin);
+            Eigen::MatrixXf B = Eigen::MatrixXf::Zero(Types::Nlin, Types::Nnl);
             LinearState bias;
             LinearCov Q;
 
@@ -150,6 +162,9 @@ public:
             }
 
             p.kf.predict(A, total_bias, Q);
+            p.A_in = A;
+            p.x_pred = p.kf.x;
+            p.P_pred = p.kf.P;
 
             conditional_model_.get_observation(p.x_nl, t_k, offset, H, R);
 
@@ -163,32 +178,7 @@ public:
             ObsCov S = filtermath::gemm(HP, H.transpose());
             S += R;
 
-            // Compute log determinant via LDLT diagonal-product only.
-            // Direct det(S) overflows / underflows silently for ill-conditioned S; even
-            // when it does not, LDLT is roughly as cheap for the small ObsCov dimensions
-            // used here. Keep one code path so numerical behaviour is uniform.
-            float log_det;
-            {
-                Eigen::LDLT<ObsCov> ldlt(S);
-                if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
-                    log_det = -1e10f;
-                } else {
-                    auto D = ldlt.vectorD();
-                    log_det = 0.0f;
-                    for (int k = 0; k < D.size(); ++k)
-                        log_det += std::log(std::max(D(k), 1e-30f));
-                }
-            }
-
-            // Mahalanobis distance via SPD solve (fixed-size: stack LLT, no heap)
-            Observation S_solved = filtermath::solve_spd(S, innovation);
-            float mahalanobis;
-            if (S_solved.size() > 0) {
-                mahalanobis = innovation.transpose() * S_solved;
-            } else {
-                mahalanobis = innovation.transpose() * S.ldlt().solve(innovation);
-            }
-            float log_lik = -0.5f * (mahalanobis + log_det + static_cast<float>(Types::Ny) * std::log(2.0f * std::numbers::pi_v<float>));
+            const float log_lik = predictive_log_likelihood(S, innovation);
 
             p.log_weight += log_lik;
 
@@ -233,21 +223,44 @@ public:
 
         for (const auto& p : particles_) {
             float w = std::exp(p.log_weight);
+            // A zero-weight particle may hold a non-finite state (that is why
+            // its weight is zero); 0 * NaN = NaN would still poison the mean.
+            if (!(w > 0.0f)) continue;
             x_nl_mean += w * p.x_nl;
             x_lin_mean += w * p.kf.x;
         }
     }
 
-    /** Return true if enough history has been accumulated for the given lag. */
+    /**
+     * Return true if enough history has been accumulated for the given lag.
+     * lag must lie in [0, fixed_lag]: the circular buffers hold fixed_lag + 1
+     * epochs, so a longer lag would read slots already overwritten (it used to
+     * return another epoch's estimate with can_smooth() == true).
+     */
     bool can_smooth(int lag) const {
         if (config_.fixed_lag <= 0) return false;
+        if (lag < 0 || lag > config_.fixed_lag) return false;
         return parent_indices_cnt_ > lag;
     }
 
     /**
-     * Compute the smoothed mean at the given lag by backtracking ancestry
-     * indices through the circular buffer to find each particle's ancestor,
-     * then weighting by current importance weights.
+     * Fixed-lag smoothed means at epoch k - lag given y_{1:k} (k = current).
+     *
+     * Nonlinear part: each particle's ancestor at k - lag (ancestral lineage),
+     * weighted by the current weights.
+     *
+     * Linear part: conditional on a particle's nonlinear path the linear
+     * sub-state is exactly linear-Gaussian, so a Rauch-Tung-Striebel pass back
+     * along that path, using the filtered moments and transitions stored with
+     * the ancestors,
+     *     G_t   = P_{t|t} A_{t+1}^T P_{t+1|t}^{-1}
+     *     x^s_t = x_{t|t} + G_t (x^s_{t+1} - x_{t+1|t}),   x^s_k = x_{k|k},
+     * gives E[x_lin_{k-lag} | x_nl path, y_{1:k}] exactly (derived); the
+     * weighted sum over particles estimates E[x_lin_{k-lag} | y_{1:k}].
+     * (Until 2026-11-16 this returned the ancestor's FILTERED linear mean
+     * E[x_lin_{k-lag} | path, y_{1:k-lag}], ignoring the last `lag`
+     * measurements: 0 where the exact smoothed value was 0.952.)
+     * Path degeneracy affects both parts as in any ancestral-lineage smoother.
      */
     void get_smoothed_mean(int lag,
                            NonlinearState& x_nl_mean,
@@ -256,31 +269,26 @@ public:
             get_filtered_mean(x_nl_mean, x_lin_mean);
             return;
         }
-
+        const int N = config_.num_particles;
+        std::vector<NonlinearState, Eigen::aligned_allocator<NonlinearState>> nl(static_cast<size_t>(N));
+        std::vector<LinearState, Eigen::aligned_allocator<LinearState>> lin(static_cast<size_t>(N));
+        std::vector<float> w(static_cast<size_t>(N));
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) if (N >= 2048)
+#endif
+        for (int i = 0; i < N; ++i) {
+            w[static_cast<size_t>(i)] = std::exp(particles_[i].log_weight);
+            if (!(w[static_cast<size_t>(i)] > 0.0f)) continue;   // see get_filtered_mean
+            smooth_path(i, lag, nl[static_cast<size_t>(i)], lin[static_cast<size_t>(i)]);
+        }
+        // Serial sum in particle order: deterministic for any thread count.
         x_nl_mean.setZero();
         x_lin_mean.setZero();
-
-        for (int i = 0; i < config_.num_particles; ++i) {
-            float w = std::exp(particles_[i].log_weight);
-            int ancestor_idx = i;
-
-            for (int step = 0; step < lag; ++step) {
-                long long logical_idx = parent_indices_cnt_ - 1 - step;
-                if (logical_idx < 0) break;
-
-                int buffer_idx = logical_idx % ancestry_buffer_size_;
-                const auto& parents_at_step = parent_indices_[buffer_idx];
-                ancestor_idx = parents_at_step[ancestor_idx];
-            }
-
-            long long state_logical_idx = parent_indices_cnt_ - 1 - lag;
-             if (state_logical_idx < 0) continue;
-
-            int state_buffer_idx = state_logical_idx % ancestry_buffer_size_;
-            const auto& historical_p = particle_history_[state_buffer_idx][ancestor_idx];
-
-            x_nl_mean += w * historical_p.x_nl;
-            x_lin_mean += w * historical_p.kf.x;
+        for (int i = 0; i < N; ++i) {
+            const float wi = w[static_cast<size_t>(i)];
+            if (!(wi > 0.0f)) continue;
+            x_nl_mean += wi * nl[static_cast<size_t>(i)];
+            x_lin_mean += wi * lin[static_cast<size_t>(i)];
         }
     }
 
@@ -304,13 +312,60 @@ private:
     std::vector<std::vector<RbpfParticle<Types>>> particle_history_;
     long long parent_indices_cnt_ = 0;
 
+public:
+    /**
+     * log N(innovation; 0, S) for the particle's predictive measurement density.
+     * Public and static so tests exercise the exact code the filter runs.
+     *
+     * S = H P H^T + R is SPD in exact arithmetic, but float rounding can make
+     * it fail a factorisation (e.g. a near-rank-one H P H^T with tiny R). The
+     * previous code then set log_det = -1e10, i.e. log_lik ~ +5e9: the
+     * numerically failed particle received ALL the weight (and at that
+     * magnitude float spacing is 512, so normalisation broke too). Now S is
+     * symmetrised and factored by LLT with a trace-relative jitter ladder; a
+     * particle whose S still cannot be factored gets log_lik = -inf (zero
+     * weight), never a bonus. log_det and the Mahalanobis term come from the
+     * same factor: log|S| = 2 sum log L_ii, m = |L^{-1} innovation|^2.
+     */
+    static float predictive_log_likelihood(const ObsCov& S_in, const Observation& innovation) {
+        if (!S_in.allFinite() || !innovation.allFinite()) {
+            return -std::numeric_limits<float>::infinity();
+        }
+        const ObsCov S = 0.5f * (S_in + S_in.transpose());
+        Eigen::LLT<ObsCov> llt(S);
+        if (llt.info() != Eigen::Success) {
+            const float scale = std::max(S.trace() / static_cast<float>(Types::Ny), 1e-30f);
+            for (float rel = 1e-7f; rel <= 1e-3f && llt.info() != Eigen::Success; rel *= 100.0f) {
+                llt.compute(S + (rel * scale) * ObsCov::Identity());
+            }
+        }
+        if (llt.info() != Eigen::Success) {
+            return -std::numeric_limits<float>::infinity();
+        }
+        const auto L = llt.matrixL();
+        float log_det = 0.0f;
+        for (int k = 0; k < Types::Ny; ++k) log_det += std::log(llt.matrixLLT()(k, k));
+        log_det *= 2.0f;
+        const Observation z = L.solve(innovation);
+        const float mahalanobis = z.squaredNorm();
+        return -0.5f * (mahalanobis + log_det +
+                        static_cast<float>(Types::Ny) * std::log(2.0f * std::numbers::pi_v<float>));
+    }
+
+private:
     /** Normalize particle log-weights via log-sum-exp; resets to uniform if all dead. */
     void normalize_weights() {
+        // Any non-finite log-weight (NaN from a model, +inf) is an invalid
+        // particle: give it zero weight. NaN used to survive normalisation
+        // (NaN - log_sum), make ESS NaN, block resampling forever (NaN < x is
+        // false) and poison every mean.
+        for (auto& p : particles_) {
+            if (!std::isfinite(p.log_weight))
+                p.log_weight = -std::numeric_limits<float>::infinity();
+        }
         float max_log_w = -std::numeric_limits<float>::infinity();
         for (const auto& p : particles_) {
-            // FIX: check isfinite to prevent NaN/Inf corruption
-            if (std::isfinite(p.log_weight) && p.log_weight > max_log_w)
-                max_log_w = p.log_weight;
+            if (p.log_weight > max_log_w) max_log_w = p.log_weight;
         }
 
         // Handle degenerate case: all weights non-finite
@@ -367,6 +422,61 @@ private:
             thread_rngs_[static_cast<size_t>(t)].seed(s);
         }
 #endif
+    }
+
+    /**
+     * Grow thread_rngs_ to the thread count the next parallel region will use.
+     * It was sized once, from omp_get_max_threads() at construction/seeding, so
+     * a caller raising the count later (omp_set_num_threads, OMP_DYNAMIC) made
+     * thread_rngs_[omp_get_thread_num()] index past the end: out-of-bounds heap
+     * writes, caught by -D_GLIBCXX_ASSERTIONS. Existing streams are left alone;
+     * a new slot t gets the same deterministic seed seed_thread_rngs() would
+     * have given it.
+     */
+    void ensure_thread_rngs() {
+#ifdef _OPENMP
+        const int nthreads = omp_get_max_threads();
+        const int have = static_cast<int>(thread_rngs_.size());
+        if (nthreads <= have) return;
+        thread_rngs_.resize(static_cast<size_t>(nthreads));
+        for (int t = have; t < nthreads; ++t) {
+            uint64_t s = config_.seed + 0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(t + 1);
+            s ^= s >> 30; s *= 0xBF58476D1CE4E5B9ULL;
+            s ^= s >> 27; s *= 0x94D049BB133111EBULL;
+            s ^= s >> 31;
+            thread_rngs_[static_cast<size_t>(t)].seed(s);
+        }
+#endif
+    }
+
+    /**
+     * Backward pass along particle i's ancestry, from the current epoch k down
+     * to k - lag. history[t][a_t] is the ancestor at t (a_k = i,
+     * a_{t-1} = parents[t][a_t]); the transition t -> t+1 is the one stored
+     * with history[t+1][a_{t+1}]. Done in double: P_{t+1|t} can be
+     * ill-conditioned when Q is small.
+     */
+    void smooth_path(int i, int lag, NonlinearState& x_nl_out, LinearState& x_lin_out) const {
+        using VecD = Eigen::Matrix<double, Types::Nlin, 1>;
+        using MatD = Eigen::Matrix<double, Types::Nlin, Types::Nlin>;
+        const long long k = parent_indices_cnt_ - 1;
+        int a = i;
+        const auto* next = &particle_history_[static_cast<size_t>(k % ancestry_buffer_size_)][static_cast<size_t>(a)];
+        VecD xs = next->kf.x.template cast<double>();
+        for (int s = 1; s <= lag; ++s) {
+            a = parent_indices_[static_cast<size_t>((k - s + 1) % ancestry_buffer_size_)][static_cast<size_t>(a)];
+            const auto& cur = particle_history_[static_cast<size_t>((k - s) % ancestry_buffer_size_)][static_cast<size_t>(a)];
+            const MatD Pf = cur.kf.P.template cast<double>();
+            const MatD Pp = next->P_pred.template cast<double>();
+            const MatD A = next->A_in.template cast<double>();
+            // G^T = Pp^{-1} A Pf  (Pp, Pf symmetric)
+            const Eigen::LDLT<MatD> ldlt(0.5 * (Pp + Pp.transpose()));
+            const MatD G = ldlt.solve(A * Pf).transpose();
+            xs = cur.kf.x.template cast<double>() + G * (xs - next->x_pred.template cast<double>());
+            next = &cur;
+        }
+        x_nl_out = next->x_nl;
+        x_lin_out = xs.template cast<float>();
     }
 
     /** Store current particles and parent indices into the circular ancestry buffer. */

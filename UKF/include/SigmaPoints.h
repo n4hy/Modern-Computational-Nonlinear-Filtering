@@ -32,6 +32,67 @@ struct SigmaPoints {
 };
 
 /**
+ * Scaled-UT weights (van der Merwe): lambda = alpha^2 (n + kappa) - n,
+ * Wm0 = lambda/(n+lambda), Wc0 = Wm0 + (1 - alpha^2 + beta), Wi = 1/(2(n+lambda)).
+ *
+ * Spread floor: when n + lambda < 0.5 (e.g. the classic alpha = 1e-3, kappa = 0)
+ * the sigma points would collapse onto the mean, so the spread is reset to
+ * n + lambda = n (lambda = 0). This is done by raising alpha to
+ * alpha_eff^2 = n / (n + kappa) with kappa KEPT, and Wc0 uses alpha_eff. The
+ * previous floor instead rewrote kappa = n/alpha^2 - n but kept the caller's
+ * alpha in Wc0, giving Wc0 = 1 - alpha^2 + beta (~3) where the spread it
+ * actually produced (alpha = 1) calls for beta (= 2). Derivation, n = 1,
+ * x ~ N(0,1), y = x^2 (true var 2): the UT returns var = alpha^2 kappa + beta,
+ * exact for beta = 2 iff alpha^2 kappa = 0; the old floor had alpha^2 kappa =
+ * 1 - alpha^2 (var ~3), the new one alpha_eff^2 kappa = 0 for kappa = 0 (var 2).
+ * Also removes the alpha = 0 division (kappa = inf, lambda = NaN).
+ */
+template<int NX>
+void compute_sigma_weights(float alpha, float beta, float kappa, SigmaPoints<NX>& out) {
+    const float n = static_cast<float>(NX);
+    float alpha2 = alpha * alpha;
+    float lambda = alpha2 * (n + kappa) - n;
+
+    if (!(n + lambda >= 0.5f)) {
+        if (n + kappa > 0.0f) {
+            alpha2 = n / (n + kappa);
+        } else {
+            // n + kappa <= 0 cannot be repaired by scaling alpha; use the
+            // unscaled symmetric set (alpha = 1, kappa = 0).
+            alpha2 = 1.0f;
+            kappa = 0.0f;
+        }
+        lambda = alpha2 * (n + kappa) - n;
+    }
+
+    out.lambda = lambda;
+    out.Wm(0) = lambda / (n + lambda);
+    out.Wc(0) = lambda / (n + lambda) + (1.0f - alpha2 + beta);
+
+    const float w_i = 1.0f / (2.0f * (n + lambda));
+    for (int i = 1; i < SigmaPoints<NX>::NSIG; ++i) {
+        out.Wm(i) = w_i;
+        out.Wc(i) = w_i;
+    }
+}
+
+/**
+ * Square-root factor S (S S^T = A) from an Eigen LDLT of A.
+ *
+ * Eigen's LDLT pivots: it factors P A P^T = L D L^T with P = transpositionsP(),
+ * so A = (P^T L sqrt(D)) (P^T L sqrt(D))^T. Using L sqrt(D) alone (as both
+ * fallbacks here previously did) factors the PERMUTED matrix -- e.g. it swaps
+ * the two variances of [[1e4, 2e4], [2e4, 4e4]]. D is floored at 1e-10.
+ */
+template<int NX>
+Eigen::Matrix<float, NX, NX> ldlt_sqrt_factor(const Eigen::LDLT<Eigen::Matrix<float, NX, NX>>& ldlt) {
+    const Eigen::Matrix<float, NX, 1> d = ldlt.vectorD().cwiseMax(1e-10f).cwiseSqrt();
+    const Eigen::Matrix<float, NX, NX> L = ldlt.matrixL();  // dense copy of the unit-lower factor
+    const Eigen::Matrix<float, NX, NX> LD = L * d.asDiagonal();
+    return ldlt.transpositionsP().transpose() * LD;
+}
+
+/**
  * Generates Sigma Points using Merwe Scaled Sigma Point algorithm.
  */
 template<int NX>
@@ -42,28 +103,7 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
                            float kappa,
                            SigmaPoints<NX>& out) {
 
-    float n = static_cast<float>(NX);
-    float lambda = alpha * alpha * (n + kappa) - n;
-
-    // Prevent near-zero or negative (n + lambda) which collapses sigma point spread
-    float n_lambda = n + lambda;
-    if (n_lambda < 0.5f) {
-        kappa = n / (alpha * alpha) - n;
-        lambda = alpha * alpha * (n + kappa) - n;
-        n_lambda = n + lambda;
-    }
-
-    out.lambda = lambda;
-
-    // Weights
-    out.Wm(0) = lambda / (n + lambda);
-    out.Wc(0) = lambda / (n + lambda) + (1.0f - alpha * alpha + beta);
-
-    float w_i = 1.0f / (2.0f * (n + lambda));
-    for (int i = 1; i < SigmaPoints<NX>::NSIG; ++i) {
-        out.Wm(i) = w_i;
-        out.Wc(i) = w_i;
-    }
+    compute_sigma_weights<NX>(alpha, beta, kappa, out);
 
     // Sigma Points Generation — use accelerated Cholesky with fallback chain
     Eigen::MatrixXf L_dyn = filtermath::cholesky(P);
@@ -81,12 +121,7 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
             // Try LDLT decomposition
             Eigen::LDLT<Eigen::Matrix<float, NX, NX>> ldlt(P_jitter);
             if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
-                Eigen::Matrix<float, NX, NX> L_ldlt = ldlt.matrixL();
-                Eigen::Matrix<float, NX, 1> D_vec = ldlt.vectorD();
-                for (int j = 0; j < NX; ++j) {
-                    D_vec(j) = std::sqrt(std::max(D_vec(j), 1e-10f));
-                }
-                L = L_ldlt * D_vec.asDiagonal();
+                L = ldlt_sqrt_factor<NX>(ldlt);
             } else {
                 // Ultimate fallback to scaled identity based on P diagonal
                 std::cerr << "[SigmaPoints] WARNING: Covariance decomposition failed, using diagonal fallback" << std::endl;
@@ -97,7 +132,7 @@ void generate_sigma_points(const Eigen::Matrix<float, NX, 1>& x,
             }
         }
     }
-    float scale = std::sqrt(n + lambda);
+    const float scale = std::sqrt(static_cast<float>(NX) + out.lambda);
 
     out.X.col(0) = x;
     for (int i = 0; i < NX; ++i) {
@@ -150,31 +185,10 @@ void generate_sigma_points_from_sqrt(const Eigen::Matrix<float, NX, 1>& x,
                                       float kappa,
                                       SigmaPoints<NX>& out) {
 
-    float n = static_cast<float>(NX);
-    float lambda = alpha * alpha * (n + kappa) - n;
-
-    // Prevent near-zero or negative (n + lambda) which collapses sigma point spread
-    float n_lambda = n + lambda;
-    if (n_lambda < 0.5f) {
-        kappa = n / (alpha * alpha) - n;
-        lambda = alpha * alpha * (n + kappa) - n;
-        n_lambda = n + lambda;
-    }
-
-    out.lambda = lambda;
-
-    // Weights
-    out.Wm(0) = lambda / (n + lambda);
-    out.Wc(0) = lambda / (n + lambda) + (1.0f - alpha * alpha + beta);
-
-    float w_i = 1.0f / (2.0f * (n + lambda));
-    for (int i = 1; i < SigmaPoints<NX>::NSIG; ++i) {
-        out.Wm(i) = w_i;
-        out.Wc(i) = w_i;
-    }
+    compute_sigma_weights<NX>(alpha, beta, kappa, out);
 
     // Sigma Points: use S directly (no Cholesky needed)
-    float scale = std::sqrt(n + lambda);
+    const float scale = std::sqrt(static_cast<float>(NX) + out.lambda);
 
     out.X.col(0) = x;
     for (int i = 0; i < NX; ++i) {

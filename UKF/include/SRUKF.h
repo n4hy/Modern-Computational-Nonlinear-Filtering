@@ -2,6 +2,7 @@
 #define SRUKF_H
 
 #include <Eigen/Dense>
+#include <limits>
 #include <Eigen/QR>
 #include <Eigen/Cholesky>
 #include <iostream>
@@ -39,7 +40,11 @@ public:
     // Parameters - dimension adaptive
     float alpha = 1.0f;    // Will be adjusted based on dimension
     float beta = 2.0f;     // Optimal for Gaussian
-    float kappa = -1.0f;   // Will be set in initialize()
+    // NaN = "not set": initialize() then picks a dimension-adaptive kappa. Any
+    // finite value the caller assigns (including negatives such as the classic
+    // 3 - n = -1 for NX = 4) is kept. A -1 sentinel used to be overloaded here,
+    // so a caller's kappa = -1 (and their alpha/beta with it) were overwritten.
+    float kappa = std::numeric_limits<float>::quiet_NaN();
 
     /**
      * Set the chi-squared innovation-gate threshold. The default of 25.0 is
@@ -67,15 +72,11 @@ public:
         // earlier alpha=1e-3 for high NX was removed in the audit because it made
         // Wm(0)/Wc(0) hugely negative and destabilized the 10D coupled-oscillator
         // case). Only kappa varies with dimension.
-        if (kappa < 0) {
-            beta = 2.0f;  // Optimal for Gaussian
-            if (NX <= 5) {
-                alpha = 1.0f;
-                kappa = 3.0f - static_cast<float>(NX);  // classic n+kappa = 3
-            } else {
-                alpha = 1.0f;
-                kappa = 0.0f;
-            }
+        if (std::isnan(kappa)) {
+            // alpha (1.0) and beta (2.0, optimal for Gaussian) keep their
+            // defaults or whatever the caller set; only kappa is chosen here.
+            kappa = (NX <= 5) ? 3.0f - static_cast<float>(NX)  // classic n+kappa = 3
+                              : 0.0f;
         }
 
         // Validate P0 up-front. A caller passing NaN/Inf/asymmetric/non-PSD P0 will
@@ -299,6 +300,11 @@ public:
      * Update Step using Square Root formulation
      */
     void update(float t_k, const Observation& y_k) {
+        // A non-finite measurement is treated as missed: skip the update and
+        // keep the prediction. (A NaN y gives a NaN NIS, `NaN > gate` is false,
+        // and the correction would turn x_ into NaN.)
+        if (!y_k.allFinite()) return;
+
         // 1. Generate Sigma Points directly from S (no P computation needed!)
         SigmaPts sigmas;
         generate_sigma_points_from_sqrt<NX>(x_, S_, alpha, beta, kappa, sigmas);
@@ -314,6 +320,19 @@ public:
         for (int i = 0; i < SigmaPts::NSIG; ++i) {
             y_hat += sigmas.Wm(i) * Y_pred.col(i);
         }
+        // Circular mean for angular observations. The linear mean of sigma
+        // points straddling +-pi lands near 0, so y_hat (and the P_yy built
+        // from it) were wrong while Dy and the innovation below were wrapped.
+        for (int j = 0; j < NY; ++j) {
+            if (model_.isAngularObservation(j)) {
+                float sin_sum = 0.0f, cos_sum = 0.0f;
+                for (int i = 0; i < SigmaPts::NSIG; ++i) {
+                    sin_sum += sigmas.Wm(i) * std::sin(Y_pred(j, i));
+                    cos_sum += sigmas.Wm(i) * std::cos(Y_pred(j, i));
+                }
+                y_hat(j) = std::atan2(sin_sum, cos_sum);
+            }
+        }
 
         // 4. Compute Square Root of Innovation Covariance using QR
         ObsMat R = model_.R(t_k);
@@ -326,6 +345,11 @@ public:
 
         for (int i = 0; i < NSIG; ++i) {
             Observation diff_y = Y_pred.col(i) - y_hat;
+            for (int j = 0; j < NY; ++j) {
+                if (model_.isAngularObservation(j)) {
+                    diff_y(j) = std::remainder(diff_y(j), 2.0f * std::numbers::pi_v<float>);
+                }
+            }
             P_yy += sigmas.Wc(i) * (diff_y * diff_y.transpose());
         }
         P_yy += R;  // Add measurement noise
@@ -528,6 +552,12 @@ public:
     // Getters
     const State& getState() const { return x_; }
     StateMat getCovariance() const { return S_ * S_.transpose(); }
+    /**
+     * Overwrite the estimate with a previously saved (x, S), S S^T = P.
+     * Used by the smoothers to roll back a step that went non-finite.
+     */
+    void restore(const State& x, const StateMat& S) { x_ = x; S_ = S; }
+
     const StateMat& getSqrtCovariance() const { return S_; }
 
     // Setters
@@ -558,10 +588,10 @@ private:
 
     /**
      * Rank-1 Cholesky update: S_new such that
-     * S_new * S_new^T = S * S^T + alpha^2 * v * v^T
+     * S_new * S_new^T = S * S^T + v_scale^2 * v * v^T
      */
-    void cholupdate(StateMat& S, const State& v, float alpha) {
-        State v_scaled = alpha * v;
+    void cholupdate(StateMat& S, const State& v, float v_scale) {
+        State v_scaled = v_scale * v;
         constexpr float eps = 1e-10f;
         for (int k = 0; k < NX; ++k) {
             if (std::abs(S(k,k)) < eps) {
@@ -582,11 +612,11 @@ private:
 
     /**
      * Rank-1 Cholesky downdate: S_new such that
-     * S_new * S_new^T = S * S^T - alpha^2 * v * v^T
+     * S_new * S_new^T = S * S^T - v_scale^2 * v * v^T
      * Returns false if downdate fails (result would not be positive definite).
      */
-    bool cholupdate_downdate_safe(StateMat& S, const State& v, float alpha) {
-        State v_scaled = alpha * v;
+    bool cholupdate_downdate_safe(StateMat& S, const State& v, float v_scale) {
+        State v_scaled = v_scale * v;
         constexpr float eps = 1e-10f;
         for (int k = 0; k < NX; ++k) {
             if (std::abs(S(k,k)) < eps) {
@@ -614,8 +644,8 @@ private:
     /**
      * Rank-1 Cholesky downdate (legacy version, silently handles failures)
      */
-    void cholupdate_downdate(StateMat& S, const State& v, float alpha) {
-        State v_scaled = alpha * v;
+    void cholupdate_downdate(StateMat& S, const State& v, float v_scale) {
+        State v_scaled = v_scale * v;
         constexpr float eps = 1e-10f;
         for (int k = 0; k < NX; ++k) {
             if (std::abs(S(k,k)) < eps) {
@@ -642,8 +672,8 @@ private:
     /**
      * Cholesky update for observation dimension
      */
-    void cholupdate_obs(ObsMat& S, const Observation& v, float alpha) {
-        Observation v_scaled = alpha * v;
+    void cholupdate_obs(ObsMat& S, const Observation& v, float v_scale) {
+        Observation v_scaled = v_scale * v;
         constexpr float eps = 1e-10f;
         for (int k = 0; k < NY; ++k) {
             if (std::abs(S(k,k)) < eps) {
@@ -665,8 +695,8 @@ private:
     /**
      * Cholesky downdate for observation dimension
      */
-    void cholupdate_downdate_obs(ObsMat& S, const Observation& v, float alpha) {
-        Observation v_scaled = alpha * v;
+    void cholupdate_downdate_obs(ObsMat& S, const Observation& v, float v_scale) {
+        Observation v_scaled = v_scale * v;
         constexpr float eps = 1e-10f;
         for (int k = 0; k < NY; ++k) {
             if (std::abs(S(k,k)) < eps) {

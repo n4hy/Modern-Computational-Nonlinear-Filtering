@@ -67,14 +67,14 @@ binary that emits CSV data consumed by the Python plotting scripts.
 |--------|----------------|-----------|---------------|-------|
 | EKF | `EKF/include/EKF.h` (`.cpp` in `EKF/src/EKF.cpp`) | (global) | dynamic `x_`, `P_` | Base EKF with Joseph-form update, retains `x_pred_`, `P_pred_` for smoothing. |
 | EKF fixed-lag | `EKF/include/EKFFixedLag.h` (`.cpp`) | (global) | ring buffer | RTS smoothing over a fixed lag window. |
-| EKF full-interval smoother | `EKF/include/EKFSmoother.h` | (global) | vector of history entries | Batch RTS with optional iteration (iterated EKF smoother / IEKS). |
+| EKF full-interval smoother | `EKF/include/EKFSmoother.h` | (global) | vector of history entries | Batch RTS; `smooth(n>0)` = Gauss-Newton IEKS (exact affine solve per iteration, `Common/include/AffineRTS.h`). |
 | UKF | `UKF/include/UKF.h` | `UKFCore` | fixed-size `x_`, `P_` (template `NX`, `NY`) | Julier-Uhlmann / Merwe scaled sigma points; recovery ladder on `P`. |
 | SRUKF | `UKF/include/SRUKF.h` (696 lines) | `UKFCore` | fixed-size `x_`, Cholesky factor `S_` (`P = S Sᵀ`) | Square-root form using QR + cholupdate/downdate; angular-state wrap; chi-squared innovation gating. |
 | UKF fixed-lag smoother | `UKF/include/UnscentedFixedLagSmoother.h` | `UKFCore` | `std::deque` of `UKFHistoryEntry<NX>` | Two-time step API (`t_prev`, `t_k`). |
-| UKF full-interval smoother | `UKF/include/UKFSmoother.h` | `UKFCore` | `std::vector<UKFHistoryEntry<NX>>` | Iterated RTS: `smooth(n_iterations)` replays forward pass from smoothed IC. |
+| UKF full-interval smoother | `UKF/include/UKFSmoother.h` | `UKFCore` | `std::vector<UKFHistoryEntry<NX>>` | URTS; `smooth(n>0)` = iterated posterior linearisation (IPLS, `UKF/include/PosteriorLinearization.h`). |
 | SRUKF fixed-lag smoother | `UKF/include/SRUKFFixedLagSmoother.h` | `UKFCore` | ring buffer | Square-root variant of the fixed-lag RTS. |
 | SRUKF full-interval smoother | `UKF/include/SRUKFSmoother.h` | `UKFCore` | vector | Batch RTS on the square-root filter. |
-| PKF (bootstrap PF) | `PKF/include/particle_filter.hpp` (437 lines) | `PKF` | `std::vector<State>` particles + `log_weights_` | Systematic/stratified resampling; OpenMP parallel propagation with per-thread RNGs; optional GPU (CUDA) via `PKF::gpu::GPUParticleContext`. |
+| PKF (bootstrap PF) | `PKF/include/particle_filter.hpp` (437 lines) | `PKF` | `std::vector<State>` particles + `log_weights_` | Systematic/stratified resampling; OpenMP parallel propagation with per-thread RNGs; CPU only (GPU context removed 2026-11-16). |
 | PKF fixed-lag | `PKF/include/particle_fixed_lag.hpp` | `PKF` | ancestry buffers | Backward-simulation smoother. |
 | RBPKF (Rao-Blackwellized PF) | `RBPKF/include/rbpf/rbpf_core.hpp` (387 lines) | `rbpf` | `std::vector<RbpfParticle>` (each = nonlinear state + linear KF) | Per-particle `LinearKalmanFilter<Types>` in `RBPKF/include/rbpf/kalman_filter.hpp`; OpenMP over particles; optional fixed-lag ancestry. |
 
@@ -248,10 +248,13 @@ propagation time (`t_prev`) is distinguished from the measurement time (`t_k`).
 
 **Full-interval smoothers** (`UKFSmoother`, `SRUKFSmoother`, `EKFSmoother`):
 retain the ENTIRE forward trajectory and run one backward RTS pass after all
-measurements are consumed. `smooth(n_iterations > 0)` replays the forward
-filter from the smoothed initial condition (retaining the ORIGINAL prior
-covariance so the data still dominate) and re-smooths, producing an iterated
-smoother. For the EKF this is the iterated EKF smoother (IEKS).
+measurements are consumed. `smooth(n_iterations > 0)` then relinearises about
+the previous smoothed estimate and solves the affine model exactly from the
+ORIGINAL prior, each measurement once (`Common/include/AffineRTS.h`): Jacobians
+for the EKF (Gauss-Newton IEKS), sigma-point statistical linear regression for
+the UKF/SRUKF (IPLS). On a linear model every iteration returns exact RTS.
+(Until 2026-11-16 iteration replayed the forward filter from the smoothed x_0
+with covariance P0, which counted the data twice.)
 
 **RTS gain formula** (see `UKFSmoother.h::backward_pass`, lines 98--119):
 
@@ -284,13 +287,10 @@ buffer, so no cross-covariance recomputation is needed on the backward pass.
   110--126). Each thread uses its own `std::mt19937_64` seeded from
   `base_seed_`; `schedule(static)` fixes the iteration-thread mapping so
   reproducibility is preserved for a given thread count.
-- **GPU acceleration:** Optional CUDA (`GPUParticleContext<NX>` in
-  `particle_filter_gpu.hpp`) for weight normalization, ESS computation,
-  systematic resampling via parallel prefix sum, and mean/covariance
-  reduction. Enabled when `enable_gpu && gpu::should_use_gpu_particles(N)`.
-- **Vulkan acceleration:** For particle propagation vector addition on ARM,
-  `optmath::vulkan::vulkan_vec_add` is used when `N > 100` and Vulkan is
-  available (lines 128--148).
+- **CPU only.** The CUDA `GPUParticleContext` (`particle_filter_gpu.hpp`) and
+  the ARM Vulkan noise-add were removed on 2026-11-16: the model calls are
+  virtual host functions, so neither ran the filter on the device, and the
+  CUDA path was slower than the CPU path at every N measured.
 
 **Rao-Blackwellized Particle Filter** (RBPKF,
 `RBPKF/include/rbpf/rbpf_core.hpp`):

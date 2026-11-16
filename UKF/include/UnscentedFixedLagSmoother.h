@@ -5,6 +5,7 @@
 #include <vector>
 #include <iostream>
 #include <Eigen/Dense>
+#include <stdexcept>
 #include "UKF.h"
 #include "FilterMath.h"
 
@@ -50,6 +51,10 @@ public:
         entry.x_filt = x0;
         entry.P_filt = P0;
         history_.push_back(entry);
+        // Rebuild the smoothed buffer for the new one-entry history. Without
+        // this a re-initialised smoother returned the previous run's estimates
+        // (and a fresh one indexed an empty vector) from get_smoothed_state().
+        perform_smoothing();
     }
 
     /**
@@ -64,8 +69,10 @@ public:
     void observe_initial(float t0, const Observation& y_0) {
         if (history_.empty()) return;
 
+        const State x_before = ukf_.getState();
+        const StateMat P_before = ukf_.getCovariance();
         ukf_.update(t0, y_0);
-        if (!ukf_.getState().allFinite() || !ukf_.getCovariance().allFinite()) return;
+        require_finite(x_before, P_before);
 
         // Refines entry 0 in place: this is still the estimate at t0, now a
         // posterior rather than a prior. It is not a new time step, so no history
@@ -99,6 +106,8 @@ public:
         }
 
         UKFHistoryEntry<NX>& last_entry = history_.back();
+        const State x_before = ukf_.getState();
+        const StateMat P_before = ukf_.getCovariance();
 
         // Predict: propagate FROM t_prev (where the estimate is) TO t_k.
         StateMat P_cross = ukf_.predict(t_prev, u_k);
@@ -111,10 +120,11 @@ public:
         ukf_.update(t_k, y_k);
         t_last_ = t_k;
 
-        // NaN guard: skip this step if filter state is corrupted
-        if (!ukf_.getState().allFinite() || !ukf_.getCovariance().allFinite()) {
-            return;
-        }
+        // Non-finite guard. A NaN measurement never gets here (UKF::update
+        // treats it as missed); this catches a model that returns non-finite
+        // values. The old guard returned early but left the UKF itself NaN, so
+        // every later step was silently lost. Roll back and report instead.
+        require_finite(x_before, P_before);
 
         UKFHistoryEntry<NX> new_entry;
         new_entry.x_filt = ukf_.getState();
@@ -164,6 +174,13 @@ private:
      * Uses cross-covariance P_{x_k, x_{k+1}} to compute smoothing gain G_j,
      * then propagates smoothed state and covariance from newest to oldest.
      */
+    void require_finite(const State& x_before, const StateMat& P_before) {
+        if (ukf_.getState().allFinite() && ukf_.getCovariance().allFinite()) return;
+        ukf_.initialize(x_before, P_before);
+        throw std::runtime_error("UnscentedFixedLagSmoother: model produced a non-finite "
+                                 "state; filter restored to its pre-step estimate");
+    }
+
     void perform_smoothing() {
         int N = static_cast<int>(history_.size());
         if (N == 0) return;

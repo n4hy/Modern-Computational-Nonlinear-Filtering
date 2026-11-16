@@ -5,7 +5,7 @@
 
 #include <iostream>
 #include <cmath>
-#include <cassert>
+#include "TestCheck.h"  // NLF_REQUIRE: survives NDEBUG, unlike assert()
 #include <Eigen/Dense>
 #include "UKF.h"
 #include "StateSpaceModel.h"
@@ -75,9 +75,9 @@ void test_rank_deficient_p0() {
         Eigen::Matrix2f P = filter.getCovariance();
         Eigen::Vector2f x = filter.getState();
 
-        assert(P.allFinite() && "P became NaN/Inf");
-        assert(x.allFinite() && "state became NaN/Inf");
-        assert(is_psd(P) && "P is not PSD after update");
+        NLF_REQUIRE(P.allFinite(), "P became NaN/Inf");
+        NLF_REQUIRE(x.allFinite(), "state became NaN/Inf");
+        NLF_REQUIRE(is_psd(P), "P is not PSD after update");
     }
     std::cout << "  OK" << std::endl;
 }
@@ -104,17 +104,17 @@ void test_well_conditioned_convergence() {
         filter.update(static_cast<float>(k) * 0.1f, y);
 
         Eigen::Matrix2f P = filter.getCovariance();
-        assert(P.allFinite());
-        assert(is_psd(P));
+        NLF_REQUIRE(P.allFinite(), "P.allFinite()");
+        NLF_REQUIRE(is_psd(P), "is_psd(P)");
 
         float tr = P.trace();
         // Allow small numerical wobble around steady state.
-        assert(tr < last_trace + 1e-3f && "P grew without a corresponding measurement change");
+        NLF_REQUIRE(tr < last_trace + 1e-3f, "P grew without a corresponding measurement change");
         last_trace = tr;
     }
     // At steady state, trace(P) should be O(measurement noise), i.e. much
     // smaller than the initial 20.0.
-    assert(last_trace < 1.0f && "trace(P) failed to contract into the measurement-noise regime");
+    NLF_REQUIRE(last_trace < 1.0f, "trace(P) failed to contract into the measurement-noise regime");
     std::cout << "  OK (final trace = " << last_trace << ")" << std::endl;
 }
 

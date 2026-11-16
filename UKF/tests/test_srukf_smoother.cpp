@@ -11,12 +11,9 @@
 //       off prior, does better -- than the single-pass smoother;
 //   (3) everything stays finite.
 //
-// Standalone build (mirrors the other UKF tests / IPNT setup.py flags):
-//   NLF=~/Modern-Computational-Nonlinear-Filtering
-//   g++ -std=c++20 -O3 -I"$NLF/Common/include" -I"$NLF/UKF/include" \
-//       -I<optmath>/include -I/usr/include/eigen3 \
-//       UKF/tests/test_srukf_smoother.cpp -L<optmath-build> -lOptMathKernels \
-//       -o /tmp/test_srukf_smoother && /tmp/test_srukf_smoother
+// Build and run (CMake carries the OptMath include/link flags, which vary by host):
+//   cmake --build build --target srukf_smoother_test
+//   ctest --test-dir build -R SRUKF_Smoother --output-on-failure
 // =============================================================================
 #include <cstdio>
 #include <cmath>
@@ -30,12 +27,15 @@
 #define CHECK(cond, msg) \
     do { if (!(cond)) { std::fprintf(stderr, "FAIL: %s\n", (msg)); return 1; } } while (0)
 
-// State [pos, vel]; the time argument is the per-step dt.
+// State [pos, vel]; f propagates by a fixed step kDt = 1. The time argument is
+// the absolute time propagated FROM (the repo convention, commit 3dbbf4c); this
+// model is time-invariant, so it is unused.
 class CVNonlinRange : public UKFModel::StateSpaceModel<2, 1> {
 public:
     static constexpr float C = 0.004f;      // measurement nonlinearity
-    State f(const State& x, float dt, const Eigen::Ref<const State>&) const override {
-        State o; o(0) = x(0) + x(1) * dt; o(1) = x(1); return o;
+    static constexpr float kDt = 1.0f;
+    State f(const State& x, float, const Eigen::Ref<const State>&) const override {
+        State o; o(0) = x(0) + x(1) * kDt; o(1) = x(1); return o;
     }
     Observation h(const State& x, float) const override {
         Observation y; y(0) = x(0) * (1.0f + C * x(0)); return y;
@@ -91,7 +91,7 @@ int main() {
     // forward filter + store history
     sm.initialize(x0, P0);
     State u = State::Zero();
-    for (int k = 1; k <= N; ++k) sm.step(dt, ys[k], u);
+    for (int k = 1; k <= N; ++k) sm.step((k - 1) * dt, k * dt, ys[k], u);
     CHECK(sm.size() == N + 1, "history size");
 
     // (0) single backward pass
@@ -126,7 +126,7 @@ int main() {
     // (2) iterated smoother: rebuild forward + smooth 3x; should not be worse
     UKFCore::SRUKFSmoother<2, 1> smit(model);
     smit.initialize(x0, P0);
-    for (int k = 1; k <= N; ++k) smit.step(dt, ys[k], u);
+    for (int k = 1; k <= N; ++k) smit.step((k - 1) * dt, k * dt, ys[k], u);
     smit.smooth(3);
     double iter_rmse = rmse([&](int k){ return smit.smoothed_state(k)(0); });
     std::printf("iterated (x3) smoothed RMSE = %.3f m\n", iter_rmse);

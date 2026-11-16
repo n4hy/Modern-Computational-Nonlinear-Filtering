@@ -1,13 +1,10 @@
-// Compile-time canary: ParticleFilter::get_mean() and get_covariance() must
-// be non-const so that GPU-side state mutation (upload, kernel launch, and
-// try/catch demotion to CPU) can happen honestly without const_cast.
-//
-// This test uses SFINAE-style detection to statically assert that neither
-// method is callable through a const ParticleFilter reference — that would
-// re-open the door to the const-cast pattern the audit removed.
+// Compile-time canary: ParticleFilter::get_mean(), get_covariance() and
+// compute_mean_cpu() are const-callable. They were non-const while the CUDA
+// GPU context (removed 2026-11-16) mutated device state inside them; with a
+// pure CPU implementation a const filter must be readable without const_cast.
 
 #include <iostream>
-#include <cassert>
+#include "TestCheck.h"  // NLF_REQUIRE: survives NDEBUG, unlike assert()
 #include <cmath>
 #include <type_traits>
 #include "particle_filter.hpp"
@@ -38,7 +35,7 @@ public:
 using PF = PKF::ParticleFilter<1, 1>;
 
 // SFINAE probes: `has_const_get_mean<PF>::value` is true iff `pf.get_mean()`
-// is well-formed when `pf` is `const PF`. We require it to be false.
+// is well-formed when `pf` is `const PF`.
 template<typename T, typename = void>
 struct has_const_get_mean : std::false_type {};
 
@@ -57,9 +54,6 @@ struct has_const_get_covariance<
     std::void_t<decltype(std::declval<const T&>().get_covariance())>>
     : std::true_type {};
 
-// Similarly, compute_mean_cpu() SHOULD be const-callable — it never touches
-// GPU state and callers holding a const reference should still be able to
-// inspect it.
 template<typename T, typename = void>
 struct has_const_compute_mean_cpu : std::false_type {};
 
@@ -69,10 +63,8 @@ struct has_const_compute_mean_cpu<
     std::void_t<decltype(std::declval<const T&>().compute_mean_cpu())>>
     : std::true_type {};
 
-static_assert(!has_const_get_mean<PF>::value,
-              "get_mean() must be non-const; GPU path mutates state.");
-static_assert(!has_const_get_covariance<PF>::value,
-              "get_covariance() must be non-const; GPU path mutates state.");
+static_assert(has_const_get_mean<PF>::value, "get_mean() must be const-callable.");
+static_assert(has_const_get_covariance<PF>::value, "get_covariance() must be const-callable.");
 static_assert(has_const_compute_mean_cpu<PF>::value,
               "compute_mean_cpu() must be const-callable.");
 
@@ -81,7 +73,7 @@ static_assert(has_const_compute_mean_cpu<PF>::value,
 int main() {
     std::cout << "test_particle_const: compile-time canary passed." << std::endl;
 
-    // Runtime sanity: exercising the mutable API still produces sensible values.
+    // Runtime sanity: the accessors produce sensible values.
     TinyModel1D model;
     PF pf(&model, 100);
     pf.set_seed(1234);
@@ -95,13 +87,14 @@ int main() {
 
     auto mean = pf.get_mean();
     auto cov = pf.get_covariance();
-    assert(std::isfinite(mean(0)));
-    assert(std::isfinite(cov(0, 0)) && cov(0, 0) >= 0.0f);
+    NLF_REQUIRE(std::isfinite(mean(0)), "std::isfinite(mean(0))");
+    NLF_REQUIRE(std::isfinite(cov(0, 0)) && cov(0, 0) >= 0.0f, "std::isfinite(cov(0, 0)) && cov(0, 0) >= 0.0f");
 
-    // compute_mean_cpu on a const reference must still work.
+    // Through a const reference: identical values.
     const PF& cpf = pf;
-    auto cpu_mean = cpf.compute_mean_cpu();
-    assert(std::isfinite(cpu_mean(0)));
+    NLF_REQUIRE(cpf.compute_mean_cpu()(0) == mean(0), "compute_mean_cpu() == get_mean()");
+    NLF_REQUIRE(cpf.get_mean()(0) == mean(0), "const get_mean() == get_mean()");
+    NLF_REQUIRE(cpf.get_covariance()(0, 0) == cov(0, 0), "const get_covariance() == get_covariance()");
 
     std::cout << "test_particle_const: runtime canary passed." << std::endl;
     return 0;

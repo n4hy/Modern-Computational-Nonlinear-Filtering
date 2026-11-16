@@ -7,9 +7,8 @@ endif()
 
 # Header-only library for PKF core
 add_library(PKF_Lib INTERFACE)
-# Common/include carries FilterMath.h and TestCheck.h. EKF/ and UKF/ already put it
-# on the include path; PKF did not, which is why particle_filter_gpu.hpp reaches for
-# it as "../../Common/include/FilterMath.h" -- a relative escape that breaks once
+# Common/include carries TestCheck.h (and FilterMath.h). Using it as an -I root,
+# not a "../../Common/include" relative escape, keeps the headers valid once
 # install(DIRECTORY) flattens every -I root into a single include/nlf.
 # $<BUILD_INTERFACE>/$<INSTALL_INTERFACE>: PKF_Lib is part of the exported nlf
 # package, and install(EXPORT) rejects bare source-tree paths on an exported
@@ -118,3 +117,9 @@ else()
     message(STATUS "Search paths tried (Binary): ${OPTMATH_BINARY_DIR}/src")
     message(STATUS "Search paths tried (Source): ${OPTMATH_SOURCE_DIR}/src/vulkan/shaders")
 endif()
+
+# 2026-11-15 audit: exact moments after init / all-dead reset; resampling precision.
+add_executable(test_pkf_audit tests/test_pkf_audit.cpp)
+target_link_libraries(test_pkf_audit PRIVATE PKF_Lib OptMathKernels)
+enable_lto_if_supported(test_pkf_audit)
+nlf_add_warning_flags(test_pkf_audit)

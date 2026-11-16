@@ -7,17 +7,8 @@
 #include <numeric>
 #include <algorithm>
 #include <iostream>
-#include <memory>
 #include "state_space_model.hpp"
 #include "resampling.hpp"
-#include "particle_filter_gpu.hpp"
-
-#if defined(__aarch64__) || defined(_M_ARM64)
-#include <optmath/vulkan_backend.hpp>
-#define PKF_HAS_VULKAN 1
-#else
-#define PKF_HAS_VULKAN 0
-#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -46,29 +37,21 @@ public:
      * @param model Pointer to the state space model
      * @param num_particles Number of particles
      * @param resampling_threshold Threshold for resampling (fraction of N)
-     * @param enable_gpu Enable GPU acceleration if available (default: true)
+     *
+     * CPU only (OpenMP across particles). The former CUDA "GPU context" and the
+     * aarch64 Vulkan noise-add were removed on 2026-11-16: neither ran the
+     * model on the device (propagate/observation_loglik are virtual host
+     * calls), so each was host loops plus PCIe/Vulkan copies, and the CUDA
+     * path was slower than this one at every N measured (N = 200k: 427 vs
+     * 226 ms per 50 steps).
      */
     ParticleFilter(const Model* model, size_t num_particles,
-                   float resampling_threshold = 0.5f, bool enable_gpu = true)
+                   float resampling_threshold = 0.5f)
         : model_(model), N_(num_particles),
-          resampling_threshold_(resampling_threshold * static_cast<float>(num_particles)),
-          use_gpu_(enable_gpu && gpu::should_use_gpu_particles(num_particles))
+          resampling_threshold_(resampling_threshold * static_cast<float>(num_particles))
     {
         particles_.resize(N_);
         log_weights_.resize(N_, -std::log(static_cast<float>(N_))); // Initialize with uniform weights
-
-        // Pre-allocate temporary vectors for step()
-        props_.resize(N_);
-        noises_.resize(N_);
-
-        // Initialize GPU context if enabled
-        if (use_gpu_) {
-            gpu_ctx_ = std::make_unique<gpu::GPUParticleContext<NX>>(N_);
-            if (!gpu_ctx_->is_active()) {
-                use_gpu_ = false;
-                gpu_ctx_.reset();
-            }
-        }
 
         // Seed RNG. Derive a 64-bit base seed so both the serial rng_ and the
         // per-thread RNGs come from the same source.
@@ -102,72 +85,24 @@ public:
      * @brief Perform one step of the particle filter
      */
     void step(const Observation& y_k, float t_k, const Eigen::Ref<const State>& u_k) {
-
-        // 1. Propagation
-        // We compute deterministic part and noise separately to allow potential batching
-        // Use pre-allocated props_ and noises_ vectors
-
-#ifdef _OPENMP
-        // Parallel propagation with per-thread RNGs seeded deterministically from
-        // base_seed_ (see seed_thread_rngs). schedule(static) fixes the
-        // iteration->thread mapping so a given seed + thread count is reproducible.
-        // (Previously a std::random_device thread_local was used, ignoring set_seed.)
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < N_; ++i) {
-            std::mt19937_64& local_rng = thread_rngs_[static_cast<size_t>(omp_get_thread_num())];
-            props_[i] = model_->propagate(particles_[i], t_k, u_k);
-            noises_[i] = model_->sample_process_noise(t_k, local_rng);
-        }
-#else
-        for (size_t i = 0; i < N_; ++i) {
-            props_[i] = model_->propagate(particles_[i], t_k, u_k);
-            noises_[i] = model_->sample_process_noise(t_k, rng_);
-        }
-#endif
-
-        // Vulkan Acceleration for Noise Addition
-#if PKF_HAS_VULKAN
-        if (N_ > 100 && optmath::vulkan::is_available()) {
-             // Create large vectors
-             Eigen::VectorXf flat_props(N_ * NX);
-             Eigen::VectorXf flat_noises(N_ * NX);
-
-             for (size_t i = 0; i < N_; ++i) {
-                 flat_props.segment<NX>(i * NX) = props_[i];
-                 flat_noises.segment<NX>(i * NX) = noises_[i];
-             }
-
-             // Run on GPU
-             Eigen::VectorXf flat_result = optmath::vulkan::vulkan_vec_add(flat_props, flat_noises);
-
-             // Copy back
-             for (size_t i = 0; i < N_; ++i) {
-                 particles_[i] = flat_result.segment<NX>(i * NX);
-             }
-        } else
-#endif
-        {
-            // CPU fallback (also used on non-Vulkan platforms)
-#ifdef _OPENMP
-            #pragma omp parallel for
-#endif
-            for (size_t i = 0; i < N_; ++i) {
-                particles_[i] = props_[i] + noises_[i];
-            }
-        }
-
-        // 2. Weight Update
-#ifdef _OPENMP
-        #pragma omp parallel for
-#endif
-        for (size_t i = 0; i < N_; ++i) {
-            float log_lik = model_->observation_loglik(y_k, particles_[i], t_k);
-            log_weights_[i] += log_lik;
-        }
-
-        // 3. Normalization
+        step_fused(y_k, t_k, u_k);
         normalize_weights();
     }
+
+    /**
+     * Below this many particles every per-particle loop runs serially. Measured
+     * on a 24-core x86 host (libgomp, default passive wait): at N = 1000 one
+     * thread took 2.1 ms / 50 steps against 3.2-37 ms for 8-24 threads -- the
+     * cost is waking sleeping workers, not the work.
+     */
+    static constexpr size_t kParallelMinParticles = 2048;
+
+    /**
+     * The mean/covariance sums do far less work per particle than a step, so
+     * their crossover is higher: parallel was slower at N = 4000 (cov 2.1 ->
+     * 4.4 ms / 50 calls) and faster from N = 16000 (cov 9.6 -> 4.1 ms).
+     */
+    static constexpr size_t kParallelMinMoments = 16384;
 
     /**
      * @brief Calculate Effective Sample Size (ESS)
@@ -201,16 +136,9 @@ public:
         float ess = get_effective_sample_size();
 
         if (ess < resampling_threshold_) {
-            // GPU resampling path
-            if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
-                sync_to_gpu();
-                std::vector<size_t> parents = gpu_ctx_->resample_stratified_gpu(rng_);
-                sync_from_gpu();  // Get resampled particles back
-                return parents;
-            }
-
-            // CPU path
-            // Convert log weights to linear weights for resampling
+            // Double-precision weights and CDF: with float log-weights at
+            // N = 4e6 the CDF boundaries shift by several strata (equal
+            // weights: 711k of 4M particles got no offspring; this path: 197).
             std::vector<double> weights(N_);
             for (size_t i = 0; i < N_; ++i) {
                 weights[i] = std::exp(log_weights_[i]);
@@ -238,99 +166,25 @@ public:
         return parents;
     }
 
-    /**
-     * @brief Get filtered mean estimate.
-     *
-     * NOTE: no longer const. GPU-active filters mutate GPU-side state to compute
-     * this (upload particles and log-weights, run the reduction), and any GPU
-     * failure demotes the filter to CPU-only. Callers that need a read-only
-     * accessor should use compute_mean_cpu().
-     */
-    State get_mean() {
-        // GPU path — wrap in try/catch so any GPU failure demotes to CPU-only.
-        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
-            try {
-                sync_to_gpu();
-                return gpu_ctx_->compute_mean_gpu();
-            } catch (const std::exception& ex) {
-                std::clog << "[PKF] GPU get_mean failed (" << ex.what()
-                          << "); demoting to CPU for the rest of this filter's life."
-                          << std::endl;
-                use_gpu_ = false;
-                gpu_ctx_.reset();
-            }
-        }
+    /** @brief Filtered (weighted) mean. */
+    State get_mean() const { return compute_mean_cpu(); }
 
-        return compute_mean_cpu();
-    }
+    /** @brief Filtered (weighted) covariance about the mean. */
+    StateMat get_covariance() const { return compute_covariance_cpu(compute_mean_cpu()); }
 
-    /**
-     * @brief Get filtered covariance estimate.
-     *
-     * See note on get_mean() — this is also non-const because it may mutate GPU
-     * state and may demote to CPU-only on GPU failure.
-     */
-    StateMat get_covariance() {
-        State mean = get_mean();
-
-        // GPU path — same try/catch demotion pattern as get_mean.
-        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
-            try {
-                return gpu_ctx_->compute_covariance_gpu(mean);
-            } catch (const std::exception& ex) {
-                std::clog << "[PKF] GPU get_covariance failed (" << ex.what()
-                          << "); demoting to CPU for the rest of this filter's life."
-                          << std::endl;
-                use_gpu_ = false;
-                gpu_ctx_.reset();
-            }
-        }
-
-        return compute_covariance_cpu(mean);
-    }
-
-    /** CPU-only mean accessor; safe to call from a const context via wrapper. */
+    /** Weighted mean (same as get_mean(); kept for existing callers). */
     State compute_mean_cpu() const {
-        State mean = State::Zero();
-        for (size_t i = 0; i < N_; ++i) {
-            mean += std::exp(log_weights_[i]) * particles_[i];
-        }
-        return mean;
+        return parallel_weighted_sum<State>([&](size_t i) {
+            return State(std::exp(log_weights_[i]) * particles_[i]);
+        });
     }
 
-    /** CPU-only covariance accessor; requires the pre-computed mean. */
+    /** Weighted covariance about a caller-supplied mean. */
     StateMat compute_covariance_cpu(const State& mean) const {
-        StateMat cov = StateMat::Zero();
-        for (size_t i = 0; i < N_; ++i) {
-            State diff = particles_[i] - mean;
-            cov += std::exp(log_weights_[i]) * (diff * diff.transpose());
-        }
-        return cov;
-    }
-
-    /**
-     * @brief Check if GPU acceleration is active.
-     */
-    bool is_gpu_active() const { return use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active(); }
-
-    /**
-     * @brief Sync particles to GPU (call before GPU operations).
-     */
-    void sync_to_gpu() {
-        if (gpu_ctx_ && gpu_ctx_->is_active()) {
-            gpu_ctx_->upload_particles(particles_);
-            gpu_ctx_->upload_log_weights(log_weights_);
-        }
-    }
-
-    /**
-     * @brief Sync particles from GPU (call after GPU operations).
-     */
-    void sync_from_gpu() {
-        if (gpu_ctx_ && gpu_ctx_->is_active()) {
-            gpu_ctx_->download_particles(particles_);
-            gpu_ctx_->download_log_weights(log_weights_);
-        }
+        return parallel_weighted_sum<StateMat>([&](size_t i) {
+            const State diff = particles_[i] - mean;
+            return StateMat(std::exp(log_weights_[i]) * (diff * diff.transpose()));
+        });
     }
 
     // Accessors
@@ -338,6 +192,35 @@ public:
     const std::vector<double>& get_log_weights() const { return log_weights_; }
 
 private:
+    /**
+     * Sum term(i) over all particles. Parallel (from kParallelMinMoments)
+     * with per-thread partials added in thread order, so the result is
+     * deterministic for a given thread count; it differs from the serial sum
+     * only by float reassociation.
+     */
+    template<typename T, typename Term>
+    T parallel_weighted_sum(Term term) const {
+#ifdef _OPENMP
+        if (N_ >= kParallelMinMoments) {
+            const int nt = omp_get_max_threads();
+            std::vector<T, Eigen::aligned_allocator<T>> partial(static_cast<size_t>(nt), T::Zero());
+            #pragma omp parallel num_threads(nt)
+            {
+                T acc = T::Zero();
+                #pragma omp for schedule(static) nowait
+                for (size_t i = 0; i < N_; ++i) acc += term(i);
+                partial[static_cast<size_t>(omp_get_thread_num())] = acc;
+            }
+            T sum = T::Zero();
+            for (const T& p : partial) sum += p;
+            return sum;
+        }
+#endif
+        T sum = T::Zero();
+        for (size_t i = 0; i < N_; ++i) sum += term(i);
+        return sum;
+    }
+
     const Model* model_;
     size_t N_;
     float resampling_threshold_;
@@ -368,31 +251,68 @@ private:
 #endif
     }
 
-    // Pre-allocated temporary vectors for step()
-    std::vector<State> props_;
-    std::vector<State> noises_;
+    /**
+     * Grow thread_rngs_ to the thread count the next parallel region will use.
+     * It was sized once, from omp_get_max_threads() at construction/seeding, so
+     * a caller raising the count later (omp_set_num_threads, OMP_DYNAMIC) made
+     * thread_rngs_[omp_get_thread_num()] index past the end: out-of-bounds heap
+     * writes, caught by -D_GLIBCXX_ASSERTIONS. Existing streams are left alone;
+     * a new slot t gets the same deterministic seed seed_thread_rngs() would
+     * have given it.
+     */
+    void ensure_thread_rngs() {
+#ifdef _OPENMP
+        const int nthreads = omp_get_max_threads();
+        const int have = static_cast<int>(thread_rngs_.size());
+        if (nthreads <= have) return;
+        thread_rngs_.resize(static_cast<size_t>(nthreads));
+        for (int t = have; t < nthreads; ++t) {
+            uint64_t s = base_seed_ + 0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(t + 1);
+            s ^= s >> 30; s *= 0xBF58476D1CE4E5B9ULL;
+            s ^= s >> 27; s *= 0x94D049BB133111EBULL;
+            s ^= s >> 31;
+            thread_rngs_[static_cast<size_t>(t)].seed(s);
+        }
+#endif
+    }
 
-    // GPU acceleration
-    bool use_gpu_ = false;
-    std::unique_ptr<gpu::GPUParticleContext<NX>> gpu_ctx_;
+    /**
+     * Propagate, add process noise and weight every particle in ONE parallel
+     * region. The former staged path used three regions per step; with
+     * libgomp's default passive wait each region re-wakes the workers, which
+     * on the 24-core test host cost ~0.7 ms per step at any N. Under
+     * schedule(static) the same thread draws the same particle's noise, so a
+     * given seed and thread count reproduce exactly.
+     */
+    void step_fused(const Observation& y_k, float t_k, const Eigen::Ref<const State>& u_k) {
+#ifdef _OPENMP
+        ensure_thread_rngs();
+        const bool par = N_ >= kParallelMinParticles;
+        #pragma omp parallel for schedule(static) if (par)
+        for (size_t i = 0; i < N_; ++i) {
+            std::mt19937_64& local_rng = thread_rngs_[static_cast<size_t>(omp_get_thread_num())];
+            const State x = model_->propagate(particles_[i], t_k, u_k)
+                          + model_->sample_process_noise(t_k, local_rng);
+            particles_[i] = x;
+            log_weights_[i] += model_->observation_loglik(y_k, x, t_k);
+        }
+#else
+        for (size_t i = 0; i < N_; ++i) {
+            const State x = model_->propagate(particles_[i], t_k, u_k)
+                          + model_->sample_process_noise(t_k, rng_);
+            particles_[i] = x;
+            log_weights_[i] += model_->observation_loglik(y_k, x, t_k);
+        }
+#endif
+    }
 
     /**
      * @brief Normalize log-weights using the log-sum-exp trick for numerical stability.
      *
      * After normalization, sum(exp(log_weights)) == 1. Handles degenerate cases
      * where all weights are -inf (particle death) by resetting to uniform.
-     * Dispatches to GPU when the GPU context is active.
      */
     void normalize_weights() {
-        // GPU path - normalize on GPU and sync back
-        if (use_gpu_ && gpu_ctx_ && gpu_ctx_->is_active()) {
-            gpu_ctx_->upload_log_weights(log_weights_);
-            gpu_ctx_->normalize_weights_gpu();
-            gpu_ctx_->download_log_weights(log_weights_);
-            return;
-        }
-
-        // CPU path
         double max_log_w = -std::numeric_limits<double>::infinity();
         for (double w : log_weights_) {
             if (std::isfinite(w) && w > max_log_w) max_log_w = w;

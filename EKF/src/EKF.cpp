@@ -53,6 +53,10 @@ Eigen::MatrixXf EKF::predict(const Eigen::VectorXf& u, float t) {
  * P = (I-KH)*P*(I-KH)^T + K*R*K^T for numerical stability.
  */
 void EKF::update(const Eigen::VectorXf& y, float t) {
+    // A non-finite measurement is treated as missed: skip the update and keep
+    // the prediction (fusing it would make x_ and P_ NaN).
+    if (!y.allFinite()) return;
+
     // 1. Get Jacobian H at predicted state
     Eigen::MatrixXf H = model_->H(x_, t);
 

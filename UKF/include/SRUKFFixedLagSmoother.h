@@ -5,6 +5,7 @@
 #include <vector>
 #include <iostream>
 #include <Eigen/Dense>
+#include <stdexcept>
 #include "SRUKF.h"
 #include "FilterMath.h"
 
@@ -62,6 +63,9 @@ public:
         }
 
         history_.push_back(entry);
+        // Rebuild the smoothed buffer for the new one-entry history (a
+        // re-initialised smoother otherwise served the previous run's values).
+        perform_smoothing();
     }
 
     /**
@@ -75,8 +79,10 @@ public:
     void observe_initial(float t0, const Observation& y_0) {
         if (history_.empty()) return;
 
+        const State x_before = srukf_.getState();
+        const StateMat S_before = srukf_.getSqrtCovariance();
         srukf_.update(t0, y_0);
-        if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) return;
+        require_finite(x_before, S_before);
 
         // Refines entry 0 in place: still the estimate at t0, now a posterior
         // rather than a prior. Not a new time step, so no entry is appended.
@@ -106,6 +112,8 @@ public:
         }
 
         SRUKFHistoryEntry<NX>& last_entry = history_.back();
+        const State x_before = srukf_.getState();
+        const StateMat S_before = srukf_.getSqrtCovariance();
 
         // Predict: propagate FROM t_prev (where the estimate is) TO t_k.
         StateMat P_cross = srukf_.predict(t_prev, u_k);
@@ -118,10 +126,11 @@ public:
         srukf_.update(t_k, y_k);
         t_last_ = t_k;
 
-        // NaN guard
-        if (!srukf_.getState().allFinite() || !srukf_.getSqrtCovariance().allFinite()) {
-            return;
-        }
+        // Non-finite guard. A NaN measurement never gets here (SRUKF::update
+        // treats it as missed); this catches a model returning non-finite
+        // values. The old guard returned early but left the SRUKF NaN, so every
+        // later step was silently lost. Roll back and report instead.
+        require_finite(x_before, S_before);
 
         SRUKFHistoryEntry<NX> new_entry;
         new_entry.x_filt = srukf_.getState();
@@ -172,6 +181,13 @@ private:
      * Reconstructs full covariance P = S*S^T for the smoothing gain computation,
      * then extracts the square-root of the smoothed covariance via Cholesky.
      */
+    void require_finite(const State& x_before, const StateMat& S_before) {
+        if (srukf_.getState().allFinite() && srukf_.getSqrtCovariance().allFinite()) return;
+        srukf_.restore(x_before, S_before);
+        throw std::runtime_error("SRUKFFixedLagSmoother: model produced a non-finite "
+                                 "state; filter restored to its pre-step estimate");
+    }
+
     void perform_smoothing() {
         int N = static_cast<int>(history_.size());
         if (N == 0) return;
