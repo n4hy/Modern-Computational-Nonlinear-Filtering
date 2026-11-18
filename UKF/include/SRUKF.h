@@ -5,6 +5,7 @@
 #include <limits>
 #include <Eigen/QR>
 #include <Eigen/Cholesky>
+#include <atomic>
 #include <iostream>
 #include <cmath>
 #include <numbers>
@@ -13,8 +14,18 @@
 #include "StateSpaceModel.h"
 #include "SigmaPoints.h"
 #include "FilterMath.h"
+#include "ChiSquared.h"
 
 namespace UKFCore {
+
+namespace detail {
+// Process-wide "gate warning already printed" flag, shared by every SRUKF
+// instance and template instantiation. It was per instance: a program that
+// builds several filters over the same data (the benchmark builds 7 per row:
+// accuracy pass, warm-up, 5 timed reps) printed the same warning once per
+// filter. Per-filter counts stay available through getGatedCount().
+inline std::atomic<bool> srukf_gate_warned{false};
+}  // namespace detail
 
 /**
  * Square Root Unscented Kalman Filter (SRUKF)
@@ -47,10 +58,35 @@ public:
     float kappa = std::numeric_limits<float>::quiet_NaN();
 
     /**
-     * Set the chi-squared innovation-gate threshold. The default of 25.0 is
-     * roughly the 3-sigma value for NY = 3; callers with different observation
-     * dimensions or tighter tail-cutoff requirements can override it.
+     * Innovation gate. Under a consistent filter with Gaussian noise the NIS
+     * is chi-squared with NY degrees of freedom (derived: the whitened
+     * innovation S_yy^{-1} nu is standard normal in R^NY). The gate threshold
+     * is therefore set by its TAIL PROBABILITY q = P(chi2_NY > threshold): the
+     * per-update probability that a measurement consistent with the model is
+     * gated. The same q means the same strictness for every NY.
+     *
+     * Default q = 1e-4 (since 2026-11-18). Thresholds (computed, matches
+     * scipy.stats.chi2.isf): 15.14 (NY=1), 21.11 (NY=3), 25.74 (NY=5),
+     * 35.56 (NY=10), 52.39 (NY=20). The former fixed default 25 gated valid
+     * measurements with probability 5.7e-7 at NY=1 but 0.20 at NY=20 and
+     * 0.999 at NY=50.
      */
+    static constexpr double kDefaultGateTailProbability = 1e-4;
+
+    /** Gate threshold for tail probability q at this NY: the x with
+     *  P(chi2_NY > x) = q. Throws std::invalid_argument unless 0 < q < 1. */
+    static float gateThresholdForTailProbability(double q) {
+        if (!(q > 0.0 && q < 1.0))
+            throw std::invalid_argument("SRUKF: gate tail probability must lie in (0, 1)");
+        return static_cast<float>(nlf_chi2::upper_quantile(q, NY));
+    }
+
+    /** Set the gate by tail probability q (see above). */
+    void setInnovationGateTailProbability(double q) {
+        innovation_gate_chi2_ = gateThresholdForTailProbability(q);
+    }
+
+    /** Set the gate threshold on the NIS directly. */
     void setInnovationGateChi2(float threshold) { innovation_gate_chi2_ = threshold; }
 
     /** Query the current chi-squared innovation-gate threshold. */
@@ -460,7 +496,7 @@ public:
             // original down-scaling behaviour.
             scale = reject_outliers_ ? 0.0f
                                      : std::sqrt(gate_threshold / mahal_dist_sq);
-            if (!warned_gate_) {
+            if (!detail::srukf_gate_warned.exchange(true, std::memory_order_relaxed)) {
                 std::clog << "[SRUKF] innovation gate active (chi2="
                           << mahal_dist_sq << " > threshold="
                           << gate_threshold << "); "
@@ -468,9 +504,9 @@ public:
                                                : "scaling correction by ")
                           << (reject_outliers_ ? std::string{}
                                                : std::to_string(scale))
-                          << ". Further gate events will be silent."
+                          << ". Further gate events (any SRUKF in this process) are"
+                             " not logged; see getGatedCount()."
                           << std::endl;
-                warned_gate_ = true;
             }
         }
 
@@ -582,9 +618,13 @@ private:
     unsigned gated_count_ = 0;      // count of gated/rejected updates (R33)
     bool reject_outliers_ = false;  // reject (vs down-scale) gated outliers (R33)
 
-    // Innovation-gate configuration.
-    float innovation_gate_chi2_ = 25.0f;
-    bool  warned_gate_ = false;
+    // Innovation-gate configuration: chi2_NY upper quantile at the default
+    // tail probability, computed once per NY (thread-safe static init).
+    static float default_gate_chi2() {
+        static const float v = gateThresholdForTailProbability(kDefaultGateTailProbability);
+        return v;
+    }
+    float innovation_gate_chi2_ = default_gate_chi2();
 
     /**
      * Rank-1 Cholesky update: S_new such that

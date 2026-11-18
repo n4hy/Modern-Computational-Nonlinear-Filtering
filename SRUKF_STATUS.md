@@ -11,8 +11,8 @@
 > asymmetric / non-PSD `P0` (including the condition number in the not-PSD
 > message) instead of silently degrading to `L0 = Identity`; the
 > innovation-gate threshold is now a member with `setInnovationGateChi2()` /
-> `getInnovationGateChi2()` accessors; the first gate firing per filter instance
-> logs a single line to `std::clog`; and `getGatedCount()` is exposed alongside
+> `getInnovationGateChi2()` accessors; the first gate firing logs a single line
+> to `std::clog` (per process since 2026-11-16; it was per filter instance); and `getGatedCount()` is exposed alongside
 > `getLastNIS()`. Regression coverage: the `SRUKF_Initialize` CTest (source
 > `UKF/tests/test_srukf_initialize.cpp`).
 
@@ -139,7 +139,10 @@ formal proof of equivalence.
    `isAngularObservation(j)`, `y_k − ŷ` is wrapped to [−π, π] so an innovation
    straddling the ±π branch cut cannot inject a catastrophic ~2π correction.
 4. **Innovation gating + NIS (R33)** → the normalized innovation squared
-   NIS = innovᵀ (S_yy S_yyᵀ)⁻¹ innov is compared to a χ² gate (25). NIS is stored
+   NIS = innovᵀ (S_yy S_yyᵀ)⁻¹ innov is compared to a χ² gate: since 2026-11-18
+   the χ²_NY upper quantile at tail probability 1e-4 (21.11 at NY = 3, 25.74 at
+   NY = 5; was a fixed 25), settable via `setInnovationGateTailProbability(q)` or
+   `setInnovationGateChi2(threshold)`. NIS is stored
    and exposed via `getLastNIS()`. On a gate trip the correction is scaled by
    `scale`: down-scaled by `√(gate/NIS)` by default, or **rejected** (`scale = 0`)
    when `setRejectOutliers(true)`.

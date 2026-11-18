@@ -135,11 +135,12 @@ any host; timings do not.
 
 ### 3.2 Innovation whiteness / NIS
 - SRUKF exposes `getLastNIS()` (Normalized Innovation Squared) and a χ² gate
-  (`UKF/include/SRUKF.h`, v3.3.0 R33). Threshold is `25.0f` by default; now a
-  member with `setInnovationGateChi2()` / `getInnovationGateChi2()` accessors
-  (v3.4.2).
-- First gate firing per filter instance logs a single line to `std::clog`. Gated
-  count via `getGatedCount()`.
+  (`UKF/include/SRUKF.h`, v3.3.0 R33). Default threshold (since 2026-11-18): the
+  χ²_NY upper quantile at tail probability 1e-4 (`Common/include/ChiSquared.h`),
+  previously a fixed `25.0f`. Set via `setInnovationGateTailProbability()` or
+  `setInnovationGateChi2()`; read via `getInnovationGateChi2()`.
+- The first gate firing in the process logs a single line to `std::clog`
+  (per process since 2026-11-16). Per-filter count via `getGatedCount()`.
 - Outlier policy toggle `setRejectOutliers()` — reject vs down-scale.
 - Under scaling by `s < 1`, the covariance downdate is scaled by
   `sqrt(2s − s²)` (Joseph-consistent for gain `sK`) so the reported covariance

@@ -433,7 +433,7 @@ when filters were producing NaN values.
 - [x] ~~Fix RMSE computation for high-dimensional problems~~ (done — no NaN in the current suite)
 - [x] ~~Fix the one-timestep predict/update alignment in the benchmark loop~~ (done in `3dbbf4c`: no `predict()` on iteration 0; `predict()` now takes the propagate-from time; smoother `step()` split into `step(t_prev, t_k, y_k, u_k)` plus `observe_initial(t0, y0)`)
 - [x] ~~Replace `chi2_quantile`'s Wilson-Hilferty approximation with exact quantiles~~ (done — inverse regularized incomplete gamma, pinned against scipy by CTest `Chi2_Quantile`; `Pct_In_Bounds` moved −0.02 to −1.1 points, Van der Pol most)
-- [x] ~~Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region~~ (done — separate timing pass: 1 warmup + 5 reps (`NLF_BENCH_REPS`), one clock pair per rep, median reported; figures in this document predate it and are not re-measured on host A)
+- [x] ~~Add warmup + repetitions to the timing loop, and move the `chrono` reads outside the measured region~~ (done — separate timing pass: 1 warmup + 5 reps (`NLF_BENCH_REPS`), one clock pair per rep, median reported; figures in this document predate it; the host-A re-measurement of 2026-11-16 is in the README benchmark table)
 - [ ] Add adaptive Q tuning for SRUKF
 - [ ] Implement multi-hypothesis initialization for bearing-only
 - [ ] Add consistency checks (NEES monitoring) with warnings

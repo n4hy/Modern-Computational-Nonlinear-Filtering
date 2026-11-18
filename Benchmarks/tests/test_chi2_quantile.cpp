@@ -89,6 +89,49 @@ int main() {
     NLF_CHECK(std::isnan(chi2_quantile(1.0f, 4)), "p=1 -> NaN");
     NLF_CHECK(std::isnan(chi2_quantile(0.5f, 0)), "n=0 -> NaN");
 
+    // ---- nlf_chi2::upper_quantile / regularized_gamma_q (2026-11-18) ------
+    // Upper tail solved on Q directly (SRUKF innovation gate). References:
+    // scipy.stats.chi2.isf(q, n) and chi2.sf(x, n), scipy 1.18.0.
+    {
+        struct U { int n; double q; double x; };
+        const U ups[] = {
+            {1, 1e-4, 15.1367052266}, {2, 1e-4, 18.420680744}, {3, 1e-4, 21.1075134662},
+            {5, 1e-4, 25.7448319591}, {10, 1e-4, 35.564013942}, {20, 1e-4, 52.3859732731},
+            {50, 1e-4, 95.9687484782}, {100, 1e-4, 161.318656959},
+            {1, 1e-9, 37.3248930514}, {5, 1e-9, 50.6921937015}, {3, 1e-12, 58.9197556832},
+            {4, 1e-2, 13.276704136}, {7, 0.5, 6.34581119552},
+        };
+        for (const U& u : ups) {
+            const double got = nlf_chi2::upper_quantile(u.q, u.n);
+            const double r = std::abs(got - u.x) / u.x;
+            std::printf("upper n=%3d q=%.0e  got=%.12g  ref=%.12g  rel=%.2e\n", u.n, u.q, got, u.x, r);
+            NLF_CHECK(r < 1e-9, "upper_quantile matches scipy chi2.isf to 1e-9 relative");
+            const double back = nlf_chi2::regularized_gamma_q(0.5 * u.n, 0.5 * got);
+            NLF_CHECK(std::abs(back - u.q) / u.q < 1e-9, "Q(n/2, x/2) == q (relative, deep tail)");
+        }
+        struct S { int n; double x; double sf; };
+        const S sfs[] = {
+            {5, 60.0, 1.215456977718e-11}, {10, 100.0, 5.449701982921e-17},
+            {3, 200.0, 4.218541107192e-43}, {5, 25.0, 1.393337911856e-04},
+        };
+        for (const S& t : sfs) {
+            const double got = nlf_chi2::regularized_gamma_q(0.5 * t.n, 0.5 * t.x);
+            NLF_CHECK(std::abs(got - t.sf) / t.sf < 1e-9, "regularized_gamma_q matches scipy chi2.sf");
+        }
+        // n = 2: Q = exp(-x/2), so the upper quantile is -2 ln q (closed form).
+        for (double q : {1e-15, 1e-9, 1e-4, 0.3}) {
+            const double exact = -2.0 * std::log(q);
+            NLF_CHECK(std::abs(nlf_chi2::upper_quantile(q, 2) - exact) / exact < 1e-12, "n=2 upper quantile = -2 ln q");
+        }
+        // Lower and upper solvers agree where both are well conditioned.
+        for (int n : {1, 3, 8}) {
+            const double a = nlf_chi2::quantile(0.99, n), b = nlf_chi2::upper_quantile(0.01, n);
+            NLF_CHECK(std::abs(a - b) / b < 1e-10, "quantile(1 - q) == upper_quantile(q)");
+        }
+        NLF_CHECK(std::isnan(nlf_chi2::upper_quantile(0.0, 3)) && std::isnan(nlf_chi2::upper_quantile(1.0, 3)) &&
+                  std::isnan(nlf_chi2::upper_quantile(0.5, 0)), "upper_quantile out of domain -> NaN");
+    }
+
     std::printf("test_chi2_quantile: all checks passed\n");
     return 0;
 }

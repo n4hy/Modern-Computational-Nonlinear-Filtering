@@ -224,6 +224,55 @@ int main() {
         NLF_CHECK(d.kappa == 2.0f && d.alpha == 1.0f, "SRUKF default kappa is 3 - n");
     }
 
+    // ---- 9. SRUKF gate threshold is a chi2_NY tail quantile (2026-11-18) ----
+    // The fixed default 25 gated a model-consistent measurement with
+    // probability 5.7e-7 at NY=1 but 0.20 at NY=20. The default is now the
+    // chi2_NY upper quantile at q = 1e-4. References: scipy.stats.chi2.isf
+    // (scipy 1.18.0).
+    {
+        const auto rel = [](double a, double b) { return std::abs(a - b) / b; };
+        // Aliases: a template argument list's comma would split the macro arguments.
+        using SR1 = UKFCore::SRUKF<1, 1>;
+        using SR3 = UKFCore::SRUKF<1, 3>;
+        using SR5 = UKFCore::SRUKF<1, 5>;
+        using SR20 = UKFCore::SRUKF<1, 20>;
+        NLF_CHECK(SR1::kDefaultGateTailProbability == 1e-4, "default tail probability");
+        NLF_CHECK(rel(SR1::gateThresholdForTailProbability(1e-4), 15.1367052266) < 1e-6, "NY=1 threshold");
+        NLF_CHECK(rel(SR3::gateThresholdForTailProbability(1e-4), 21.1075134662) < 1e-6, "NY=3 threshold");
+        NLF_CHECK(rel(SR5::gateThresholdForTailProbability(1e-4), 25.7448319591) < 1e-6, "NY=5 threshold");
+        NLF_CHECK(rel(SR20::gateThresholdForTailProbability(1e-4), 52.3859732731) < 1e-6, "NY=20 threshold");
+        int threw = 0;
+        for (double q : {0.0, 1.0, -1.0, std::numeric_limits<double>::quiet_NaN()}) {
+            try { (void)SR1::gateThresholdForTailProbability(q); }
+            catch (const std::invalid_argument&) { ++threw; }
+        }
+        NLF_CHECK(threw == 4, "tail probability outside (0, 1) throws");
+
+        // Behaviour, NY = 1: x ~ N(0, 1), y = x + v, R = 1, so S = 2 and
+        // NIS = y^2 / 2; ungated posterior mean = y / 2.
+        Square1D m;
+        const auto run = [&](float y, double q, unsigned& gated) {
+            UKFCore::SRUKF<1, 1> sr(m);
+            if (q > 0.0) sr.setInnovationGateTailProbability(q);
+            sr.initialize(v1(0.0f), v1(1.0f));
+            sr.update(0.0f, v1(y));
+            gated = sr.getGatedCount();
+            return double(sr.getState()(0));
+        };
+        UKFCore::SRUKF<1, 1> d(m);
+        NLF_CHECK(rel(d.getInnovationGateChi2(), 15.1367052266) < 1e-6, "instance default = chi2_1 quantile at 1e-4");
+        unsigned g = 0;
+        const float y14 = std::sqrt(28.0f);    // NIS 14 < 15.14: not gated
+        const double m14 = run(y14, 0.0, g);
+        NLF_CHECK(g == 0 && rel(m14, 0.5 * y14) < 1e-5, "NIS 14 passes the default gate");
+        const float y20 = std::sqrt(40.0f);    // NIS 20: gated now (the old 25 let it through)
+        const double m20 = run(y20, 0.0, g);
+        NLF_CHECK(g == 1 && rel(m20, std::sqrt(15.1367052266 / 20.0) * 0.5 * y20) < 1e-4,
+                  "NIS 20 is gated and its correction scaled by sqrt(threshold / NIS)");
+        const double m20b = run(y20, 1e-6, g); // q = 1e-6 -> threshold 23.93 > 20
+        NLF_CHECK(g == 0 && rel(m20b, 0.5 * y20) < 1e-5, "setInnovationGateTailProbability loosens the gate");
+    }
+
     std::printf("test_audit_regressions: all checks passed\n");
     return 0;
 }

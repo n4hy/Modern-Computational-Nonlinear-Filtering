@@ -232,24 +232,30 @@ host-independent; **Avg step** and **Total** are from **host A**:
 
 | Problem | Filter | RMSE | Smoothed RMSE | NEES median | In 95% | Avg step (host A)† | Total (host A)† | Div |
 |---------|--------|-----:|--------------:|------------:|-------:|---------:|------:|----:|
-| Coupled Osc 10D | UKF | 1.457 | — | 9.89 | 94.5% | 0.0076 ms | 38.2 ms | 0 |
-| Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0082 ms | 41.5 ms | 0 |
-| Coupled Osc 10D | UKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0275 ms | 138.0 ms | 0 |
-| Coupled Osc 10D | SRUKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.0400 ms | 201.1 ms | 0 |
-| Van der Pol 2D | UKF | 0.469 | — | 1.13 | 94.8% | 0.00039 ms | 0.81 ms | 0 |
-| Van der Pol 2D | SRUKF | 0.467 | — | 1.13 | 94.8% | 0.00027 ms | 0.57 ms | 0 |
-| Van der Pol 2D | SRUKF+Smoother | 0.467 | **0.430** | 1.13 | 94.8% | 0.0050 ms | 10.2 ms | 0 |
-| Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.3% | 0.00052 ms | 0.16 ms | 0 |
-| Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.3% | 0.00046 ms | 0.15 ms | 0 |
-| Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.3% | 0.0108 ms | 3.25 ms | 0 |
-| Reentry 6D | UKF | 367.1 | — | 4.99 | 95.6% | 0.0024 ms | 0.72 ms | 0 |
-| Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.6% | 0.0024 ms | 0.73 ms | 0 |
-| Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.6% | 0.0176 ms | 5.30 ms | 0 |
+| Coupled Osc 10D | UKF | 1.457 | — | 9.89 | 94.5% | 0.0075 ms | 37 ms | 0 |
+| Coupled Osc 10D | SRUKF | 1.457 | — | 9.89 | 94.5% | 0.0081 ms | 41 ms | 0 |
+| Coupled Osc 10D | UKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.031 ms | 153 ms | 0 |
+| Coupled Osc 10D | SRUKF+Smoother | 1.457 | **1.148** | 9.89 | 94.5% | 0.045 ms | 224 ms | 0 |
+| Van der Pol 2D | UKF | 0.469 | — | 1.13 | 94.8% | 0.00028 ms | 0.57 ms | 0 |
+| Van der Pol 2D | SRUKF | 0.467 | — | 1.13 | 94.8% | 0.00026 ms | 0.51 ms | 0 |
+| Van der Pol 2D | SRUKF+Smoother | 0.467 | **0.430** | 1.13 | 94.8% | 0.0063 ms | 12.7 ms | 0 |
+| Bearing-Only 4D | UKF | 63.49 | — | 3.71 | 99.3% | 0.00039 ms | 0.12 ms | 0 |
+| Bearing-Only 4D | SRUKF | 63.84 | — | 3.72 | 99.3% | 0.00043 ms | 0.13 ms | 0 |
+| Bearing-Only 4D | SRUKF+Smoother | 63.84 | **51.68** | 3.72 | 99.3% | 0.013 ms | 3.86 ms | 0 |
+| Reentry 6D | UKF | 367.1 | — | 4.99 | 95.6% | 0.0022 ms | 0.65 ms | 0 |
+| Reentry 6D | SRUKF | 367.1 | — | 4.99 | 95.6% | 0.0023 ms | 0.68 ms | 0 |
+| Reentry 6D | SRUKF+Smoother | 367.1 | **236.3** | 4.99 | 95.6% | 0.019 ms | 5.68 ms | 0 |
 
-> † The accuracy columns were re-measured after the timestep-alignment fix
-> (commit `3dbbf4c`, which moved every RMSE by up to ~0.6%). The **host A timing
-> columns predate that fix and have not been re-measured there** — treat them as
-> indicative of relative cost, not as a matched run. Timings are the one thing you
+> † Host A timing re-measured 2026-11-16 with the current harness (1 warm-up +
+> 5 timed reps per run, median rep reported): **median of 5 full-suite runs**,
+> each pinned to one P-core (`taskset -c 7`), Intel Core Ultra 9 285K, GCC 13.3,
+> `-O3 -march=native`, `powersave` governor. The machine was **not idle**: other
+> jobs held every core at 55–70% utilisation, so absolute times may be
+> pessimistic. Run-to-run spread (max − min over the 5 runs, relative to the
+> median): ≤ 1.4% on the Coupled Oscillator and Reentry rows, 3–7% on the
+> Bearing-Only and Van der Pol rows, 16% on Van der Pol UKF (0.28 µs per step,
+> the smallest quantity measured). Values are rounded to 2 significant figures.
+> Accuracy columns were identical in all 5 runs. Timings are the one thing you
 > should measure on your own hardware anyway.
 
 ### Coupled Oscillators (10D State, 5D Observation)
@@ -387,7 +393,11 @@ if (r_sq <= 0) {
 
 **Problem**: Large outlier measurements cause catastrophic state updates.
 
-**Solution**: Mahalanobis distance gating scales down corrections:
+**Solution**: Mahalanobis distance gating scales down corrections. The default
+`gate_threshold` is the χ²_NY upper quantile at tail probability 1e-4 (since
+2026-11-18; it was a fixed 25), so a model-consistent measurement is gated with
+the same probability for every observation dimension. Change it with
+`setInnovationGateTailProbability(q)` or `setInnovationGateChi2(threshold)`:
 ```cpp
 float mahal_dist_sq = temp_innov.squaredNorm();
 if (mahal_dist_sq > gate_threshold) {
@@ -830,6 +840,7 @@ Modern-Computational-Nonlinear-Filtering/
 │   └── include/
 │       ├── FilterMath.h        # CUDA/SVE2/NEON/Eigen dispatch layer
 │       ├── AffineRTS.h         # exact affine KF + RTS (inner solve of the iterated smoothers)
+│       ├── ChiSquared.h        # exact χ² CDF / quantiles (SRUKF gate, NEES bounds)
 │       ├── StateSpaceModel.h   # Base model for UKF/SRUKF
 │       ├── SystemModel.h       # Base model for EKF
 │       └── FileUtils.h         # File I/O utilities

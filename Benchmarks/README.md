@@ -148,9 +148,11 @@ per-step clock reads, no state/covariance recording).
 
 > ⚠️ Timing figures are **host-specific** and must never be quoted without naming
 > the machine that produced them (see [Measured Results](#measured-results)). The
-> host-A step times in the tables below were taken with the **previous** harness
-> (single cold run, two clock reads per step inside the measured region) and have
-> not been re-measured there.
+> host-A (x86_64, Core Ultra 9 285K) times in the top-level README were
+> re-measured with this harness on 2026-11-16. The aarch64 step times in
+> [Measured Results](#measured-results) below were taken with the **previous**
+> harness (single cold run, two clock reads per step inside the measured region)
+> and have not been re-measured on that host.
 
 ### Convergence Metrics
 - **Convergence Time**: first time the state error norm stays below an absolute

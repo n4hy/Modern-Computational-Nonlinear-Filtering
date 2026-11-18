@@ -466,6 +466,84 @@ enabling full GPU acceleration for UKF/SRUKF sigma point operations on CUDA host
 
 ## Changelog
 
+### Unreleased — 2026-11-18: SRUKF gate threshold from a χ² tail probability
+
+**Change.** The SRUKF innovation-gate default is now the χ²_NY upper quantile
+at tail probability q = 1e-4 (`SRUKF::kDefaultGateTailProbability`), i.e. the
+per-update probability that a model-consistent measurement is gated is the
+same for every NY. Derivation: for a consistent filter with Gaussian noise the
+whitened innovation S_yy⁻¹ν is N(0, I_NY), so NIS ~ χ²_NY. The former fixed 25
+gated such measurements with probability 5.7e-7 at NY = 1, 1.4e-4 at NY = 5,
+0.20 at NY = 20 and 0.999 at NY = 50 (computed, scipy), so for large NY it
+shrank most valid corrections without notice.
+
+Defaults now: 15.14 (NY = 1), 21.11 (NY = 3), 25.74 (NY = 5), 35.56 (NY = 10),
+52.39 (NY = 20). New API: `setInnovationGateTailProbability(q)` and the static
+`gateThresholdForTailProbability(q)` (throw `std::invalid_argument` unless
+0 < q < 1). `setInnovationGateChi2(threshold)` still sets the threshold
+directly. Each instantiation computes its default once (function-local
+static).
+
+**New `Common/include/ChiSquared.h`** (`nlf_chi2`): regularized P and Q,
+`quantile(p, n)` and `upper_quantile(q, n)`. The upper quantile is solved on Q
+directly, so deep tails keep relative precision (solving P = 1 − q loses it to
+cancellation). The P solver and its bisection + Newton iteration moved here
+unchanged from `Benchmarks/include/BenchmarkRunner.h`, which keeps its float
+`chi2_quantile()` wrapper; the benchmark's NEES bounds are identical.
+
+**Verification (computed).** `test_chi2_quantile`: `upper_quantile` matches
+scipy 1.18.0 `chi2.isf` to ≤ 2.6e-12 relative for n ∈ {1, 2, 3, 4, 5, 7, 10,
+20, 50, 100}, q down to 1e-12 (tolerance 1e-9; the references carry 12
+significant figures); `regularized_gamma_q` matches `chi2.sf` down to 4.2e-43;
+n = 2 closed form −2 ln q to 1e-12. `UKF_AuditRegressions` §9: default
+thresholds for NY ∈ {1, 3, 5, 20}; NY = 1 behaviour with NIS = 14 (passes),
+NIS = 20 (gated now, passed under 25; correction scaled by √(15.137/20)), and
+q = 1e-6 (threshold 23.93, passes).
+
+**Benchmark effect (computed).** No benchmark row gates any more (the one
+Coupled-Oscillator event had NIS 25.7437, below the new NY = 5 threshold
+25.7448 — a margin of 4e-5 relative, far above float reassociation). RMSE and
+smoothed RMSE are unchanged at full CSV precision on all 13 rows; SRUKF
+Coupled-Oscillator median NEES moves 9.89188 → 9.89187. Baselines unchanged;
+the gate passes.
+
+### Unreleased — 2026-11-16: host-A timing re-measured; SRUKF gate warning once per process
+
+**Host-A timing (README table, `docs/images/benchmark_timing_comparison.png`).**
+Re-measured with the warm-up + 5-rep harness. Reported value = median of 5
+full-suite runs, each pinned to P-core 7 (`taskset -c 7`) on a Core Ultra 9
+285K (8 P + 16 E cores, `powersave` governor). The host was **loaded**: other
+jobs kept every core at 55–70% utilisation (2 s `/proc/stat` sample), so the
+figures may be pessimistic. *Computed:* run-to-run spread ≤ 1.4% on Coupled
+Oscillator and Reentry rows, 3–7% on Bearing-Only and Van der Pol, 16% on Van
+der Pol UKF (0.28 µs/step). The within-run rep spread (< 2%) understates this:
+two unpinned runs 20 min apart differed by up to 13%. Accuracy columns were
+byte-identical across all 5 runs. Versus the old-harness figures, filter-only
+rows are 1–27% faster and smoother rows 7–27% slower; the two sets differ in
+harness, code version and load, so the change is not attributable to any one of
+them.
+
+**SRUKF innovation-gate warning (`UKF/include/SRUKF.h`).** The "gate active"
+message was guarded by a per-instance flag, so the benchmark printed it 7 times
+per Coupled Oscillator SRUKF row (accuracy pass + warm-up + 5 reps, all
+identical data). The flag is now a process-wide `std::atomic<bool>`
+(`UKFCore::detail::srukf_gate_warned`); per-filter counts remain in
+`getGatedCount()`. The gate event itself is **not** an anomaly. *Computed:*
+on Coupled Oscillators (NY = 5, 5001 updates) the gate fires once (NIS 25.74 at
+step 1959, correction scaled by 0.985); mean NIS is 5.080 against 5 (H0 sd
+0.045). If NIS ~ χ²₅ independently, the expected number of exceedances of 25 is
+5001 · P(χ²₅ > 25) = 5001 · 1.39e-4 = 0.70, with P(≥ 1) = 0.50. So the gate
+down-weights a measurement that is consistent with the model; it is the
+dimension-blind default threshold that does this, not an outlier. No other
+problem gates (max NIS: Van der Pol 14.2, Bearing 11.8, Reentry 15.2).
+
+Corrected the `setInnovationGateChi2` doc comment: it called 25 "roughly the
+3-sigma value for NY = 3". The 99.73% χ² quantiles are 9.00 (NY = 1), 14.16
+(NY = 3), 18.21 (NY = 5) (computed, scipy); 25 is a per-update false-gate rate
+of 5.7e-7, 1.5e-5, 1.4e-4 for those NY. The default (25) was left unchanged
+in this entry; it became a dimension-aware χ² quantile on 2026-11-18 (entry
+above).
+
 ### Unreleased — 2026-11-16: true iterated smoothers, RBPF smoothing, PKF GPU removed
 
 Resolves open items (a)–(c) of the 2026-11-15 audit.
