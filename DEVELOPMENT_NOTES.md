@@ -466,6 +466,88 @@ enabling full GPU acceleration for UKF/SRUKF sigma point operations on CUDA host
 
 ## Changelog
 
+### Unreleased — 2026-11-18: SRUKF reject-outliers mode tested; lock-out guard added (`SRUKF_GateModes`)
+
+New `UKF/tests/test_srukf_gate_modes.cpp`, 2-D constant-velocity model with
+linear f and h, so the unscented transform is exact (derived). All numbers
+computed on host A, GCC 13.3 / libstdc++.
+
+- **A. Exact algebra.** One update at NIS 10 (below the NY = 2 threshold
+  18.42) and NIS 40 (above), in both modes, against a double Kalman update
+  with gain sK: x⁺ = x + sKν, P⁺ = P − (2s − s²)KP_yyKᵀ, where s = 1,
+  √(T/NIS), or 0. The reduced form equals the Joseph form to 1e-12. The SRUKF
+  matches to 3.5e-7. A rejected update leaves the state bit-identical.
+- **B. Rejected = missed.** A reject-mode filter fed 10 gross outliers (+50 in
+  px) and one fed NaN at those steps are bit-identical over 200 steps. Gated
+  counts differ by exactly 10.
+- **C. Outlier Monte Carlo.** 200 runs × 200 steps; truth drawn from the
+  model's Q; 5% of measurements get a ±30σ outlier on one axis.
+
+  | Data | Mode | Position RMSE | Mean NEES (4 = consistent) | Gated |
+  |---|---|---:|---:|---:|
+  | clean | no gate / down-scale / reject | 0.4871 / 0.4871 / 0.4877 | 4.002 / 4.002 / 4.006 | 0 / 8 / 8 |
+  | 5% outliers | no gate / down-scale / reject | 2.124 / 0.638 / 0.501 | 51.4 / 5.14 / 3.98 | 0 / 2136 / 1984 |
+
+  About 2000 outliers were injected; 8 of 40000 clean updates were gated,
+  against 4 expected at q = 1e-4. Down-scale gates more updates than there
+  are outliers, because a partly absorbed outlier pushes the next valid
+  measurement past the gate. It is also over-confident (NEES 5.14). Reject
+  mode stays consistent and comes within 2.8% of its clean-data RMSE.
+- **D. Lock-out after a genuine jump** (a known limitation of hard rejection;
+  the code does what reject mode specifies). The truth's px jumps at k = 100;
+  100 seeds per jump size. Steps to re-acquire (|e_px| < 3σ for 5 steps),
+  median / max / runs that never re-acquire within 300 steps:
+
+  | Jump | No gate | Down-scale | Reject, no guard (N = 0) | Reject, guard N = 5 (new default) |
+  |---:|---|---|---|---|
+  | 5 (10σ) | 2 / 8 / 0 | 2 / 9 / 0 | 4 / 15 / 0 | 4 / 12 / 0 |
+  | 20 (40σ) | 9 / 15 / 0 | 13 / 18 / 0 | 20 / 135 / 0 | 19 / 24 / 0 |
+  | 100 (200σ) | 11 / 18 / 0 | 34 / 39 / 0 | 81 / 291 / **6** | 41 / 48 / 0 |
+  | 300 (600σ) | 18 / 20 / 0 | 56 / 62 / 0 | 227 / 287 / **33** | 63 / 73 / 0 |
+
+  Mechanism (traced, seed 5002, jump 100): every measurement is rejected for
+  44 steps while P grows. When the gate re-opens, one update corrects px, but
+  the CV model explains the 87-unit discrepancy as a velocity error. Velocity
+  ends up 2.8 off with σ = 0.35. Every later measurement fails the gate, and
+  the track coasts away: px error is 800 at k = 400.
+
+- **E. Lock-out guard (new in `SRUKF.h`).** In reject mode, after
+  N gated updates in a row, further gated updates are down-scaled (gain
+  √(T/NIS)·K, Joseph-consistent downdate as above) until one passes the
+  gate. A passing update or `initialize()` ends the run; a missed (NaN)
+  measurement neither extends nor ends it.
+  API: `setMaxConsecutiveRejections(n)` (0 = old pure-reject behaviour),
+  `getMaxConsecutiveRejections()`, `getConsecutiveRejections()`,
+  `kDefaultMaxConsecutiveRejections = 5`.
+  The test checks bitwise that rejections 1..N equal a missed measurement,
+  N+1 onward equal a down-scale update, and that a burst of ≤ N outliers
+  is handled bit-identically to N = 0 (derived: the fallback cannot fire).
+
+  Choice of N (computed, sweep over N on the same scenarios; burst = L
+  consecutive +30σ outliers on px at k = 100, peak |e_px| / σ_R over
+  100 seeds, median / max):
+
+  | N | 5% outliers RMSE / NEES | Burst 5 | Burst 10 | Jump 100: med / max / lock | Jump 300: med / max / lock |
+  |---:|---|---|---|---|---|
+  | down-scale | 0.638 / 5.14 | 30.2 / 35.0 | 34.4 / 37.2 | 34 / 39 / 0 | 56 / 62 / 0 |
+  | 0 (no guard) | 0.5012 / 3.98 | 2.0 / 6.5 | 3.6 / **280** | 81 / 291 / 6 | 227 / 287 / 33 |
+  | 1 | 0.5181 / 4.08 | 27.8 / 36.5 | 36.6 / 39.2 | 35 / 39 / 0 | 57 / 64 / 0 |
+  | 3 | 0.5012 / 3.98 | 16.9 / 22.8 | 42.9 / 47.1 | 38 / 40 / 0 | 60 / 68 / 0 |
+  | **5** | 0.5012 / 3.98 | 2.0 / 6.5 | 47.0 / 55.4 | 41 / 48 / 0 | 63 / 73 / 0 |
+  | 10 | 0.5012 / 3.98 | 2.0 / 6.5 | 3.6 / 69.6 | 53 / 60 / 0 | 78 / 94 / 0 |
+  | 20 | 0.5012 / 3.98 | 2.0 / 6.5 | 3.6 / 105.6 | 61 / 82 / 0 | 101 / 127 / 0 |
+
+  Every N ≥ 1 removed all measured lock-outs; this is empirical for these
+  scenarios, not a proof that the guard prevents lock-out in general. N ≥ 3
+  matches pure reject on isolated outliers; N = 5 also matches it on
+  bursts up to 5 while keeping jump re-acquisition near down-scale. The
+  trade-off: a burst longer than N is indistinguishable from a jump and is
+  followed. Pure reject also fails on long bursts (burst 10: max 280σ).
+  Particle-filter re-acquisition was considered; for this failure the guard
+  leaves no measured lock-outs, so it was not implemented.
+
+CTests: + `SRUKF_GateModes` → 22 filter tests; 40/40 on host A.
+
 ### Unreleased — 2026-11-18: SRUKF gate threshold from a χ² tail probability
 
 **Change.** The SRUKF innovation-gate default is now the χ²_NY upper quantile

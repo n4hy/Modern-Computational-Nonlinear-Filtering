@@ -104,6 +104,7 @@ public:
      */
     void initialize(const State& x0, const StateMat& P0) {
         x_ = x0;
+        consecutive_rejections_ = 0;   // a new track starts with no rejection run
         // Dimension-adaptive parameters for SRUKF (alpha=1.0 in both regimes; the
         // earlier alpha=1e-3 for high NX was removed in the audit because it made
         // Wm(0)/Wc(0) hugely negative and destabilized the 10D coupled-oscillator
@@ -494,20 +495,34 @@ public:
             // R33: optionally REJECT the outlier (zero correction) instead of
             // down-scaling it; default (reject_outliers_ = false) preserves the
             // original down-scaling behaviour.
-            scale = reject_outliers_ ? 0.0f
-                                     : std::sqrt(gate_threshold / mahal_dist_sq);
+            //
+            // Lock-out guard (2026-11-18): after max_consecutive_rejections_
+            // rejections in a row, further gated measurements are DOWN-SCALED
+            // instead of rejected, until one passes the gate. A genuine change
+            // in the truth (a jump) then pulls the track back; without the
+            // guard the CV coast can turn the jump into a large velocity error
+            // and every later measurement is rejected (measured: 6/100 lock-outs
+            // at a 200-sigma jump). 0 disables the guard (pure reject).
+            const bool reject_this =
+                reject_outliers_ && (max_consecutive_rejections_ == 0 ||
+                                     consecutive_rejections_ < max_consecutive_rejections_);
+            if (reject_outliers_) ++consecutive_rejections_;
+            scale = reject_this ? 0.0f
+                                : std::sqrt(gate_threshold / mahal_dist_sq);
             if (!detail::srukf_gate_warned.exchange(true, std::memory_order_relaxed)) {
                 std::clog << "[SRUKF] innovation gate active (chi2="
                           << mahal_dist_sq << " > threshold="
                           << gate_threshold << "); "
-                          << (reject_outliers_ ? "rejecting correction"
-                                               : "scaling correction by ")
-                          << (reject_outliers_ ? std::string{}
-                                               : std::to_string(scale))
+                          << (reject_this ? "rejecting correction"
+                                          : "scaling correction by ")
+                          << (reject_this ? std::string{}
+                                          : std::to_string(scale))
                           << ". Further gate events (any SRUKF in this process) are"
                              " not logged; see getGatedCount()."
                           << std::endl;
             }
+        } else {
+            consecutive_rejections_ = 0;
         }
 
         State correction = scale * (K * innovation);
@@ -609,6 +624,22 @@ public:
     // When true, a gated outlier is REJECTED (zero correction) rather than
     // down-scaled.  Default false preserves the original behaviour.
     void setRejectOutliers(bool reject) { reject_outliers_ = reject; }
+    // Reject mode only: after n gated updates in a row, further gated updates
+    // are down-scaled (as in the default mode) until one passes the gate.
+    // 0 = never fall back. A missed (non-finite) measurement neither extends
+    // nor ends a run. Default 5, chosen from a sweep (computed 2026-11-18,
+    // 2-D CV model, test_srukf_gate_modes): N = 5 keeps pure-reject accuracy
+    // with 5% isolated 30-sigma outliers (RMSE 0.5012, NEES 3.98, identical
+    // to N = 0) and rejects bursts of up to 5 outliers exactly as N = 0 does,
+    // while a 200-sigma jump re-acquires in median 41 / max 48 steps with no
+    // lock-outs (N = 0: median 81, 6/100 lock-outs; 600-sigma jump: 33/100).
+    // Trade-off: a burst longer than N is indistinguishable from a jump and
+    // is followed.
+    static constexpr unsigned kDefaultMaxConsecutiveRejections = 5;
+    void setMaxConsecutiveRejections(unsigned n) { max_consecutive_rejections_ = n; }
+    unsigned getMaxConsecutiveRejections() const { return max_consecutive_rejections_; }
+    // Length of the current run of gated updates (reject mode; 0 otherwise).
+    unsigned getConsecutiveRejections() const { return consecutive_rejections_; }
 
 private:
     Model& model_;
@@ -617,6 +648,8 @@ private:
     float last_nis_ = 0.0f;         // NIS from the most recent update (R33)
     unsigned gated_count_ = 0;      // count of gated/rejected updates (R33)
     bool reject_outliers_ = false;  // reject (vs down-scale) gated outliers (R33)
+    unsigned max_consecutive_rejections_ = kDefaultMaxConsecutiveRejections;
+    unsigned consecutive_rejections_ = 0;  // current run of gated updates (reject mode)
 
     // Innovation-gate configuration: chi2_NY upper quantile at the default
     // tail probability, computed once per NY (thread-safe static init).

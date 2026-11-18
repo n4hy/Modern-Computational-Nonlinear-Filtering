@@ -145,7 +145,10 @@ formal proof of equivalence.
    `setInnovationGateChi2(threshold)`. NIS is stored
    and exposed via `getLastNIS()`. On a gate trip the correction is scaled by
    `scale`: down-scaled by `√(gate/NIS)` by default, or **rejected** (`scale = 0`)
-   when `setRejectOutliers(true)`.
+   when `setRejectOutliers(true)`. In reject mode, after
+   `setMaxConsecutiveRejections(n)` (default 5) rejections in a row, further gated
+   updates are down-scaled until one passes the gate, so a genuine jump in the
+   truth cannot lock the track out (measured: 6/100 → 0/100 at a 200σ jump).
    - **Consistency (fixed in the v3.2.1 audit):** the covariance downdate stays consistent with
      the gated gain `scale·K` via the Joseph partial-update form — the downdate
      column is scaled by `√(2·scale − scale²)`, i.e. the covariance shrinks by

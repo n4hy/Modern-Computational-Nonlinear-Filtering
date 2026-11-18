@@ -174,9 +174,9 @@ Accuracy figures below were produced on host A and re-verified unchanged on host
 CTest passed on both. At the time of those runs this repo registered **16**
 filter/benchmark tests (the original 12 plus `EKF_Smoother`, `UKF_Smoother`,
 `UKF_Numerical`, `SRUKF_Initialize`, `PKF_ParticleConst`, `RBPF_LogDet`). It
-now registers **21**: those plus `Chi2_Quantile`, `UKF_AuditRegressions`,
-`PKF_AuditRegressions`, `Iterated_Smoothers` and `RBPF_Smoother` (host A on
-2026-11-16: 39/39 = 21 filter + 18 OptMath). OptimizedKernels
+now registers **22**: those plus `Chi2_Quantile`, `UKF_AuditRegressions`,
+`PKF_AuditRegressions`, `Iterated_Smoothers`, `RBPF_Smoother` and
+`SRUKF_GateModes` (host A on 2026-11-18: 40/40 = 22 filter + 18 OptMath). OptimizedKernels
 adds 17–20 more, depending on what the build detects (17 base +
 `test_cuda_kernels` on CUDA hosts, `test_neon_fp16` on FP16-capable ARM
 CPUs, `test_sve2_kernels` on SVE2-capable ARM CPUs). Host A gets **34/34**
@@ -397,7 +397,14 @@ if (r_sq <= 0) {
 `gate_threshold` is the χ²_NY upper quantile at tail probability 1e-4 (since
 2026-11-18; it was a fixed 25), so a model-consistent measurement is gated with
 the same probability for every observation dimension. Change it with
-`setInnovationGateTailProbability(q)` or `setInnovationGateChi2(threshold)`:
+`setInnovationGateTailProbability(q)` or `setInnovationGateChi2(threshold)`.
+`setRejectOutliers(true)` discards a gated measurement instead of down-scaling
+it. Against gross outliers it is the most accurate mode. On its own it can lose
+a track after a genuine jump, so after 5 rejections in a row (default;
+`setMaxConsecutiveRejections(n)`, 0 disables) further gated measurements are
+down-scaled until one passes the gate. Measured: lock-outs after a 200σ jump
+6/100 → 0/100, unchanged accuracy on isolated outliers. See
+`UKF/tests/test_srukf_gate_modes.cpp` (parts D, E) and DEVELOPMENT_NOTES 2026-11-18.
 ```cpp
 float mahal_dist_sq = temp_innov.squaredNorm();
 if (mahal_dist_sq > gate_threshold) {
@@ -645,6 +652,7 @@ ctest --output-on-failure
 ./PKF/test_pkf_audit
 ./UKF/test_iterated_smoothers
 ./RBPKF/test_rbpf_smoother
+./UKF/test_srukf_gate_modes
 
 # Run benchmarks
 ./Benchmarks/run_benchmarks
@@ -706,6 +714,7 @@ python3 ../scripts/plot_benchmarks.py .
 | `PKF/test_pkf_audit` | 2026-11-15 audit: exact moments after init / all-dead reset; resampling precision at N = 4e6 |
 | `UKF/test_iterated_smoothers` | IEKS / IPLS = exact RTS on a linear model at every iteration count; IEKS MAP stationarity; UKF = SRUKF; angular wrap invariance |
 | `RBPKF/test_rbpf_smoother` | RBPF smoothed linear mean = exact RTS on a fixed nonlinear path; RMSE gain on random paths |
+| `UKF/test_srukf_gate_modes` | SRUKF gate, down-scale vs reject: exact gated KF update; rejected = missed measurement; outlier Monte Carlo; re-acquisition after a jump; reject-mode lock-out guard |
 
 ---
 

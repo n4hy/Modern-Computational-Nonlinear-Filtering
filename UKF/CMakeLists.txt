@@ -74,3 +74,10 @@ target_include_directories(test_iterated_smoothers PRIVATE ${CMAKE_SOURCE_DIR}/E
 target_link_libraries(test_iterated_smoothers Eigen3::Eigen OptMathKernels)
 enable_lto_if_supported(test_iterated_smoothers)
 nlf_add_warning_flags(test_iterated_smoothers)
+
+# Innovation-gate modes (2026-11-18): down-scale vs reject against an exact
+# gated KF; reject == missed measurement; outlier Monte Carlo; re-acquisition.
+add_executable(test_srukf_gate_modes tests/test_srukf_gate_modes.cpp)
+target_link_libraries(test_srukf_gate_modes Eigen3::Eigen OptMathKernels)
+enable_lto_if_supported(test_srukf_gate_modes)
+nlf_add_warning_flags(test_srukf_gate_modes)
